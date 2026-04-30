@@ -147,6 +147,7 @@ pygpgme==0.3+lp1; python_version < '3.9'
 pygpgme==0.6; python_version >= '3.9'
 PyHamcrest==1.9.0
 pyinotify==0.9.4
+pyinstrument==5.1.2
 PyJWT==1.7.1
 pymacaroons==0.13.0
 pymemcache==4.0.0

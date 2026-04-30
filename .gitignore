@@ -108,6 +108,7 @@ opensource/launchpadlib/*.egg*
 # profiling and debugging
 *.prof
 callgrind.out.*
+????-??-??_*-OOPS-*.html
 run.gdb
 
 # node and python packages
