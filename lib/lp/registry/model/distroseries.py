@@ -1011,6 +1011,23 @@ class DistroSeries(
         self.publishing_options["advertise_by_hash"] = value
 
     @property
+    def allowed_hashes(self):
+        """Return the list of allowed hash algorithm names for publishing.
+
+        Returns a list of lowercase strings (e.g. ["sha256", "sha512"]).
+        If not configured, returns None meaning all hashes should be used.
+        """
+        return self.publishing_options.get("allowed_hashes", None)
+
+    @allowed_hashes.setter
+    def allowed_hashes(self, value):
+        if value is not None:
+            assert isinstance(value, list)
+            assert len(value) > 0, "allowed_hashes must not be empty"
+            value = [h.lower() for h in value]
+        self.publishing_options["allowed_hashes"] = value
+
+    @property
     def strict_supported_component_dependencies(self):
         return self.publishing_options.get(
             "strict_supported_component_dependencies", True

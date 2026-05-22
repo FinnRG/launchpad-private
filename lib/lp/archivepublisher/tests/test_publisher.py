@@ -544,7 +544,7 @@ class ByHashHasContents(Matcher):
         self.contents = contents
         self.expected_hashes = OrderedDict(
             [
-                ("SHA256", "sha256"),
+                ("SHA512", "sha512"),
             ]
         )
 
@@ -646,9 +646,9 @@ class TestByHash(TestCaseWithFactory):
         content = b"abc\n"
         lfa = self.factory.makeLibraryFileAlias(content=content)
         by_hash_path = os.path.join(root, "dists/foo/main/source/by-hash")
-        sha256_digest = hashlib.sha256(content).hexdigest()
+        sha512_digest = hashlib.sha512(content).hexdigest()
         with open_for_writing(
-            os.path.join(by_hash_path, "SHA256", sha256_digest), "wb"
+            os.path.join(by_hash_path, "SHA512", sha512_digest), "wb"
         ) as f:
             f.write(content)
         by_hash = ByHash(root, "dists/foo/main/source", DevNullLogger())
@@ -666,16 +666,19 @@ class TestByHash(TestCaseWithFactory):
         md5 = hashlib.md5(content).hexdigest()
         sha1 = hashlib.sha1(content).hexdigest()
         sha256 = hashlib.sha256(content).hexdigest()
+        sha512 = hashlib.sha512(content).hexdigest()
         self.assertFalse(by_hash.known("abc", "MD5Sum", md5))
         self.assertFalse(by_hash.known("abc", "SHA1", sha1))
         self.assertFalse(by_hash.known("abc", "SHA256", sha256))
+        self.assertFalse(by_hash.known("abc", "SHA512", sha512))
         by_hash.add("abc", lfa, copy_from_path="abc")
         self.assertFalse(by_hash.known("abc", "MD5Sum", md5))
         self.assertFalse(by_hash.known("abc", "SHA1", sha1))
-        self.assertTrue(by_hash.known("abc", "SHA256", sha256))
-        self.assertFalse(by_hash.known("def", "SHA256", sha256))
+        self.assertFalse(by_hash.known("abc", "SHA256", sha256))
+        self.assertTrue(by_hash.known("abc", "SHA512", sha512))
+        self.assertFalse(by_hash.known("def", "SHA512", sha512))
         by_hash.add("def", lfa, copy_from_path="abc")
-        self.assertTrue(by_hash.known("def", "SHA256", sha256))
+        self.assertTrue(by_hash.known("def", "SHA512", sha512))
 
     def test_prune(self):
         root = self.makeTemporaryDirectory()
@@ -704,23 +707,27 @@ class TestByHash(TestCaseWithFactory):
         self.assertThat(by_hash_path, Not(PathExists()))
 
     def test_prune_old_hashes(self):
-        # The initial implementation of by-hash included MD5Sum and SHA1,
-        # but we since decided that this was unnecessary cruft.  If they
+        # SHA512 is the current by-hash algorithm.  Older by-hash
+        # implementations may have used MD5Sum, SHA1, or SHA256.  If they
         # exist on disk, they are pruned in their entirety.
         root = self.makeTemporaryDirectory()
         content = b"abc\n"
         lfa = self.factory.makeLibraryFileAlias(content=content)
         by_hash_path = os.path.join(root, "dists/foo/main/source/by-hash")
-        sha256_digest = hashlib.sha256(content).hexdigest()
+        sha512_digest = hashlib.sha512(content).hexdigest()
         with open_for_writing(
-            os.path.join(by_hash_path, "SHA256", sha256_digest), "wb"
+            os.path.join(by_hash_path, "SHA512", sha512_digest), "wb"
         ) as f:
             f.write(content)
-        for hashname, hashattr in (("MD5Sum", "md5"), ("SHA1", "sha1")):
+        for hashname, hashattr in (
+            ("MD5Sum", "md5"),
+            ("SHA1", "sha1"),
+            ("SHA256", "sha256"),
+        ):
             digest = getattr(hashlib, hashattr)(content).hexdigest()
             os.makedirs(os.path.join(by_hash_path, hashname))
             os.symlink(
-                os.path.join(os.pardir, "SHA256", sha256_digest),
+                os.path.join(os.pardir, "SHA512", sha512_digest),
                 os.path.join(by_hash_path, hashname, digest),
             )
         by_hash = ByHash(root, "dists/foo/main/source", DevNullLogger())
@@ -775,13 +782,16 @@ class TestByHashes(TestCaseWithFactory):
         md5 = hashlib.md5(content).hexdigest()
         sha1 = hashlib.sha1(content).hexdigest()
         sha256 = hashlib.sha256(content).hexdigest()
+        sha512 = hashlib.sha512(content).hexdigest()
         self.assertFalse(by_hashes.known(sources_path, "MD5Sum", md5))
         self.assertFalse(by_hashes.known(sources_path, "SHA1", sha1))
         self.assertFalse(by_hashes.known(sources_path, "SHA256", sha256))
+        self.assertFalse(by_hashes.known(sources_path, "SHA512", sha512))
         by_hashes.add(sources_path, lfa, copy_from_path=sources_path)
         self.assertFalse(by_hashes.known(sources_path, "MD5Sum", md5))
         self.assertFalse(by_hashes.known(sources_path, "SHA1", sha1))
-        self.assertTrue(by_hashes.known(sources_path, "SHA256", sha256))
+        self.assertFalse(by_hashes.known(sources_path, "SHA256", sha256))
+        self.assertTrue(by_hashes.known(sources_path, "SHA512", sha512))
 
     def test_prune(self):
         root = self.makeTemporaryDirectory()
@@ -3216,6 +3226,11 @@ class TestPublisher(TestPublisherBase):
                     },
                     "sha256": {
                         "sha256": hashlib.sha256(contents).hexdigest(),
+                        "name": "Test",
+                        "size": len(contents),
+                    },
+                    "sha512": {
+                        "sha512": hashlib.sha512(contents).hexdigest(),
                         "name": "Test",
                         "size": len(contents),
                     },
@@ -6081,6 +6096,197 @@ class TestDirectIndexGeneration(TestPublisherBase):
         content = self._getSourcesContent()
         self.assertIn("Section: devel", content)
         self.assertNotIn("Section: main/devel", content)
+
+
+class TestAllowedHashesPublishing(TestPublisherBase):
+    """Integration tests for allowed_hashes filtering through the publisher.
+
+    These tests verify that when a DistroSeries has allowed_hashes
+    configured, the Release file, by-hash directories, and Packages/Sources
+    index files only contain the permitted hash algorithms.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.naked_series = removeSecurityProxy(self.breezy_autotest)
+
+    def _publishAndGetRelease(self):
+        """Publish a source and return the parsed Release file."""
+        publisher = Publisher(
+            self.logger,
+            self.config,
+            self.disk_pool,
+            self.ubuntutest.main_archive,
+        )
+        self.getPubSource(filecontent=b"Source: foo\n")
+        self.runSteps(publisher, step_a=True, step_c=True, step_d=True)
+        release_path = os.path.join(
+            self.config.distsroot, "breezy-autotest", "Release"
+        )
+        return self.parseRelease(release_path)
+
+    def test_default_all_hashes_in_release(self):
+        """Without allowed_hashes, all hash fields appear in Release."""
+        release = self._publishAndGetRelease()
+        self.assertIn("md5sum", release)
+        self.assertIn("sha1", release)
+        self.assertIn("sha256", release)
+
+    def test_sha256_only_release_file(self):
+        """With allowed_hashes=["sha256"], only SHA256 in Release file."""
+        self.naked_series.allowed_hashes = ["sha256"]
+        release = self._publishAndGetRelease()
+        self.assertNotIn("md5sum", release)
+        self.assertNotIn("sha1", release)
+        self.assertIn("sha256", release)
+
+    def test_sha256_sha512_release_file(self):
+        """With allowed_hashes=["sha256", "sha512"], both in Release."""
+        self.naked_series.allowed_hashes = ["sha256", "sha512"]
+        release = self._publishAndGetRelease()
+        self.assertNotIn("md5sum", release)
+        self.assertNotIn("sha1", release)
+        self.assertIn("sha256", release)
+        self.assertIn("sha512", release)
+
+    def test_by_hash_only_uses_allowed_hashes(self):
+        """by-hash directories only contain SHA256 subdirs (strongest)."""
+        self.naked_series.publish_by_hash = True
+        self.naked_series.advertise_by_hash = True
+        self.naked_series.allowed_hashes = ["sha256"]
+        publisher = Publisher(
+            self.logger,
+            self.config,
+            self.disk_pool,
+            self.ubuntutest.main_archive,
+        )
+        self.getPubSource(filecontent=b"Source: foo\n")
+        self.runSteps(publisher, step_a=True, step_c=True, step_d=True)
+
+        suite_path = partial(
+            os.path.join, self.config.distsroot, "breezy-autotest"
+        )
+        by_hash_path = suite_path("main", "source", "by-hash")
+        self.assertThat(by_hash_path, PathExists())
+        # Only SHA256 subdir should exist
+        self.assertIn("SHA256", os.listdir(by_hash_path))
+        self.assertNotIn("MD5Sum", os.listdir(by_hash_path))
+        self.assertNotIn("SHA1", os.listdir(by_hash_path))
+        self.assertNotIn("SHA512", os.listdir(by_hash_path))
+
+    def test_sources_index_respects_allowed_hashes(self):
+        """Sources index only contains allowed hash fields."""
+        self.naked_series.allowed_hashes = ["sha256"]
+        publisher = Publisher(
+            self.logger,
+            self.config,
+            self.disk_pool,
+            self.ubuntutest.main_archive,
+        )
+        self.getPubSource(filecontent=b"Source: foo\n")
+        publisher.A_publish(False)
+        self.layer.commit()
+        publisher.C_doDirectIndexes(False)
+
+        sources_path = os.path.join(
+            self.config.distsroot,
+            "breezy-autotest",
+            "main",
+            "source",
+            "Sources.gz",
+        )
+        with gzip.open(sources_path, "rt") as f:
+            content = f.read()
+        # Files is always emitted
+        self.assertIn("Files:", content)
+        self.assertNotIn("Checksums-Sha1:", content)
+        self.assertIn("Checksums-Sha256:", content)
+        self.assertNotIn("Checksums-Sha512:", content)
+
+    def test_packages_index_respects_allowed_hashes(self):
+        """Packages index only contains allowed hash fields."""
+        self.naked_series.allowed_hashes = ["sha256"]
+        publisher = Publisher(
+            self.logger,
+            self.config,
+            self.disk_pool,
+            self.ubuntutest.main_archive,
+        )
+        self.getPubSource(filecontent=b"Source: foo\n")
+        self.getPubBinaries(filecontent=b"Binary: foo-bin\n")
+        publisher.A_publish(False)
+        self.layer.commit()
+        publisher.C_doDirectIndexes(False)
+
+        packages_path = os.path.join(
+            self.config.distsroot,
+            "breezy-autotest",
+            "main",
+            "binary-i386",
+            "Packages.gz",
+        )
+        with gzip.open(packages_path, "rt") as f:
+            content = f.read()
+        self.assertNotIn("MD5sum:", content)
+        self.assertNotIn("SHA1:", content)
+        self.assertIn("SHA256:", content)
+        self.assertNotIn("SHA512:", content)
+        # Size and Filename always present
+        self.assertIn("Size:", content)
+        self.assertIn("Filename:", content)
+
+    def test_default_allowed_hashes_sources_has_all(self):
+        """Without allowed_hashes set, Sources has all hash fields."""
+        publisher = Publisher(
+            self.logger,
+            self.config,
+            self.disk_pool,
+            self.ubuntutest.main_archive,
+        )
+        self.getPubSource(filecontent=b"Source: foo\n")
+        publisher.A_publish(False)
+        self.layer.commit()
+        publisher.C_doDirectIndexes(False)
+
+        sources_path = os.path.join(
+            self.config.distsroot,
+            "breezy-autotest",
+            "main",
+            "source",
+            "Sources.gz",
+        )
+        with gzip.open(sources_path, "rt") as f:
+            content = f.read()
+        self.assertIn("Files:", content)
+        self.assertIn("Checksums-Sha1:", content)
+        self.assertIn("Checksums-Sha256:", content)
+
+    def test_default_allowed_hashes_packages_has_all(self):
+        """Without allowed_hashes set, Packages has all hash fields."""
+        publisher = Publisher(
+            self.logger,
+            self.config,
+            self.disk_pool,
+            self.ubuntutest.main_archive,
+        )
+        self.getPubSource(filecontent=b"Source: foo\n")
+        self.getPubBinaries(filecontent=b"Binary: foo-bin\n")
+        publisher.A_publish(False)
+        self.layer.commit()
+        publisher.C_doDirectIndexes(False)
+
+        packages_path = os.path.join(
+            self.config.distsroot,
+            "breezy-autotest",
+            "main",
+            "binary-i386",
+            "Packages.gz",
+        )
+        with gzip.open(packages_path, "rt") as f:
+            content = f.read()
+        self.assertIn("MD5sum:", content)
+        self.assertIn("SHA1:", content)
+        self.assertIn("SHA256:", content)
 
 
 load_tests = load_tests_apply_scenarios
