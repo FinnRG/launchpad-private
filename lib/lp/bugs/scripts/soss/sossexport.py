@@ -56,7 +56,7 @@ class SOSSExporter(SVTExporter):
                 channel=SOSSRecord.Channel(
                     value="/".join(s for s in bugtask.channel if s is not None)
                 ),
-                repositories=bugtask.metadata.get("repositories"),
+                repositories=bugtask.metadata.get("repositories", ()),
                 status=SOSSRecord.PackageStatusEnum(
                     PACKAGE_STATUS_MAP_REVERSE.get(
                         bugtask.status,
