@@ -97,8 +97,8 @@ from lp.services.webapp import (
     StandardLaunchpadFacets,
     canonical_url,
     enabled_with_permission,
+    safe_html,
     stepthrough,
-    structured,
 )
 from lp.services.webapp.authorization import check_permission
 from lp.services.webapp.breadcrumb import Breadcrumb
@@ -249,7 +249,7 @@ class ProjectOverviewMenu(ProjectEditMenuMixin, ApplicationMenu):
         return Link("+milestones", text, icon="info")
 
     def rdf(self):
-        text = structured(
+        text = safe_html(
             'Download <abbr title="Resource Description Framework">'
             "RDF</abbr> metadata"
         )

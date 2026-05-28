@@ -37,7 +37,12 @@ from lp.services.config import config
 from lp.services.features import getFeatureFlag
 from lp.services.utils import obfuscate_email, re_email_address
 from lp.services.webapp import canonical_url
-from lp.services.webapp.escaping import html_escape, html_unescape, structured
+from lp.services.webapp.escaping import (
+    html_escape,
+    html_unescape,
+    safe_html,
+    structured,
+)
 from lp.services.webapp.interfaces import ILaunchBag
 
 
@@ -420,7 +425,7 @@ class FormattersAPI:
                     '<a rel="nofollow" '
                     'href="%(url)s">%(linked_text)s</a>%(trailers)s',
                     url=url,
-                    linked_text=structured(add_word_breaks(html_escape(url))),
+                    linked_text=safe_html(add_word_breaks(html_escape(url))),
                     trailers=trailers,
                 ).escapedtext
             else:

@@ -8,7 +8,7 @@ from textwrap import dedent
 
 from lp import _
 from lp.app.validators import LaunchpadValidationError
-from lp.services.webapp.escaping import html_escape, structured
+from lp.services.webapp.escaping import html_escape, safe_html
 
 valid_name_pattern = re.compile(r"^[a-z0-9][a-z0-9\+\.\-]+$")
 valid_bug_name_pattern = re.compile(r"^[a-z][a-z0-9\+\.\-]+$")
@@ -77,7 +77,7 @@ def name_validator(name):
             mapping={"name": html_escape(name)},
         )
 
-        raise LaunchpadValidationError(structured(message))
+        raise LaunchpadValidationError(safe_html(message))
     return True
 
 
@@ -97,5 +97,5 @@ def bug_name_validator(name):
             mapping={"name": html_escape(name)},
         )
 
-        raise LaunchpadValidationError(structured(message))
+        raise LaunchpadValidationError(safe_html(message))
     return True

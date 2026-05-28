@@ -63,7 +63,7 @@ from lp.services.utils import round_half_up
 from lp.services.webapp.authorization import check_permission
 from lp.services.webapp.canonicalurl import nearest_adapter
 from lp.services.webapp.error import SystemErrorView
-from lp.services.webapp.escaping import html_escape, structured
+from lp.services.webapp.escaping import html_escape, safe_html, structured
 from lp.services.webapp.interfaces import (
     IApplicationMenu,
     IContextMenu,
@@ -1614,7 +1614,7 @@ class PillarFormatterAPI(CustomizableFormatter):
             "url": self.url(view_name, rootsite),
             "name": context.name,
             "displayname": context.displayname,
-            "summary": structured(self._make_link_summary()),
+            "summary": safe_html(self._make_link_summary()),
         }
         custom_icon = ObjectImageDisplayAPI(context).custom_icon_url()
         if custom_icon is None:
@@ -1898,8 +1898,8 @@ class BugAttachmentFormatterAPI(CustomizableFormatter):
         else:
             rel = ""
 
-        title = structured(self._context.title).escapedtext
-        url = structured(self._context.displayed_url).escapedtext
+        title = html_escape(self._context.title)
+        url = html_escape(self._context.displayed_url)
 
         return """<a href="{url}"{css}{rel}>{title}</a>""".format(
             title=title,
@@ -2323,7 +2323,7 @@ class BugWatchFormatterAPI(ObjectFormatterAPI):
         an email address, only the summary is returned (i.e. no link).
         """
         if summary is None or len(summary) == 0:
-            summary = structured("&mdash;")
+            summary = safe_html("&mdash;")
         url = self._context.url
         if url.startswith("mailto:") and getUtility(ILaunchBag).user is None:
             return html_escape(summary)
@@ -3129,10 +3129,13 @@ class SocialAccountFormatterAPI(ObjectFormatterAPI):
         return SOCIAL_PLATFORM_TYPES_MAP.get(self._context.platform)
 
     def icon(self, platform):
-        return (
-            f'<img class="user-social-accounts__icon" alt="{platform.title}" '
-            f'title="{platform.title}" src="/@@/{platform.icon}" />'
-        )
+        return structured(
+            '<img class="user-social-accounts__icon" alt="%s" '
+            'title="%s" src="/@@/%s" />',
+            platform.title,
+            platform.title,
+            platform.icon,
+        ).escapedtext
 
     def formatted_display(self, view_name=None):
         platform = self.getPlatformClass()
@@ -3142,10 +3145,16 @@ class SocialAccountFormatterAPI(ObjectFormatterAPI):
         for key, value in self._context.identity.items():
             parsed_identity[key] = quote(value)
 
-        text_display = platform.display_format.format(**parsed_identity)
+        text_display = html_escape(
+            platform.display_format.format(**parsed_identity)
+        )
 
         if platform.url:
             url = platform.url.format(**parsed_identity)
-            text_display = f'<a href={url} target="_blank">{text_display}</a>'
+            text_display = structured(
+                '<a href="%s" target="_blank">%s</a>',
+                url,
+                safe_html(text_display),
+            ).escapedtext
 
-        return structured(f"{icon} {text_display}").escapedtext
+        return safe_html(f"{icon} {text_display}").escapedtext

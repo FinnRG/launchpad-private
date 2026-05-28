@@ -96,7 +96,7 @@ from lp.services.webapp import (
 from lp.services.webapp.authorization import check_permission
 from lp.services.webapp.batching import BatchNavigator
 from lp.services.webapp.breadcrumb import Breadcrumb
-from lp.services.webapp.escaping import structured
+from lp.services.webapp.escaping import safe_html, structured
 from lp.services.webapp.vhosts import allvhosts
 from lp.services.worlddata.helpers import browser_languages
 from lp.services.worlddata.interfaces.country import ICountry
@@ -633,7 +633,7 @@ class ProductSeriesUbuntuPackagingView(LaunchpadFormView):
             sourcepackage = distroseries.getSourcePackage(
                 sourcepackagename.name
             )
-            message = structured(
+            message = safe_html(
                 'The <a href="%s">%s</a> package in %s is already linked to '
                 "another series."
                 % (
@@ -807,7 +807,7 @@ class ProductSeriesDeleteView(RegistryDeleteViewMixin, LaunchpadEditFormView):
         if self.context.is_development_focus:
             self.addError(self.development_focus_message)
         if self.has_linked_packages:
-            self.addError(structured(self.linked_packages_message))
+            self.addError(safe_html(self.linked_packages_message))
         if self.has_translations:
             self.addError(self.translations_message)
         return self.can_delete

@@ -52,7 +52,7 @@ from lp.services.verification.interfaces.logintoken import (
     ILoginTokenSet,
 )
 from lp.services.webapp import GetitemNavigation, LaunchpadView, canonical_url
-from lp.services.webapp.escaping import structured
+from lp.services.webapp.escaping import safe_html, structured
 from lp.services.webapp.interfaces import IAlwaysSubmittedWidget
 from lp.services.webapp.vhosts import allvhosts
 
@@ -349,7 +349,7 @@ class ValidateGPGKeyView(BaseTokenView, LaunchpadFormView):
                 "</a>",
                 mapping=dict(lpkey=lpkey.displayname, url=person_url),
             )
-            self.request.response.addInfoNotification(structured(msgid))
+            self.request.response.addInfoNotification(safe_html(msgid))
 
     def _getGPGKey(self):
         """Look up the OpenPGP key for this login token.
@@ -378,7 +378,7 @@ class ValidateGPGKeyView(BaseTokenView, LaunchpadFormView):
                 "cancel your request</a>.",
                 mapping=dict(fingerprint=fingerprint, url=person_url),
             )
-            self.addError(structured(message))
+            self.addError(safe_html(message))
         except GPGKeyRevoked as e:
             # If key is globally revoked, skip the import and consume the
             # token.
@@ -390,7 +390,7 @@ class ValidateGPGKeyView(BaseTokenView, LaunchpadFormView):
                 "import</a> the new key.",
                 mapping=dict(key=e.key.fingerprint, url=person_url),
             )
-            self.addError(structured(message))
+            self.addError(safe_html(message))
         except GPGKeyExpired as e:
             message = _(
                 "The key ${key} cannot be validated because it has expired. "
@@ -399,7 +399,7 @@ class ValidateGPGKeyView(BaseTokenView, LaunchpadFormView):
                 "then enter <kbd>expire</kbd>), and try again.",
                 mapping=dict(key=e.key.fingerprint),
             )
-            self.addError(structured(message))
+            self.addError(safe_html(message))
         else:
             return key
 

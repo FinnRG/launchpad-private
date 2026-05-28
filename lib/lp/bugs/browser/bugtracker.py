@@ -59,6 +59,7 @@ from lp.services.webapp import (
     Navigation,
     canonical_url,
     redirection,
+    safe_html,
     stepthrough,
     structured,
 )
@@ -328,7 +329,7 @@ class BugTrackerEditView(LaunchpadEditFormView):
             aliases_errors = self.widgets["aliases"]._error.errors.args[0]
             maybe_structured_errors = [
                 (
-                    structured(error)
+                    safe_html(error)
                     if isinstance(error, LaunchpadValidationError)
                     else error
                 )

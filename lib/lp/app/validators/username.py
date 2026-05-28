@@ -8,7 +8,7 @@ from textwrap import dedent
 
 from lp import _
 from lp.app.validators import LaunchpadValidationError
-from lp.services.webapp.escaping import html_escape, structured
+from lp.services.webapp.escaping import html_escape, safe_html
 
 username_valid_pattern = re.compile(r"^[a-z0-9](-?[a-z0-9])+$")
 username_blocked_pattern = re.compile(r"^[0-9-]+$")
@@ -90,6 +90,6 @@ def username_validator(username):
             ),
             mapping={"username": html_escape(username)},
         )
-        raise LaunchpadValidationError(structured(message))
+        raise LaunchpadValidationError(safe_html(message))
 
     return True

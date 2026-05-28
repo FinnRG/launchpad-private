@@ -179,6 +179,7 @@ from lp.services.webapp import (
     StandardLaunchpadFacets,
     canonical_url,
     enabled_with_permission,
+    safe_html,
     sorted_version_numbers,
     stepthrough,
     stepto,
@@ -636,7 +637,7 @@ class ProductOverviewMenu(
         return Link("+announcements", text, icon="info", enabled=enabled)
 
     def rdf(self):
-        text = structured(
+        text = safe_html(
             '<abbr title="Resource Description Framework">'
             "RDF</abbr> metadata"
         )
