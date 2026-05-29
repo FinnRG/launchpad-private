@@ -3145,9 +3145,13 @@ class SocialAccountFormatterAPI(ObjectFormatterAPI):
         for key, value in self._context.identity.items():
             parsed_identity[key] = quote(value)
 
-        text_display = html_escape(
-            platform.display_format.format(**parsed_identity)
-        )
+        # Escape identity values for use inside HTML, then format into
+        # the trusted platform display_format template (which may contain
+        # HTML tags like <strong>).
+        escaped_identity = {
+            key: html_escape(value) for key, value in parsed_identity.items()
+        }
+        text_display = platform.display_format.format(**escaped_identity)
 
         if platform.url:
             url = platform.url.format(**parsed_identity)

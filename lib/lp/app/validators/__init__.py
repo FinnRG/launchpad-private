@@ -85,8 +85,8 @@ class WidgetInputErrorView(Z3WidgetInputErrorView):
         Otherwise return the error message.
 
         >>> from zope.formlib.interfaces import WidgetInputError
-        >>> from lp.services.webapp.escaping import structured
-        >>> bold_error = LaunchpadValidationError(structured("<b>Foo</b>"))
+        >>> from lp.services.webapp.escaping import safe_html
+        >>> bold_error = LaunchpadValidationError(safe_html("<b>Foo</b>"))
         >>> err = WidgetInputError("foo", "Foo", bold_error)
         >>> view = WidgetInputErrorView(err, None)
         >>> print(view.snippet())

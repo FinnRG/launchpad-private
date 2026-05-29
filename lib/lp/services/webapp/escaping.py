@@ -93,6 +93,7 @@ class safe_html:
     """
 
     def __init__(self, text):
+        text = translate_if_i18n(text)
         if isinstance(text, bytes):
             text = text.decode()
         else:
