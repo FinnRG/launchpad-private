@@ -212,6 +212,8 @@ class PyInstrumentProfiler(Profiler):
             self.session = _PyInstrumentSession.combine(self.session, session)
 
     def finish(self):
+        "Delete the profiler instance and return the profiling data"
+        del self.p
         return PyInstrumentStats(self.session, self.count)
 
 
@@ -223,7 +225,7 @@ class PyInstrumentStats:
     def save(self, filename, **kwargs):
         if not self.session:
             return
-        with open(filename, "w") as f:
+        with open(filename, "w", encoding="utf-8") as f:
             renderer = HTMLRenderer()
             f.write(renderer.render(self.session))
 
@@ -723,6 +725,12 @@ def get_desired_profile_actions(request):
             for key in result.keys():
                 if key not in available_options:
                     del result[key]
+            # PyInstrument and CProfiler (pstats/callgrind) cannot run
+            # together. Let "pyinstrument" take precedence if multiple
+            # profilers are specified.
+            if "pyinstrument" in result:
+                result.pop("pstats", None)
+                result.pop("callgrind", None)
             # If we didn't end up with any known actions, we need to help the
             # user.
             if not result:
