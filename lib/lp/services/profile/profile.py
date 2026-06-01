@@ -4,6 +4,7 @@
 """Profile requests when enabled."""
 
 __all__ = [
+    "ProfilerType",
     "profiling",
     "start",
     "stop",
@@ -17,12 +18,17 @@ import pstats
 import re
 import sys
 import threading
+from abc import ABC, abstractmethod
 from cProfile import Profile
 from datetime import datetime
+from enum import Enum
 from functools import partial
 
 import oops_datedir_repo.serializer_rfc822
 from breezy import lsprof
+from pyinstrument import Profiler as _PyInstrumentProfiler
+from pyinstrument.renderers import ConsoleRenderer, HTMLRenderer
+from pyinstrument.session import Session as _PyInstrumentSession
 from zope.component import adapter, getUtility
 from zope.contenttype.parse import parse
 from zope.error.interfaces import IErrorReportingUtility
@@ -38,41 +44,62 @@ from lp.services.features import getFeatureFlag
 from lp.services.profile.mem import memory, resident
 
 
+class ProfilerType(Enum):
+    """
+    Types of profilers available for inline profiling.
+
+    Attributes:
+        CPROFILE: Built-in cProfile with detailed statistics.
+        PYINSTRUMENT: PyInstrument with a call-tree view.
+    """
+
+    CPROFILE = "cprofile"
+    PYINSTRUMENT = "pyinstrument"
+
+
 class ProfilingOops(Exception):
     """Fake exception used to log OOPS information when profiling pages."""
 
 
-class Profiler:
+class Profiler(ABC):
     profiler_lock = threading.Lock()
-    """Global lock used to serialise profiles."""
 
     started = enabled = False
 
+    @abstractmethod
+    def start_profiler(self):
+        pass
+
+    @abstractmethod
+    def stop_profiler(self):
+        pass
+
+    @abstractmethod
+    def store_profiler_data(self):
+        pass
+
+    @abstractmethod
+    def finish(self):
+        pass
+
     def disable(self):
         if self.enabled:
-            self.p.disable()
+            self.stop_profiler()
             self.enabled = False
-            stats = pstats.Stats(self.p)
-            if self.pstats is None:
-                self.pstats = stats
-            else:
-                self.pstats.add(stats)
+            self.store_profiler_data()
             self.count += 1
 
     def enable(self):
         if not self.started:
             self.start()
         elif not self.enabled:
-            self.p = Profile()
-            self.p.enable(subcalls=True)
+            self.start_profiler()
             self.enabled = True
 
     def start(self):
-        """Start profiling."""
         if self.started:
             return
         self.count = 0
-        self.pstats = None
         self.started = True
         self.profiler_lock.acquire(True)  # Blocks.
         try:
@@ -83,21 +110,39 @@ class Profiler:
             raise
 
     def stop(self):
-        """Stop profiling.
-
-        This unhooks from threading and cleans up the profiler, returning
-        the gathered Stats object.
-
-        :return: A breezy.lsprof.Stats object.
-        """
         try:
             self.disable()
-            p = self.p
-            del self.p
-            return Stats(self.pstats, p.getstats(), self.count)
+            return self.finish()
         finally:
             self.profiler_lock.release()
             self.started = False
+
+
+class CProfiler(Profiler):
+
+    def __init__(self):
+        self.sessions = None
+        self.p = None
+
+    def start_profiler(self):
+        self.p = Profile()
+        self.p.enable(subcalls=True)
+
+    def stop_profiler(self):
+        self.p.disable()
+
+    def store_profiler_data(self):
+        stats = pstats.Stats(self.p)
+        if self.sessions is None:
+            self.sessions = stats
+        else:
+            self.sessions.add(stats)
+
+    def finish(self):
+        "Delete the profiler instance and return the profiling data"
+        p = self.p
+        del self.p
+        return Stats(self.sessions, p.getstats(), self.count)
 
 
 class Stats:
@@ -120,6 +165,16 @@ class Stats:
         else:
             self.stats.dump_stats(filename)
 
+    def generate_summary(self):
+        summaries = {}
+        self.strip_dirs()
+        for name in ("time", "cumulative", "calls"):
+            self.sort(name)
+            f = io.StringIO()
+            self.pprint(file=f)
+            summaries[name] = f.getvalue()
+        return summaries
+
     def strip_dirs(self):
         self.stats.strip_dirs()
 
@@ -136,6 +191,53 @@ class Stats:
             stats.stream = stream
 
 
+class PyInstrumentProfiler(Profiler):
+
+    def __init__(self):
+        self.session = None
+        self.p = None
+
+    def start_profiler(self):
+        self.p = _PyInstrumentProfiler()
+        self.p.start()
+
+    def stop_profiler(self):
+        return self.p.stop()
+
+    def store_profiler_data(self):
+        session = self.p.last_session
+        if self.session is None:
+            self.session = session
+        else:
+            self.session = _PyInstrumentSession.combine(self.session, session)
+
+    def finish(self):
+        "Delete the profiler instance and return the profiling data"
+        del self.p
+        return PyInstrumentStats(self.session, self.count)
+
+
+class PyInstrumentStats:
+    def __init__(self, session, count):
+        self.session = session
+        self.count = count
+
+    def save(self, filename, **kwargs):
+        if not self.session:
+            return
+        with open(filename, "w", encoding="utf-8") as f:
+            renderer = HTMLRenderer()
+            f.write(renderer.render(self.session))
+
+    def generate_summary(self):
+        if not self.session:
+            return {}
+        f = io.StringIO()
+        renderer = ConsoleRenderer()
+        f.write(renderer.render(self.session))
+        return {"pyinstrument_output": f.getvalue()}
+
+
 # Profilers may only run one at a time, but block and serialize.
 
 
@@ -150,6 +252,19 @@ class Profilers(threading.local):
 
 
 _profilers = Profilers()
+
+
+def _get_profiler_class(actions):
+    """Determine which profiler class to use based on requested actions.
+
+    :param actions: Dict of profiling actions requested.
+    :return: Profiler class to instantiate.
+    """
+    if "pyinstrument" in actions:
+        return PyInstrumentProfiler
+
+    # default CProfile profiler
+    return CProfiler
 
 
 def before_traverse(event):
@@ -208,7 +323,8 @@ def _maybe_profile(event):
                 condition = condition["condition"]
             da.start_sql_logging(condition)
         if "show" in actions or available_profilers.intersection(actions):
-            _profilers.profiler = Profiler()
+            profiler_class = _get_profiler_class(actions)
+            _profilers.profiler = profiler_class()
             _profilers.profiler.start()
         _profilers.profiling = True
         _profilers.actions = actions
@@ -219,13 +335,17 @@ template = PageTemplateFile(
 )
 
 
-available_profilers = frozenset(("pstats", "callgrind"))
+available_profilers = frozenset(("pstats", "callgrind", "pyinstrument"))
 
 
-def start():
-    """Turn on profiling from code."""
+def start(profiler=ProfilerType.CPROFILE):
+    """Turn on profiling from code.
+
+    :param profiler: Profiling backend to use. Must be a ProfilerType enum
+                     value. Defaults to ProfilerType.CPROFILE.
+    """
     actions = _profilers.actions
-    profiler = _profilers.profiler
+    profiler_obj = _profilers.profiler
     if actions is None:
         actions = _profilers.actions = {}
         _profilers.profiling = True
@@ -235,14 +355,20 @@ def start():
         # We have a request-based profile in progress.  That wins.
         actions["inline_ignored"] = ""
         return
-    actions.update((k, "") for k in ("pstats", "show", "inline"))
-    if profiler is None:
-        profiler = _profilers.profiler = Profiler()
-        profiler.start()
+    actions.update((k, "") for k in ("show", "inline"))
+    if profiler == ProfilerType.PYINSTRUMENT:
+        actions["pyinstrument"] = ""
+    else:
+        # Default to pstats for cProfile
+        actions["pstats"] = ""
+    if profiler_obj is None:
+        profiler_class = _get_profiler_class(actions)
+        profiler_obj = _profilers.profiler = profiler_class()
+        profiler_obj.start()
     else:
         # For simplicity, we just silently ignore start requests when we
         # have already started.
-        profiler.enable()
+        profiler_obj.enable()
 
 
 def stop():
@@ -256,8 +382,19 @@ def stop():
 
 
 @contextlib.contextmanager
-def profiling():
-    start()
+def profiling(profiler=ProfilerType.CPROFILE):
+    """Context manager for inline profiling.
+
+    :param profiler: Profiling backend to use. Must be a ProfilerType enum
+                     value. Defaults to ProfilerType.CPROFILE.
+
+    Example:
+        from lp.services.profile import profiling, ProfilerType
+
+        with profiling(ProfilerType.PYINSTRUMENT):
+            expensive_operation()
+    """
+    start(profiler=profiler)
     try:
         yield
     finally:
@@ -332,6 +469,12 @@ def end_request(event):
             pstats_path = os.path.join(dump_path, filename + ".prof")
             prof_stats.save(pstats_path)
             template_context["pstats_path"] = os.path.abspath(pstats_path)
+        if "pyinstrument" in actions:
+            pyinstrument_path = os.path.join(dump_path, filename + ".html")
+            prof_stats.save(pyinstrument_path)
+            template_context["pyinstrument_path"] = os.path.abspath(
+                pyinstrument_path
+            )
         if is_html and "show" in actions:
             # Generate rfc822 OOPS result (might be nice to have an html
             # serializer..).
@@ -339,12 +482,8 @@ def end_request(event):
                 oops_datedir_repo.serializer_rfc822.to_chunks(oops_report)
             ).decode("UTF-8", "replace")
             # Generate profile summaries.
-            prof_stats.strip_dirs()
-            for name in ("time", "cumulative", "calls"):
-                prof_stats.sort(name)
-                f = io.StringIO()
-                prof_stats.pprint(file=f)
-                template_context[name] = f.getvalue()
+            for key, summary in prof_stats.generate_summary().items():
+                template_context[key] = summary
         template_context["profile_count"] = prof_stats.count
         template_context["multiple_profiles"] = prof_stats.count > 1
         # Try to free some more memory.
@@ -586,6 +725,12 @@ def get_desired_profile_actions(request):
             for key in result.keys():
                 if key not in available_options:
                     del result[key]
+            # PyInstrument and CProfiler (pstats/callgrind) cannot run
+            # together. Let "pyinstrument" take precedence if multiple
+            # profilers are specified.
+            if "pyinstrument" in result:
+                result.pop("pstats", None)
+                result.pop("callgrind", None)
             # If we didn't end up with any known actions, we need to help the
             # user.
             if not result:
