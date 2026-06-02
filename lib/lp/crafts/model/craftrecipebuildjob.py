@@ -10,12 +10,14 @@ __all__ = [
 ]
 
 import glob
+import io
 import json
 import os
 import subprocess
 import tarfile
 import tempfile
 from configparser import NoSectionError
+from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
@@ -53,6 +55,147 @@ CARGO_HTTP_TIMEOUT = 60
 # Memory limits for different job types
 MAVEN_JOB_MEMORY_LIMIT = 8 * (1024**3)  # 8GB
 DEFAULT_JOB_MEMORY_LIMIT = 2 * (1024**3)  # 2GB
+
+
+class ArtifactPublisher:
+    """Base class for language-specific artifact publishers."""
+
+    memory_limit = DEFAULT_JOB_MEMORY_LIMIT
+
+    def can_handle(self, files):
+        """Return True if this publisher handles the given build files.
+
+        :param files: dict with keys ``crate`` (single LFA or None),
+            ``jars`` (list of LFAs), ``pom`` (single LFA or None).
+        """
+        raise NotImplementedError
+
+    def publish(self, job, tmpdir, env_vars, files):
+        """Download, prepare, and publish artifacts.
+
+        :param job: The `CraftPublishingJob` instance.
+        :param tmpdir: Path to a temporary working directory.
+        :param env_vars: Resolved environment variables dict.
+        :param files: Same dict as `can_handle`.
+        """
+        raise NotImplementedError
+
+
+class RustPublisher(ArtifactPublisher):
+    """Publish Rust crate artifacts."""
+
+    def can_handle(self, files):
+        return files["crate"] is not None
+
+    def publish(self, job, tmpdir, env_vars, files):
+        crate_file = files["crate"]
+
+        crate_path = os.path.join(tmpdir, crate_file.filename)
+        crate_file.open()
+        try:
+            with open(crate_path, "wb") as f:
+                f.write(crate_file.read())
+        finally:
+            crate_file.close()
+
+        crate_extract_dir = os.path.join(tmpdir, "crate_contents")
+        os.makedirs(crate_extract_dir, exist_ok=True)
+
+        try:
+            with tarfile.open(crate_path, "r:*") as tar:
+                safe_extract_tar(tar, crate_extract_dir)
+        except (tarfile.TarError, SafeTarExtractError) as e:
+            raise Exception(f"Failed to extract crate: {e}") from e
+
+        extracted_dirs = [
+            d
+            for d in os.listdir(crate_extract_dir)
+            if os.path.isdir(os.path.join(crate_extract_dir, d))
+        ]
+
+        if not extracted_dirs:
+            raise Exception("No directory found in extracted crate")
+
+        crate_dir = os.path.join(crate_extract_dir, extracted_dirs[0])
+        job._publish_rust_crate(crate_dir, env_vars, crate_file.filename)
+
+
+class MavenPublisher(ArtifactPublisher):
+    """Publish Maven JAR artifacts."""
+
+    memory_limit = MAVEN_JOB_MEMORY_LIMIT
+
+    def can_handle(self, files):
+        return files["jar"] is not None and files["pom"] is not None
+
+    def publish(self, job, tmpdir, env_vars, files):
+        jar_file = files["jar"]
+        pom_file = files["pom"]
+
+        # Download the jar file
+        jar_filename = os.path.basename(jar_file.filename)
+        if not jar_filename or jar_filename != jar_file.filename:
+            raise Exception(f"Invalid jar filename: {jar_file.filename!r}")
+        jar_path = os.path.join(tmpdir, jar_filename)
+        jar_file.open()
+        try:
+            with open(jar_path, "wb") as f:
+                f.write(jar_file.read())
+        finally:
+            jar_file.close()
+
+        # Download the pom file
+        pom_path = os.path.join(tmpdir, "pom.xml")
+        pom_file.open()
+        try:
+            with open(pom_path, "wb") as f:
+                f.write(pom_file.read())
+        finally:
+            pom_file.close()
+
+        # Publish the Maven artifact
+        job._publish_maven_artifact(
+            tmpdir,
+            env_vars,
+            jar_file.filename,
+            jar_path,
+            pom_path,
+        )
+
+
+class MavenStagedRepoPublisher(ArtifactPublisher):
+    """Publish Maven staged repository archives."""
+
+    memory_limit = MAVEN_JOB_MEMORY_LIMIT
+
+    def can_handle(self, files):
+        return files["maven_repo_archive"] is not None
+
+    def publish(self, job, tmpdir, env_vars, files):
+        archive_file = files["maven_repo_archive"]
+        archive_path = os.path.join(tmpdir, archive_file.filename)
+        archive_file.open()
+        try:
+            with open(archive_path, "wb") as f:
+                f.write(archive_file.read())
+        finally:
+            archive_file.close()
+
+        extract_dir = os.path.join(tmpdir, "maven_repo")
+        os.makedirs(extract_dir, exist_ok=True)
+
+        try:
+            with tarfile.open(archive_path, "r:*") as tar:
+                safe_extract_tar(tar, extract_dir)
+        except (tarfile.TarError, SafeTarExtractError) as e:
+            raise Exception(
+                f"Failed to extract Maven staged repository: {e}"
+            ) from e
+
+        job._publish_maven_staged_repo(extract_dir, env_vars)
+
+
+_PUBLISHERS = [RustPublisher(), MavenStagedRepoPublisher(), MavenPublisher()]
 
 
 class CraftRecipeBuildJobType(DBEnumeratedType):
@@ -168,21 +311,11 @@ class CraftPublishingJob(CraftRecipeBuildJobDerived):
 
     @property
     def memory_limit(self):
-        """Dynamically determine memory limit based on job type.
-
-        Maven jobs need more memory for JVM operations, while Rust/Cargo jobs
-        can work with the default limit.
-
-        There is some duplication here with checking the file type in the run
-        method, but it's not worth refactoring atm.
-        """
-        # Check if this job will be processing Maven artifacts
-        for _, lfa, _ in self.build.getFiles():
-            if lfa.filename.endswith(".jar") or lfa.filename == "pom.xml":
-                # Maven job - needs more memory for JVM
-                return MAVEN_JOB_MEMORY_LIMIT
-
-        # Non-Maven job (Rust/Cargo) - use default limit
+        """Dynamically determine memory limit based on artifact type."""
+        files = self._classify_files()
+        publisher = self._get_publisher(files)
+        if publisher is not None:
+            return publisher.memory_limit
         return DEFAULT_JOB_MEMORY_LIMIT
 
     @classmethod
@@ -207,141 +340,127 @@ class CraftPublishingJob(CraftRecipeBuildJobDerived):
         """See `ICraftPublishingJob`."""
         self.metadata["error_message"] = message
 
+    def _classify_files(self):
+        """Scan build files into a dict keyed by artifact type.
+
+        :return: dict with keys ``crate`` (single LFA or None),
+            ``jar`` (single LFA or None), ``pom`` (single LFA or None),
+            ``maven_repo_archive`` (single LFA or None).
+        """
+        crate_file = None
+        jar_file = None
+        pom_file = None
+        maven_repo_archive = None
+
+        for _, lfa, _ in self.build.getFiles():
+            if lfa.filename.endswith(".crate"):
+                crate_file = lfa
+            elif lfa.filename.endswith(".jar"):
+                jar_file = lfa
+            elif lfa.filename == "pom.xml":
+                pom_file = lfa
+            elif self._is_maven_staged_repo_archive(lfa):
+                maven_repo_archive = lfa
+
+        return {
+            "crate": crate_file,
+            "jar": jar_file,
+            "pom": pom_file,
+            "maven_repo_archive": maven_repo_archive,
+        }
+
+    def _is_maven_staged_repo_archive(self, lfa):
+        """Return True if an LFA looks like a Maven staged repository tar.
+
+        We detect this from tar content rather than name so this works with
+        arbitrary artifact naming conventions.
+        """
+        if not lfa.filename.endswith(".tar.xz"):
+            return False
+
+        lfa.open()
+        try:
+            data = lfa.read()
+        finally:
+            lfa.close()
+
+        try:
+            with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tar:
+                names = [member.name for member in tar.getmembers()]
+        except tarfile.TarError:
+            return False
+
+        has_pom = any(name.endswith(".pom") for name in names)
+        has_repo_metadata = any("maven-metadata.xml" in name for name in names)
+        return has_pom and has_repo_metadata
+
+    def _get_publisher(self, files):
+        """Return the first matching publisher for the classified files.
+
+        :param files: dict from `_classify_files`.
+        :return: An `ArtifactPublisher` instance, or None if no match.
+        """
+        for publisher in _PUBLISHERS:
+            if publisher.can_handle(files):
+                return publisher
+        return None
+
+    def _resolve_env_vars(self):
+        """Resolve distribution config and return the environment variables.
+
+        :raises Exception: if the distribution or config cannot be determined.
+        """
+        distribution_name = None
+        git_repo = self.build.recipe.git_repository
+        if git_repo is not None:
+            if IDistributionSourcePackage.providedBy(git_repo.target):
+                distribution_name = git_repo.target.distribution.name
+
+        if not distribution_name:
+            self.error_message = "Could not determine distribution for build"
+            raise Exception(self.error_message)
+
+        try:
+            env_vars_json = config["craftbuild." + distribution_name][
+                "environment_variables"
+            ]
+            if env_vars_json and env_vars_json.lower() != "none":
+                env_vars = json.loads(env_vars_json)
+                for key, value in env_vars.items():
+                    if isinstance(value, str) and "%(write_auth)s" in value:
+                        env_vars[key] = value.replace(
+                            "%(write_auth)s",
+                            config.artifactory.write_credentials,
+                        )
+            else:
+                env_vars = {}
+        except (NoSectionError, KeyError):
+            self.error_message = (
+                f"No configuration found for {distribution_name}"
+            )
+            raise Exception(self.error_message)
+
+        if not config.launchpad.http_proxy:
+            log.warning(
+                "No HTTP proxy configured for artifact publishing. "
+                "This may cause connectivity issues with external "
+                "repositories."
+            )
+
+        return env_vars
+
     def run(self):
         """See `IRunnableJob`."""
         try:
-            # Get the distribution name to access the correct configuration
-            distribution_name = None
-            git_repo = self.build.recipe.git_repository
-            if git_repo is not None:
-                if IDistributionSourcePackage.providedBy(git_repo.target):
-                    distribution_name = git_repo.target.distribution.name
+            env_vars = self._resolve_env_vars()
+            files = self._classify_files()
+            publisher = self._get_publisher(files)
 
-            if not distribution_name:
-                self.error_message = (
-                    "Could not determine distribution for build"
-                )
-                raise Exception(self.error_message)
+            if publisher is None:
+                raise Exception("No publishable artifacts found in build")
 
-            # Get environment variables from configuration
-            try:
-                env_vars_json = config["craftbuild." + distribution_name][
-                    "environment_variables"
-                ]
-                if env_vars_json and env_vars_json.lower() != "none":
-                    env_vars = json.loads(env_vars_json)
-                    # Replace auth placeholders
-                    for key, value in env_vars.items():
-                        if (
-                            isinstance(value, str)
-                            and "%(write_auth)s" in value
-                        ):
-                            env_vars[key] = value.replace(
-                                "%(write_auth)s",
-                                config.artifactory.write_credentials,
-                            )
-                else:
-                    env_vars = {}
-            except (NoSectionError, KeyError):
-                self.error_message = (
-                    f"No configuration found for {distribution_name}"
-                )
-                raise Exception(self.error_message)
-
-            # Check if HTTP proxy is configured - log a warning but continue
-            if not config.launchpad.http_proxy:
-                log.warning(
-                    "No HTTP proxy configured for artifact publishing. "
-                    "This may cause connectivity issues with external "
-                    "repositories."
-                )
-
-            # Check if we have a .crate file or .jar file
-            crate_file = None
-            jar_file = None
-            pom_file = None
-
-            for _, lfa, _ in self.build.getFiles():
-                if lfa.filename.endswith(".crate"):
-                    crate_file = lfa
-                elif lfa.filename.endswith(".jar"):
-                    jar_file = lfa
-                elif lfa.filename == "pom.xml":
-                    pom_file = lfa
-
-            # Process the crate file
             with tempfile.TemporaryDirectory() as tmpdir:
-                if crate_file is not None:
-                    # Download the crate file
-                    crate_path = os.path.join(tmpdir, crate_file.filename)
-                    crate_file.open()
-                    try:
-                        with open(crate_path, "wb") as f:
-                            f.write(crate_file.read())
-                    finally:
-                        crate_file.close()
-
-                    # Create a directory to extract the crate
-                    crate_extract_dir = os.path.join(tmpdir, "crate_contents")
-                    os.makedirs(crate_extract_dir, exist_ok=True)
-
-                    try:
-                        with tarfile.open(crate_path, "r:*") as tar:
-                            safe_extract_tar(tar, crate_extract_dir)
-                    except (tarfile.TarError, SafeTarExtractError) as e:
-                        raise Exception(f"Failed to extract crate: {e}") from e
-
-                    # Find the extracted directory(should be the only one)
-                    extracted_dirs = [
-                        d
-                        for d in os.listdir(crate_extract_dir)
-                        if os.path.isdir(os.path.join(crate_extract_dir, d))
-                    ]
-
-                    if not extracted_dirs:
-                        raise Exception(
-                            "No directory found in extracted crate"
-                        )
-
-                    # Use the first directory as the crate directory
-                    crate_dir = os.path.join(
-                        crate_extract_dir, extracted_dirs[0]
-                    )
-
-                    # Publish the Rust crate
-                    self._publish_rust_crate(
-                        crate_dir, env_vars, crate_file.filename
-                    )
-                elif jar_file is not None and pom_file is not None:
-                    # Download the jar file
-                    jar_path = os.path.join(tmpdir, jar_file.filename)
-                    jar_file.open()
-                    try:
-                        with open(jar_path, "wb") as f:
-                            f.write(jar_file.read())
-                    finally:
-                        jar_file.close()
-
-                    # Download the pom file
-                    pom_path = os.path.join(tmpdir, "pom.xml")
-                    pom_file.open()
-                    try:
-                        with open(pom_path, "wb") as f:
-                            f.write(pom_file.read())
-                    finally:
-                        pom_file.close()
-
-                    # Publish the Maven artifact
-                    self._publish_maven_artifact(
-                        tmpdir,
-                        env_vars,
-                        jar_file.filename,
-                        jar_path,
-                        pom_path,
-                    )
-
-                else:
-                    raise Exception("No publishable artifacts found in build")
+                publisher.publish(self, tmpdir, env_vars, files)
 
         except Exception as e:
             self.error_message = str(e)
@@ -533,6 +652,147 @@ class CraftPublishingJob(CraftRecipeBuildJobDerived):
         # for release artifacts, which are stable and have fixed coordinates.
         if "SNAPSHOT" not in artifact_name:
             self._publish_properties(maven_publish_url, artifact_name)
+
+    def _publish_maven_staged_repo(self, extract_dir, env_vars):
+        """Publish a Maven staged repository tree by preserving paths."""
+        maven_publish_url = env_vars.get("MAVEN_PUBLISH_URL")
+        if not maven_publish_url:
+            raise Exception(
+                "Missing Maven publishing repository configuration"
+            )
+
+        uploaded_paths = []
+        pom_paths = set()
+        session = self._make_session()
+        for file_path in sorted(Path(extract_dir).rglob("*")):
+            if not file_path.is_file():
+                continue
+
+            # safe_extract_tar() already rejected symlinks, absolute paths,
+            # and ".." traversal on extraction.  relative_to() will raise
+            # ValueError if file_path is not under extract_dir, and
+            # _validate_maven_repo_relative_path() further rejects empty,
+            # ".", or ".." path components as a defence-in-depth measure.
+            relpath = file_path.relative_to(extract_dir).as_posix()
+            if relpath == "metadata.yaml":
+                continue
+            self._validate_maven_repo_relative_path(relpath)
+
+            target_url = f"{maven_publish_url.rstrip('/')}/{relpath}"
+            with open(file_path, "rb") as f:
+                response = session.put(target_url, data=f)
+
+            if response.status_code >= 400:
+                raise Exception(
+                    f"Failed to upload Maven staged repo file '{relpath}': "
+                    f"HTTP {response.status_code}"
+                )
+            uploaded_paths.append(relpath)
+            if relpath.endswith(".pom"):
+                pom_paths.add(relpath)
+
+        if not uploaded_paths:
+            raise Exception("No files found in Maven staged repository")
+
+        for relpath in uploaded_paths:
+            artifact_name = os.path.basename(relpath)
+            if artifact_name.endswith((".jar", ".pom")) and (
+                "SNAPSHOT" not in artifact_name
+            ):
+                self._publish_properties_by_relpath(maven_publish_url, relpath)
+
+        # TODO: Decide whether metadata recalculation should become
+        # configurable once we have production signal for runtime impact.
+        self._recalculate_maven_metadata(maven_publish_url, pom_paths)
+
+    def _validate_maven_repo_relative_path(self, relpath: str) -> None:
+        """Validate a staged Maven repository path before upload."""
+        if relpath.startswith("/"):
+            raise Exception(f"Invalid staged repo path: '{relpath}'")
+
+        path = Path(relpath)
+        if any(part in ("", ".", "..") for part in path.parts):
+            raise Exception(f"Invalid staged repo path: '{relpath}'")
+
+    def _recalculate_maven_metadata(self, publish_url: str, pom_paths) -> None:
+        """Recalculate Maven metadata for touched artifact directories."""
+        if not pom_paths:
+            return
+
+        parsed_url = urlparse(publish_url)
+        path_to_split = (
+            parsed_url.path
+            if parsed_url.scheme and parsed_url.netloc
+            else publish_url
+        )
+        repo_name = path_to_split.rstrip("/").split("/")[-1]
+
+        root_path_str = self._extract_root_path(publish_url)
+        if not root_path_str:
+            log.warning(
+                "Could not extract Artifactory root path from Maven publish "
+                "URL; skipping metadata recalculation."
+            )
+            return
+
+        artifact_dirs = set()
+        for pom_path in pom_paths:
+            version_dir = Path(pom_path).parent
+            artifact_dir = version_dir.parent
+            if artifact_dir.as_posix() in ("", "."):
+                continue
+            artifact_dirs.add(artifact_dir.as_posix())
+
+        session = self._make_session()
+        for artifact_dir in sorted(artifact_dirs):
+            url = (
+                f"{root_path_str}/api/maven/calculateMetadata/"
+                f"{repo_name}/{artifact_dir}"
+            )
+            response = session.post(url)
+            if response.status_code >= 400:
+                log.warning(
+                    "Failed to recalculate Maven metadata for %s: HTTP %s",
+                    artifact_dir,
+                    response.status_code,
+                )
+
+    def _publish_properties_by_relpath(
+        self, publish_url: str, relative_path: str
+    ) -> None:
+        """Publish properties by exact repository-relative path."""
+        new_properties = {
+            "soss.commit_id": [
+                self.build.revision_id if self.build.revision_id else "unknown"
+            ],
+            "soss.source_url": [self._recipe_git_url()],
+            "soss.type": ["source"],
+            "soss.license": [self._get_license_metadata()],
+            "launchpad.channel": [
+                self._build_channel_value(self._get_version_metadata())
+            ],
+        }
+
+        parsed_url = urlparse(publish_url)
+        path_to_split = (
+            parsed_url.path
+            if parsed_url.scheme and parsed_url.netloc
+            else publish_url
+        )
+        repo_name = path_to_split.rstrip("/").split("/")[-1]
+
+        root_path_str = self._extract_root_path(publish_url)
+        if not root_path_str:
+            raise NotFoundError(
+                f"Could not extract root path from URL: {publish_url}"
+            )
+
+        rel_dir, rel_name = os.path.split(relative_path)
+        artifact_path = ArtifactoryPath(
+            root_path_str, repo_name, rel_dir, rel_name
+        )
+        artifact_path.session = self._make_session()
+        artifact_path.set_properties(new_properties)
 
     def _get_maven_settings_xml(self, username, password, repository_url):
         """Generate Maven settings.xml content.
@@ -804,7 +1064,12 @@ class CraftPublishingJob(CraftRecipeBuildJobDerived):
                 finally:
                     lfa.close()
 
-        log.info("No metadata.yaml file found in the build files.")
+        build_filenames = [lfa.filename for _, lfa, _ in self.build.getFiles()]
+        log.info(
+            "No metadata.yaml file found in the build files. "
+            "Available files: %s",
+            sorted(build_filenames),
+        )
         self._artifact_metadata = {}
         return self._artifact_metadata
 
