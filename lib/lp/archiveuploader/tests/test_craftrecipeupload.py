@@ -11,6 +11,12 @@ import yaml
 from storm.store import Store
 from zope.security.proxy import removeSecurityProxy
 
+from lp.archiveuploader.craftrecipeupload import (
+    CraftRecipeUpload,
+    CrateUploadHandler,
+    MavenJarUploadHandler,
+    MavenStagedRepoUploadHandler,
+)
 from lp.archiveuploader.tests.test_uploadprocessor import (
     TestUploadProcessorBase,
 )
@@ -42,6 +48,19 @@ class TestCraftRecipeUploads(TestUploadProcessorBase):
         self.uploadprocessor = self.getUploadProcessor(
             self.layer.txn, builds=True
         )
+
+    def _trackHandlers(self):
+        """Patch _get_handler to record which handler class is selected."""
+        handlers_used = []
+        orig_get_handler = CraftRecipeUpload._get_handler
+
+        def tracking_get_handler(self, scan):
+            handler = orig_get_handler(self, scan)
+            handlers_used.append(handler)
+            return handler
+
+        self.patch(CraftRecipeUpload, "_get_handler", tracking_get_handler)
+        return handlers_used
 
     def _createArchiveWithCrate(
         self, upload_dir, crate_name="test-crate", crate_version="0.1.0"
@@ -133,6 +152,55 @@ class TestCraftRecipeUploads(TestUploadProcessorBase):
 
             return archive_path
 
+    def _createArchiveWithMavenStagedRepo(self, upload_dir):
+        """Helper to create a staged Maven repository tar.xz archive."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            metadata = {
+                "name": "httpcore",
+                "version": "4.4.15",
+                "license": "Apache-2.0",
+            }
+            metadata_path = os.path.join(tmpdir, "metadata.yaml")
+            with open(metadata_path, "w") as f:
+                yaml.safe_dump(metadata, f)
+
+            staged_paths = {
+                (
+                    "org/apache/httpcomponents/httpcore/4.4.15/"
+                    "httpcore-4.4.15.pom"
+                ): b"<project/>",
+                (
+                    "org/apache/httpcomponents/httpcore/4.4.15/"
+                    "httpcore-4.4.15.jar"
+                ): b"jar",
+                (
+                    "org/apache/httpcomponents/httpcore/" "maven-metadata.xml"
+                ): b"<metadata/>",
+                (
+                    "org/apache/httpcomponents/httpcore-nio/4.4.15/"
+                    "httpcore-nio-4.4.15.pom"
+                ): b"<project/>",
+                (
+                    "org/apache/httpcomponents/httpcore-nio/"
+                    "maven-metadata.xml"
+                ): b"<metadata/>",
+            }
+            for relpath, content in staged_paths.items():
+                fullpath = os.path.join(tmpdir, relpath)
+                os.makedirs(os.path.dirname(fullpath), exist_ok=True)
+                with open(fullpath, "wb") as f:
+                    f.write(content)
+
+            archive_path = os.path.join(
+                upload_dir, "httpcore_4.4.15_amd64.tar.xz"
+            )
+            with tarfile.open(archive_path, "w:xz") as tar:
+                tar.add(metadata_path, arcname="metadata.yaml")
+                for relpath in staged_paths:
+                    tar.add(os.path.join(tmpdir, relpath), arcname=relpath)
+
+            return archive_path
+
     def test_processes_artifact_from_archive(self):
         """Test that artifacts are properly extracted and processed
         from archives."""
@@ -146,6 +214,8 @@ class TestCraftRecipeUploads(TestUploadProcessorBase):
         crate_version = "0.2.0"
         self._createArchiveWithCrate(upload_dir, crate_name, crate_version)
 
+        handlers_used = self._trackHandlers()
+
         handler = UploadHandler.forProcessor(
             self.uploadprocessor, self.incoming_folder, "test", self.build
         )
@@ -154,6 +224,8 @@ class TestCraftRecipeUploads(TestUploadProcessorBase):
         # Verify upload succeeded
         self.assertEqual(UploadStatusEnum.ACCEPTED, result)
         self.assertEqual(BuildStatus.FULLYBUILT, self.build.status)
+        self.assertEqual(1, len(handlers_used))
+        self.assertIsInstance(handlers_used[0], CrateUploadHandler)
 
         # Verify crate and metadata were stored (not the archive)
         build = removeSecurityProxy(self.build)
@@ -356,6 +428,8 @@ class TestCraftRecipeUploads(TestUploadProcessorBase):
         jar_version = "0.2.0"
         self._createArchiveWithJarAndPom(upload_dir, jar_name, jar_version)
 
+        handlers_used = self._trackHandlers()
+
         handler = UploadHandler.forProcessor(
             self.uploadprocessor, self.incoming_folder, "test", self.build
         )
@@ -364,6 +438,8 @@ class TestCraftRecipeUploads(TestUploadProcessorBase):
         # Verify upload succeeded
         self.assertEqual(UploadStatusEnum.ACCEPTED, result)
         self.assertEqual(BuildStatus.FULLYBUILT, self.build.status)
+        self.assertEqual(1, len(handlers_used))
+        self.assertIsInstance(handlers_used[0], MavenJarUploadHandler)
 
         # Verify JAR, POM, and metadata were stored (not the archive)
         build = removeSecurityProxy(self.build)
@@ -602,3 +678,32 @@ class TestCraftRecipeUploads(TestUploadProcessorBase):
             self.log.getLogBuffer(),
         )
         self.assertFalse(self.build.verifySuccessfulUpload())
+
+    def test_processes_maven_staged_repo_archive(self):
+        """Maven staged repo archives are kept intact for publisher."""
+        upload_dir = os.path.join(
+            self.incoming_folder, "test", str(self.build.id)
+        )
+        os.makedirs(upload_dir, exist_ok=True)
+
+        archive_name = "httpcore_4.4.15_amd64.tar.xz"
+        self._createArchiveWithMavenStagedRepo(upload_dir)
+
+        handlers_used = self._trackHandlers()
+
+        handler = UploadHandler.forProcessor(
+            self.uploadprocessor, self.incoming_folder, "test", self.build
+        )
+        result = handler.processCraftRecipe(self.log)
+
+        self.assertEqual(UploadStatusEnum.ACCEPTED, result)
+        self.assertEqual(BuildStatus.FULLYBUILT, self.build.status)
+        self.assertEqual(1, len(handlers_used))
+        self.assertIsInstance(handlers_used[0], MavenStagedRepoUploadHandler)
+
+        build = removeSecurityProxy(self.build)
+        files = list(build.getFiles())
+        self.assertEqual(2, len(files))
+
+        filenames = {f[1].filename for f in files}
+        self.assertEqual({archive_name, "metadata.yaml"}, filenames)
