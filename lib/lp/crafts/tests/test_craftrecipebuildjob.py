@@ -10,8 +10,10 @@ import tempfile
 from pathlib import Path
 from resource import RLIMIT_AS  # Maximum memory that can be taken by a process
 
+import transaction
 from artifactory import ArtifactoryPath
 from fixtures import FakeLogger
+from storm.store import Store
 from testtools.matchers import Equals, Is, MatchesStructure
 from zope.component import getUtility
 from zope.security.proxy import removeSecurityProxy
@@ -26,9 +28,14 @@ from lp.crafts.interfaces.craftrecipebuildjob import (
     ICraftRecipeBuildJob,
 )
 from lp.crafts.model.craftrecipebuildjob import (
+    DEFAULT_JOB_MEMORY_LIMIT,
+    MAVEN_JOB_MEMORY_LIMIT,
     CraftPublishingJob,
     CraftRecipeBuildJob,
     CraftRecipeBuildJobType,
+    MavenPublisher,
+    MavenStagedRepoPublisher,
+    RustPublisher,
 )
 from lp.services.features.testing import FeatureFixture
 from lp.services.job.interfaces.job import JobStatus
@@ -250,6 +257,33 @@ class TestCraftPublishingJob(TestCaseWithFactory):
         )
 
         removeSecurityProxy(self.build).addFile(lfa)
+
+    def _create_maven_staged_repo_archive(self, filename="maven-repo.tar.xz"):
+        """Create a staged Maven repository archive file in build outputs."""
+        tar_data = io.BytesIO()
+        with tarfile.open(fileobj=tar_data, mode="w:xz") as tar:
+            files = {
+                "org/example/app/1.0.0/app-1.0.0.pom": b"<project/>",
+                "org/example/app/1.0.0/app-1.0.0.jar": b"jar-content",
+                "org/example/app/maven-metadata.xml": b"<metadata/>",
+            }
+            for path, content in files.items():
+                info = tarfile.TarInfo(path)
+                info.size = len(content)
+                tar.addfile(info, io.BytesIO(content))
+
+        tar_data.seek(0)
+        archive_content = tar_data.getvalue()
+
+        librarian = getUtility(ILibraryFileAliasSet)
+        lfa = librarian.create(
+            filename,
+            len(archive_content),
+            io.BytesIO(archive_content),
+            "application/x-xz",
+        )
+        removeSecurityProxy(self.build).addFile(lfa)
+        return lfa
 
     def _artifactory_search(self, repo_name, artifact_name):
         """Helper to search for a file in the Artifactory fixture."""
@@ -521,9 +555,25 @@ class TestCraftPublishingJob(TestCaseWithFactory):
             mock_cargo_publish_properties,
         )
 
+        publishers_used = []
+        orig_get_publisher = CraftPublishingJob._get_publisher
+
+        def tracking_get_publisher(self, files):
+            pub = orig_get_publisher(self, files)
+            publishers_used.append(pub)
+            return pub
+
+        self.patch(
+            CraftPublishingJob,
+            "_get_publisher",
+            tracking_get_publisher,
+        )
+
         # Create and run the job
         job = self.run_job(self.build)
         self.assertEqual(JobStatus.COMPLETED, job.job.status)
+        self.assertEqual(1, len(publishers_used))
+        self.assertIsInstance(publishers_used[0], RustPublisher)
 
         # Find the call for cargo publish (should be the second call)
         cargo_call = None
@@ -731,9 +781,25 @@ class TestCraftPublishingJob(TestCaseWithFactory):
             mock_maven_publish_properties,
         )
 
+        publishers_used = []
+        orig_get_publisher = CraftPublishingJob._get_publisher
+
+        def tracking_get_publisher(self, files):
+            pub = orig_get_publisher(self, files)
+            publishers_used.append(pub)
+            return pub
+
+        self.patch(
+            CraftPublishingJob,
+            "_get_publisher",
+            tracking_get_publisher,
+        )
+
         job = self.run_job(self.build)
 
         self.assertEqual(JobStatus.COMPLETED, job.job.status)
+        self.assertEqual(1, len(publishers_used))
+        self.assertIsInstance(publishers_used[0], MavenPublisher)
 
         # Find the call for mvn deploy
         mvn_call = None
@@ -813,6 +879,125 @@ class TestCraftPublishingJob(TestCaseWithFactory):
         self.assertEqual(
             artifact["properties"].get("launchpad.channel"),
             "noble:0.1.0/stable",
+        )
+
+    def test_run_maven_staged_repo_archive(self):
+        """Staged Maven repo archives are dispatched to staged publisher."""
+        self._setup_distribution("soss")
+        self._setup_config(with_env_vars=True, with_http_proxy=True)
+        self._create_maven_staged_repo_archive()
+
+        staged_calls = []
+        publishers_used = []
+
+        def mock_publish_staged(self, extract_dir, env_vars):
+            staged_calls.append((extract_dir, env_vars))
+
+        orig_get_publisher = CraftPublishingJob._get_publisher
+
+        def tracking_get_publisher(self, files):
+            pub = orig_get_publisher(self, files)
+            publishers_used.append(pub)
+            return pub
+
+        self.patch(
+            CraftPublishingJob,
+            "_publish_maven_staged_repo",
+            mock_publish_staged,
+        )
+        self.patch(
+            CraftPublishingJob,
+            "_get_publisher",
+            tracking_get_publisher,
+        )
+
+        job = self.run_job(self.build)
+        self.assertEqual(JobStatus.COMPLETED, job.job.status)
+        self.assertEqual(1, len(staged_calls))
+        self.assertIn("MAVEN_PUBLISH_URL", staged_calls[0][1])
+        self.assertEqual(1, len(publishers_used))
+        self.assertIsInstance(publishers_used[0], MavenStagedRepoPublisher)
+
+    def test_publish_maven_staged_repo_rejects_invalid_relative_path(self):
+        """Staged repo upload rejects unsafe relative paths."""
+        job = getUtility(ICraftPublishingJobSource).create(self.build)
+        job = removeSecurityProxy(job)
+
+        with tempfile.TemporaryDirectory() as extract_dir:
+            bad = os.path.join(extract_dir, "..dot", "a.jar")
+            os.makedirs(os.path.dirname(bad), exist_ok=True)
+            with open(bad, "wb") as f:
+                f.write(b"x")
+
+            self.assertRaises(
+                Exception,
+                job._validate_maven_repo_relative_path,
+                "../evil.jar",
+            )
+
+    def test_publish_maven_staged_repo_recalculates_metadata(self):
+        """Metadata recalculation is called by default."""
+        self._setup_distribution("soss")
+
+        job = getUtility(ICraftPublishingJobSource).create(self.build)
+        job = removeSecurityProxy(job)
+
+        class MockResponse:
+            def __init__(self, code):
+                self.status_code = code
+
+        class MockSession:
+            def __init__(self):
+                self.put_urls = []
+                self.post_urls = []
+
+            def put(self, url, data=None):
+                self.put_urls.append(url)
+                return MockResponse(201)
+
+            def post(self, url):
+                self.post_urls.append(url)
+                return MockResponse(200)
+
+        mock_session = MockSession()
+        self.patch(
+            CraftPublishingJob, "_make_session", lambda self: mock_session
+        )
+        self.patch(
+            CraftPublishingJob,
+            "_publish_properties_by_relpath",
+            lambda self, publish_url, relative_path: None,
+        )
+
+        with tempfile.TemporaryDirectory() as extract_dir:
+            pom_path = os.path.join(
+                extract_dir,
+                "org/example/app/1.0.0/app-1.0.0.pom",
+            )
+            jar_path = os.path.join(
+                extract_dir,
+                "org/example/app/1.0.0/app-1.0.0.jar",
+            )
+            os.makedirs(os.path.dirname(pom_path), exist_ok=True)
+            with open(pom_path, "wb") as f:
+                f.write(b"<project/>")
+            with open(jar_path, "wb") as f:
+                f.write(b"jar")
+
+            job._publish_maven_staged_repo(
+                extract_dir,
+                {
+                    "MAVEN_PUBLISH_URL": (
+                        "https://example.com/artifactory/repository"
+                    ),
+                },
+            )
+
+        self.assertEqual(2, len(mock_session.put_urls))
+        self.assertEqual(1, len(mock_session.post_urls))
+        self.assertIn(
+            "/api/maven/calculateMetadata/repository/org/example/app",
+            mock_session.post_urls[0],
         )
 
     def test__publish_properties_sets_expected_properties(self):
@@ -1100,3 +1285,273 @@ class TestCraftPublishingJob(TestCaseWithFactory):
 
         root_path = job._extract_root_path(url)
         self.assertEqual(expected_root, root_path)
+
+
+class TestPublisherDispatch(TestCaseWithFactory):
+    """Tests for _classify_files, _get_publisher, and publisher handlers."""
+
+    layer = CeleryJobLayer
+
+    def setUp(self):
+        super().setUp()
+        self.useFixture(
+            FeatureFixture(
+                {"jobs.celery.enabled_classes": "CraftPublishingJob"}
+            )
+        )
+        self.useFixture(FakeLogger())
+        self.useFixture(FeatureFixture({CRAFT_RECIPE_ALLOW_CREATE: "on"}))
+        self.recipe = self.factory.makeCraftRecipe()
+        ds = self.factory.makeDistroSeries(name="noble")
+        das = self.factory.makeDistroArchSeries(distroseries=ds)
+        self.build = self.factory.makeCraftRecipeBuild(
+            recipe=self.recipe, distro_arch_series=das
+        )
+
+    def _make_job(self):
+        job = getUtility(ICraftPublishingJobSource).create(self.build)
+        return removeSecurityProxy(job)
+
+    def _add_file(
+        self,
+        filename,
+        content=b"data",
+        content_type=None,
+        commit=False,
+    ):
+        librarian = getUtility(ILibraryFileAliasSet)
+        if content_type is None:
+            content_type = "application/octet-stream"
+        lfa = librarian.create(
+            filename,
+            len(content),
+            io.BytesIO(content),
+            content_type,
+        )
+        removeSecurityProxy(self.build).addFile(lfa)
+        Store.of(self.build).flush()
+        if commit:
+            transaction.commit()
+        return lfa
+
+    def test_classify_files_crate(self):
+        """_classify_files recognises a .crate artifact."""
+        self._add_file("foo-0.1.0.crate")
+        job = self._make_job()
+        files = job._classify_files()
+        self.assertIsNotNone(files["crate"])
+        self.assertEqual("foo-0.1.0.crate", files["crate"].filename)
+        self.assertIsNone(files["jar"])
+        self.assertIsNone(files["pom"])
+        self.assertIsNone(files["maven_repo_archive"])
+
+    def test_classify_files_single_jar_and_pom(self):
+        """_classify_files collects a JAR and POM."""
+        self._add_file(
+            "lib-0.1.0.jar", content_type="application/java-archive"
+        )
+        self._add_file("pom.xml", content_type="application/xml")
+        job = self._make_job()
+        files = job._classify_files()
+        self.assertIsNone(files["crate"])
+        self.assertIsNotNone(files["jar"])
+        self.assertEqual("lib-0.1.0.jar", files["jar"].filename)
+        self.assertIsNotNone(files["pom"])
+        self.assertIsNone(files["maven_repo_archive"])
+
+    def test_classify_files_maven_staged_repo_archive(self):
+        """_classify_files detects staged Maven repository archive."""
+        tar_data = io.BytesIO()
+        with tarfile.open(fileobj=tar_data, mode="w:xz") as tar:
+            entries = {
+                "org/example/app/1.0.0/app-1.0.0.pom": b"<project/>",
+                "org/example/app/maven-metadata.xml": b"<metadata/>",
+            }
+            for path, content in entries.items():
+                info = tarfile.TarInfo(path)
+                info.size = len(content)
+                tar.addfile(info, io.BytesIO(content))
+
+        self._add_file("maven-output.tar.xz", tar_data.getvalue(), commit=True)
+        job = self._make_job()
+        files = job._classify_files()
+        self.assertIsNone(files["crate"])
+        self.assertIsNone(files["jar"])
+        self.assertIsNone(files["pom"])
+        self.assertIsNotNone(files["maven_repo_archive"])
+        self.assertEqual(
+            "maven-output.tar.xz", files["maven_repo_archive"].filename
+        )
+
+    def test_classify_files_empty_build(self):
+        """_classify_files returns empty when no known artifacts exist."""
+        job = self._make_job()
+        files = job._classify_files()
+        self.assertIsNone(files["crate"])
+        self.assertIsNone(files["jar"])
+        self.assertIsNone(files["pom"])
+        self.assertIsNone(files["maven_repo_archive"])
+
+    def test_get_publisher_rust(self):
+        """_get_publisher returns RustPublisher for a .crate build."""
+        self._add_file("foo-0.1.0.crate")
+        job = self._make_job()
+        publisher = job._get_publisher(job._classify_files())
+        self.assertIsInstance(publisher, RustPublisher)
+
+    def test_get_publisher_maven(self):
+        """_get_publisher returns MavenPublisher for jar+pom builds."""
+        self._add_file("lib-0.1.0.jar")
+        self._add_file("pom.xml")
+        job = self._make_job()
+        publisher = job._get_publisher(job._classify_files())
+        self.assertIsInstance(publisher, MavenPublisher)
+
+    def test_get_publisher_maven_staged_repo(self):
+        """_get_publisher returns MavenStagedRepoPublisher for repo tar."""
+        tar_data = io.BytesIO()
+        with tarfile.open(fileobj=tar_data, mode="w:xz") as tar:
+            for path, content in {
+                "org/example/app/1.0.0/app-1.0.0.pom": b"<project/>",
+                "org/example/app/maven-metadata.xml": b"<metadata/>",
+            }.items():
+                info = tarfile.TarInfo(path)
+                info.size = len(content)
+                tar.addfile(info, io.BytesIO(content))
+
+        self._add_file("maven-output.tar.xz", tar_data.getvalue(), commit=True)
+        job = self._make_job()
+        publisher = job._get_publisher(job._classify_files())
+        self.assertIsInstance(publisher, MavenStagedRepoPublisher)
+
+    def test_get_publisher_none(self):
+        """_get_publisher returns None when no handler matches."""
+        job = self._make_job()
+        publisher = job._get_publisher(job._classify_files())
+        self.assertIsNone(publisher)
+
+    def test_get_publisher_jars_without_pom(self):
+        """JARs without a POM don't match any publisher."""
+        self._add_file("lib-0.1.0.jar")
+        job = self._make_job()
+        publisher = job._get_publisher(job._classify_files())
+        self.assertIsNone(publisher)
+
+    def test_rust_publisher_can_handle(self):
+        rust = RustPublisher()
+        self.assertTrue(
+            rust.can_handle({"crate": "placeholder", "jar": None, "pom": None})
+        )
+        self.assertFalse(
+            rust.can_handle({"crate": None, "jar": None, "pom": None})
+        )
+
+    def test_maven_publisher_can_handle(self):
+        maven = MavenPublisher()
+        self.assertTrue(
+            maven.can_handle(
+                {
+                    "crate": None,
+                    "jar": "j",
+                    "pom": "p",
+                    "maven_repo_archive": None,
+                }
+            )
+        )
+        self.assertFalse(
+            maven.can_handle(
+                {
+                    "crate": None,
+                    "jar": "j",
+                    "pom": None,
+                    "maven_repo_archive": None,
+                }
+            )
+        )
+        self.assertFalse(
+            maven.can_handle(
+                {
+                    "crate": None,
+                    "jar": None,
+                    "pom": "p",
+                    "maven_repo_archive": None,
+                }
+            )
+        )
+
+    def test_maven_staged_repo_publisher_can_handle(self):
+        staged = MavenStagedRepoPublisher()
+        self.assertTrue(
+            staged.can_handle(
+                {
+                    "crate": None,
+                    "jar": None,
+                    "pom": None,
+                    "maven_repo_archive": "archive",
+                }
+            )
+        )
+        self.assertFalse(
+            staged.can_handle(
+                {
+                    "crate": None,
+                    "jar": None,
+                    "pom": None,
+                    "maven_repo_archive": None,
+                }
+            )
+        )
+
+    def test_memory_limit_defaults_for_rust(self):
+        """Rust builds use the default memory limit."""
+        self._add_file("foo-0.1.0.crate")
+        job = self._make_job()
+        self.assertEqual(DEFAULT_JOB_MEMORY_LIMIT, job.memory_limit)
+
+    def test_memory_limit_elevated_for_maven(self):
+        """Maven builds get elevated memory for JVM operations."""
+        self._add_file("lib-0.1.0.jar")
+        self._add_file("pom.xml")
+        job = self._make_job()
+        self.assertEqual(MAVEN_JOB_MEMORY_LIMIT, job.memory_limit)
+
+    def test_memory_limit_elevated_for_maven_staged_repo(self):
+        """Maven staged repo archives use elevated memory limit."""
+        tar_data = io.BytesIO()
+        with tarfile.open(fileobj=tar_data, mode="w:xz") as tar:
+            for path, content in {
+                "org/example/app/1.0.0/app-1.0.0.pom": b"<project/>",
+                "org/example/app/maven-metadata.xml": b"<metadata/>",
+            }.items():
+                info = tarfile.TarInfo(path)
+                info.size = len(content)
+                tar.addfile(info, io.BytesIO(content))
+
+        self._add_file("maven-output.tar.xz", tar_data.getvalue(), commit=True)
+        job = self._make_job()
+        self.assertEqual(MAVEN_JOB_MEMORY_LIMIT, job.memory_limit)
+
+    def test_memory_limit_default_when_no_artifacts(self):
+        """Builds with no recognised artifacts fall back to default."""
+        job = self._make_job()
+        self.assertEqual(DEFAULT_JOB_MEMORY_LIMIT, job.memory_limit)
+
+    def test_get_publisher_staged_repo_takes_priority_over_jar(self):
+        """When both jar+pom and staged repo archive exist, staged wins."""
+        tar_data = io.BytesIO()
+        with tarfile.open(fileobj=tar_data, mode="w:xz") as tar:
+            for path, content in {
+                "org/example/app/1.0.0/app-1.0.0.pom": b"<project/>",
+                "org/example/app/maven-metadata.xml": b"<metadata/>",
+            }.items():
+                info = tarfile.TarInfo(path)
+                info.size = len(content)
+                tar.addfile(info, io.BytesIO(content))
+
+        self._add_file("lib-0.1.0.jar")
+        self._add_file("pom.xml")
+        self._add_file("maven-output.tar.xz", tar_data.getvalue(), commit=True)
+        job = self._make_job()
+        files = job._classify_files()
+        publisher = job._get_publisher(files)
+        self.assertIsInstance(publisher, MavenStagedRepoPublisher)
