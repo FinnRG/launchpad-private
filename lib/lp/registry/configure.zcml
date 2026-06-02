@@ -333,6 +333,7 @@
                 index_compressors
                 publish_by_hash
                 publish_i18n_index
+                valid_until_config
                 advertise_by_hash
                 strict_supported_component_dependencies
                 inherit_overrides_from_parents"/>
@@ -660,6 +661,19 @@
         <allow
             interface="lp.registry.interfaces.archivesourcepackage.IArchiveSourcePackageView"/>
     </class>
+    <adapter
+        for="lp.registry.interfaces.archivesourcepackage.IArchiveSourcePackage"
+        provides="lp.services.webapp.interfaces.ILaunchpadContainer"
+        factory="lp.services.webapp.publisher.LaunchpadContainer"/>
+    <adapter
+        for="lp.registry.interfaces.archivesourcepackage.IArchiveSourcePackage"
+        provides="lp.app.interfaces.launchpad.IServiceUsage"
+        factory="lp.registry.adapters.sourcepackage_to_archive"
+        permission="zope.Public"/>
+    <adapter
+        for="lp.registry.interfaces.archivesourcepackage.IArchiveSourcePackage"
+        provides="lp.services.webapp.interfaces.IBreadcrumb"
+        factory="lp.registry.browser.archivesourcepackage.ArchiveSourcePackageBreadcrumb"/>
 
     <!-- ArchiveSourcePackageSeries -->
     <class
@@ -669,6 +683,41 @@
         <allow
             interface="lp.bugs.interfaces.bugtarget.ISeriesBugTarget"/>
     </class>
+    <adapter
+        for="lp.registry.interfaces.archivesourcepackageseries.IArchiveSourcePackageSeries"
+        provides="lp.app.interfaces.launchpad.IServiceUsage"
+        factory="lp.registry.adapters.sourcepackage_to_archive"
+        permission="zope.Public"/>
+    <adapter
+        for="lp.registry.interfaces.archivesourcepackageseries.IArchiveSourcePackageSeries"
+        provides="lp.services.webapp.interfaces.IBreadcrumb"
+        factory="lp.registry.browser.archivesourcepackageseries.ArchiveSourcePackageSeriesBreadcrumb"/>
+
+    <!-- ArchiveSeries -->
+    <class
+        class="lp.registry.model.archiveseries.ArchiveSeries">
+        <allow
+            interface="lp.registry.interfaces.archiveseries.IArchiveSeriesView"/>
+        <allow
+            interface="lp.bugs.interfaces.bugtarget.ISeriesBugTarget"/>
+        <require
+            permission="launchpad.Edit"
+            set_schema="lp.app.interfaces.launchpad.IServiceUsage"/>
+    </class>
+    <adapter
+        for="lp.registry.interfaces.archiveseries.IArchiveSeries"
+        provides="lp.app.interfaces.launchpad.IServiceUsage"
+        factory="lp.registry.adapters.sourcepackage_to_archive"
+        permission="zope.Public"/>
+    <adapter
+        for="lp.registry.interfaces.archiveseries.IArchiveSeries"
+        provides="lp.services.webapp.interfaces.ICanonicalUrlData"
+        factory="lp.registry.browser.archiveseries.ArchiveSeriesURL"
+        permission="zope.Public"/>
+    <adapter
+        for="lp.registry.interfaces.archiveseries.IArchiveSeries"
+        provides="lp.services.webapp.interfaces.IBreadcrumb"
+        factory="lp.registry.browser.archiveseries.ArchiveSeriesBreadcrumb"/>
 
     <!-- CommercialSubscription -->
 

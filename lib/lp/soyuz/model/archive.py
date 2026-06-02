@@ -49,6 +49,7 @@ from zope.interface import alsoProvides, implementer
 from zope.security.interfaces import Unauthorized
 from zope.security.proxy import removeSecurityProxy
 
+from lp.app.enums import InformationType, ServiceUsage
 from lp.app.errors import (
     IncompatibleArchiveStatus,
     IncompatibleArguments,
@@ -65,6 +66,7 @@ from lp.archiveuploader.utils import (
     re_isadeb,
     re_issource,
 )
+from lp.bugs.model.bugtarget import BugTargetBase
 from lp.buildmaster.enums import BuildQueueStatus, BuildStatus
 from lp.buildmaster.interfaces.buildfarmjob import IBuildFarmJobSet
 from lp.buildmaster.interfaces.processor import IProcessorSet
@@ -157,6 +159,7 @@ from lp.soyuz.interfaces.archive import (
     NamedAuthTokenFeatureDisabled,
     NoRightsForArchive,
     NoRightsForComponent,
+    NoSuchDistroSeriesInArchive,
     NoSuchPPA,
     NoTokensForTeams,
     PocketNotFound,
@@ -208,6 +211,12 @@ ARCHIVE_REFERENCE_TEMPLATES = {
     ArchivePurpose.COPY: "%(distribution)s/%(archive)s",
 }
 
+PRE_RELEASE_POCKETS = [
+    PackagePublishingPocket.RELEASE,
+    PackagePublishingPocket.PROPOSED,
+    PackagePublishingPocket.BACKPORTS,
+]
+
 
 @error_status(http.client.BAD_REQUEST)
 class CannotSetMetadataOverrides(Exception):
@@ -225,7 +234,7 @@ def storm_validate_external_dependencies(archive, attr, value):
 
 
 @implementer(IArchive, IHasOwner, IHasBuildRecords)
-class Archive(StormBase, WebhookTargetMixin):
+class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
     __storm_table__ = "Archive"
     __storm_order__ = "id"
 
@@ -938,7 +947,7 @@ class Archive(StormBase, WebhookTargetMixin):
 
         return DecoratedResultSet(resultset, pre_iter_hook=eager_load)
 
-    def getArchiveSourcePackage(self, name):
+    def getArchiveSourcePackage(self, name, check_publication=True):
         """See `IArchive`."""
         # Imported locally to avoid circular imports: ArchiveSourcePackage
         # references IArchive, so importing it at module level would create
@@ -954,24 +963,27 @@ class Archive(StormBase, WebhookTargetMixin):
             if sourcepackagename is None:
                 return None
 
-        # Verify the archive has this package
-        has_publication = (
-            IStore(SourcePackagePublishingHistory)
-            .find(
-                SourcePackagePublishingHistory,
-                SourcePackagePublishingHistory.archive == self,
-                SourcePackagePublishingHistory.sourcepackagename
-                == sourcepackagename,
+        if check_publication:
+            # Verify the archive has this package
+            has_publication = (
+                IStore(SourcePackagePublishingHistory)
+                .find(
+                    SourcePackagePublishingHistory,
+                    SourcePackagePublishingHistory.archive == self,
+                    SourcePackagePublishingHistory.sourcepackagename
+                    == sourcepackagename,
+                )
+                .any()
             )
-            .any()
-        )
 
-        if not has_publication:
-            return None
+            if not has_publication:
+                return None
 
         return ArchiveSourcePackage(self, sourcepackagename)
 
-    def getArchiveSourcePackageSeries(self, distroseries, name):
+    def getArchiveSourcePackageSeries(
+        self, distroseries, name, check_publication=True
+    ):
         """See `IArchive`."""
         # Imported locally to avoid circular imports:
         # ArchiveSourcePackageSeries references IArchive, so importing it at
@@ -992,35 +1004,36 @@ class Archive(StormBase, WebhookTargetMixin):
             # Distroseries must belong to the same distribution as the archive
             return None
 
-        # Resolve sourcepackagename
-        if ISourcePackageName.providedBy(name):
-            sourcepackagename = name
-        else:
-            sourcepackagename = getUtility(ISourcePackageNameSet).queryByName(
-                name
-            )
-            if sourcepackagename is None:
-                return None
-
-        # Verify the archive has this package in this distroseries
-        has_publication = (
-            IStore(SourcePackagePublishingHistory)
-            .find(
-                SourcePackagePublishingHistory,
-                SourcePackagePublishingHistory.archive == self,
-                SourcePackagePublishingHistory.distroseries == distroseries,
-                SourcePackagePublishingHistory.sourcepackagename
-                == sourcepackagename,
-            )
-            .any()
+        # The package must be known to this archive. getArchiveSourcePackage
+        # handles name resolution and the publication check.
+        asp = self.getArchiveSourcePackage(
+            name, check_publication=check_publication
         )
-
-        if not has_publication:
+        if asp is None:
             return None
+        sourcepackagename = asp.sourcepackagename
 
         return ArchiveSourcePackageSeries(
             self, distroseries, sourcepackagename
         )
+
+    def getArchiveSeries(self, distroseries):
+        """See `IArchive`."""
+        from lp.registry.model.archiveseries import ArchiveSeries
+
+        # Resolve distroseries if string
+        if isinstance(distroseries, str):
+            try:
+                distroseries = self.distribution.getSeries(distroseries)
+            except NoSuchDistroSeries:
+                return None
+        elif not IDistroSeries.providedBy(distroseries):
+            return None
+        elif distroseries.distribution != self.distribution:
+            # Distroseries must belong to the same distribution as the archive
+            return None
+
+        return ArchiveSeries(self, distroseries)
 
     def getSourcesForDeletion(self, name=None, status=None, distroseries=None):
         """See `IArchive`."""
@@ -1824,13 +1837,8 @@ class Archive(StormBase, WebhookTargetMixin):
             return False
 
         # Deny uploads for post-release-only pockets in unstable states.
-        pre_release_pockets = (
-            PackagePublishingPocket.RELEASE,
-            PackagePublishingPocket.PROPOSED,
-            PackagePublishingPocket.BACKPORTS,
-        )
         if (
-            pocket not in pre_release_pockets
+            pocket not in PRE_RELEASE_POCKETS
             and distroseries.status not in stable_states
         ):
             return False
@@ -3383,6 +3391,96 @@ class Archive(StormBase, WebhookTargetMixin):
     @repository_format.setter
     def repository_format(self, value):
         self._repository_format = value
+
+    @property
+    def bugtargetdisplayname(self):
+        """See `IBugTarget`."""
+        return f"{self.displayname} from {self.owner.displayname}"
+
+    @property
+    def bugtargetname(self):
+        """See `IBugTarget`."""
+        return self.reference
+
+    @property
+    def pillar(self):
+        """See `IBugTarget`."""
+        return NotImplementedError("Archives don't have a pillar")
+
+    @property
+    def bug_target_parent(self):
+        """See `IBugTarget`."""
+        return self
+
+    answers_usage = ServiceUsage.NOT_APPLICABLE
+    blueprints_usage = ServiceUsage.NOT_APPLICABLE
+    codehosting_usage = ServiceUsage.NOT_APPLICABLE
+    translations_usage = ServiceUsage.NOT_APPLICABLE
+    bug_tracking_usage = ServiceUsage.LAUNCHPAD
+    uses_launchpad = True
+
+    @property
+    def official_malone(self):
+        """See `ILaunchpadUsage`.
+
+        Archive bugs won't be supported outside of Launchpad"""
+
+        return True
+
+    def getAllowedBugInformationTypes(self):
+        """See `IBugTarget`."""
+        # Archives use the same information types as their distribution
+
+        return self.distribution.getAllowedBugInformationTypes()
+
+    def getDefaultBugInformationType(self):
+        """See `IBugTarget`."""
+        if self.private:
+            return InformationType.PROPRIETARY
+        return InformationType.PUBLIC
+
+    @property
+    def bug_reporting_guidelines(self):
+        """See `IBugTarget`."""
+        return None
+
+    @property
+    def content_templates(self):
+        """See `IBugTarget`."""
+        return None
+
+    @property
+    def bug_reported_acknowledgement(self):
+        """See `IBugTarget`."""
+        return None
+
+    def getBugSummaryContextWhereClause(self):
+        """See `HasBugsBase`."""
+        # Circular import avoidance
+        from lp.bugs.model.bugsummary import BugSummary
+
+        return BugSummary.archive == self
+
+    def _getOfficialTagClause(self):
+        """See `IHasOfficialBugTags`."""
+        return self.distribution._getOfficialTagClause()
+
+    @property
+    def official_bug_tags(self):
+        """See `IHasOfficialBugTags`."""
+        return self.distribution.official_bug_tags
+
+    def _customizeSearchParams(self, search_params):
+        """See `HasBugsBase`."""
+        search_params.setArchive(self)
+
+    def getSeries(self, series_name):
+        """See `IArchive`."""
+
+        for series in self.series_with_sources:
+            if series.name == series_name:
+                return series
+        raise NoSuchDistroSeriesInArchive(series_name)
 
 
 def validate_ppa(owner, distribution, proposed_name, private=False):

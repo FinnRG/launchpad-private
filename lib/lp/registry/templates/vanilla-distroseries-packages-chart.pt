@@ -1,15 +1,51 @@
-<tal:root xmlns:tal="http://xml.zope.org/namespaces/tal"
-  xmlns:metal="http://xml.zope.org/namespaces/metal"
+<tal:root xmlns:tal="http://xml.zope.org/namespaces/tal" xmlns:metal="http://xml.zope.org/namespaces/metal"
   xmlns:i18n="http://xml.zope.org/namespaces/i18n" omit-tag="">
-  <div id="packages-chart" class="packages-chart">
-    <tal:tabs tal:replace="structure view/packages_chart_tabs/render" />
-    <div tal:attributes="id view/packages_chart_tabs/active_panel_id"
-         tal:condition="python:view.packages_chart_tabs.active == 'source'">
-      <p class="u-text--muted">Package chart source placeholder</p>
+  <div id="packages-chart" tal:define="
+      tab python:view.packages_chart_tabs.active;
+      chart python:view.packages_summary_all_time_chart(tab);
+      total python:chart[1];
+      segments python:chart[0]">
+    <!-- TODO: re-enable tabs when the binary tab is fixed -->
+    <!-- <tal:tabs tal:replace="structure view/packages_chart_tabs/render" /> -->
+
+    <div>
+      <p style="padding-block: 0.7rem; margin: 0">
+        <strong>
+          Source packages in pockets
+        </strong>
+      </p>
+      <hr class="p-rule" />
     </div>
-    <div tal:attributes="id view/packages_chart_tabs/active_panel_id"
-         tal:condition="python:view.packages_chart_tabs.active == 'binary'">
-      <p class="u-text--muted">Package chart binary placeholder</p>
+    <div tal:attributes="id view/packages_chart_tabs/active_panel_id" class="tab-panel">
+      <tal:has-data tal:condition="total">
+        <div class="chart-container">
+          <svg width="160" height="160" chart="donut" chart-radius="100" tal:attributes="chart-title total/fmt:intcomma;
+                              chart-segments python:modules['json'].dumps(segments)" chart-subtitle="Total"
+            chart-clockwise="false" chart-min-ratio="0.02" chart-thickness="20" chart-gap="0.004">
+          </svg>
+        </div>
+        <dl class="donut-chart-legends">
+          <div class="donut-chart-legends__item" tal:repeat="seg segments">
+            <tal:seg define="fill python:seg.get('fill');
+            name python:seg.get('name');
+            value python:seg.get('value');
+            pct python:seg.get('percentage')">
+              <dt>
+                <i class="donut-chart-legends__icon p-icon--circle"
+                  tal:attributes="style string:background-color: ${fill};"></i>
+                <span class="donut-chart-legends__name" tal:content="name">Release</span>
+              </dt>
+              <dd>
+                <span class="donut-chart-legends__value" tal:content="value/fmt:intcomma">0</span>
+                <span class="donut-chart-legends__percentage" tal:content="python:str(pct) + '%'">0%</span>
+              </dd>
+            </tal:seg>
+          </div>
+        </dl>
+      </tal:has-data>
+      <p tal:condition="not: total" class="u-text--muted">
+        No packages have been published for this series.
+      </p>
     </div>
   </div>
 </tal:root>

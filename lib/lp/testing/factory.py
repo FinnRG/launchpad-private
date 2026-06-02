@@ -2371,7 +2371,13 @@ class LaunchpadObjectFactory(ObjectFactory):
         return bug
 
     def makeBugTask(
-        self, bug=None, target=None, owner=None, publish=True, status=None
+        self,
+        bug=None,
+        target=None,
+        owner=None,
+        publish=True,
+        status=None,
+        importance=None,
     ):
         """Create and return a bug task.
 
@@ -2447,7 +2453,11 @@ class LaunchpadObjectFactory(ObjectFactory):
         if owner is None:
             owner = self.makePerson()
         task = getUtility(IBugTaskSet).createTask(
-            removeSecurityProxy(bug), owner, target, status=status
+            removeSecurityProxy(bug),
+            owner,
+            target,
+            status=status,
+            importance=importance,
         )
         removeSecurityProxy(bug).clearBugNotificationRecipientsCache()
         return task
@@ -5760,6 +5770,28 @@ class LaunchpadObjectFactory(ObjectFactory):
             )
         )
 
+    def makeArchiveSeries(
+        self,
+        archive=None,
+        distroseries=None,
+    ):
+        """Make an ArchiveSeries.
+
+        :param archive: The archive. If None, creates a new one.
+        :param distroseries: The distro series. If None, creates a new one.
+        :return: An ArchiveSeries combining the archive and distroseries.
+        """
+        if archive is None:
+            if distroseries is None:
+                distroseries = self.makeDistroSeries()
+            archive = self.makeArchive(distribution=distroseries.distribution)
+        elif distroseries is None:
+            distroseries = self.makeDistroSeries(
+                distribution=archive.distribution
+            )
+
+        return ProxyFactory(archive.getArchiveSeries(distroseries))
+
     def makeEmailMessage(
         self,
         body=None,
@@ -6438,6 +6470,7 @@ class LaunchpadObjectFactory(ObjectFactory):
         pro_enable=False,
         use_fetch_service=False,
         fetch_service_policy=FetchServicePolicy.STRICT,
+        build_path=None,
     ):
         """Make a new Snap."""
         assert information_type is None or private is None
@@ -6521,6 +6554,7 @@ class LaunchpadObjectFactory(ObjectFactory):
             pro_enable=pro_enable,
             use_fetch_service=use_fetch_service,
             fetch_service_policy=fetch_service_policy,
+            build_path=build_path,
         )
         if is_stale is not None:
             removeSecurityProxy(snap).is_stale = is_stale

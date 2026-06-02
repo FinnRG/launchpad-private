@@ -357,6 +357,25 @@ flag_info = sorted(
             "",
             "",
         ),
+        (
+            "archive.bugs.enabled",
+            "boolean",
+            (
+                "Enables the bugs facet for Archives, "
+                "ArchiveSourcePackages and ArchiveSourcePackageSeries."
+            ),
+            "",
+            "Archive bug tracking",
+            "",
+        ),
+        (
+            "view.distroseries.classic.default",
+            "boolean",
+            "If true, the default view for distroseries is the classic view.",
+            "",
+            "Distroseries view default to classic",
+            "",
+        ),
     ]
 )
 

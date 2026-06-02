@@ -105,6 +105,7 @@ from lp.services.webapp.authorization import (
 from lp.services.webapp.interfaces import ICanonicalUrlData, ILaunchBag
 from lp.services.webapp.publisher import RedirectionView
 from lp.services.webapp.snapshot import notify_modified
+from lp.soyuz.interfaces.archive import ARCHIVE_BUGS_FEATURE_FLAG, IArchive
 
 
 class BugNavigation(Navigation):
@@ -195,6 +196,7 @@ class BugContextMenu(ContextMenu):
         "visibility",
         "addupstream",
         "adddistro",
+        "addppa",
         "subscription",
         "addsubscriber",
         "editsubscriptions",
@@ -251,6 +253,13 @@ class BugContextMenu(ContextMenu):
         """Return the 'Also affects distribution/package' Link."""
         text = "Also affects distribution/package"
         return Link("+distrotask", text, icon="add")
+
+    @enabled_with_permission("launchpad.Edit")
+    def addppa(self):
+        """Return the 'Also affects PPA/package' Link."""
+        text = "Also affects PPA/package"
+        enabled = bool(getFeatureFlag(ARCHIVE_BUGS_FEATURE_FLAG))
+        return Link("+ppatask", text, icon="add", enabled=enabled)
 
     def subscription(self):
         """Return the 'Subscribe/Unsubscribe' Link."""
@@ -325,21 +334,27 @@ class BugContextMenu(ContextMenu):
     def nominate(self):
         """Return the 'Target/Nominate for series' Link."""
         launchbag = getUtility(ILaunchBag)
-        target = launchbag.product or launchbag.distribution
-        if check_permission("launchpad.Driver", target) or (
-            getFeatureFlag("bugs.nominations.bug_supervisors_can_target")
-            and check_permission("launchpad.BugSupervisor", target)
-        ):
-            text = "Target to series"
-            return Link("+nominate", text, icon="milestone")
-        elif (
-            check_permission("launchpad.BugSupervisor", target)
-            or self.user is None
-        ):
-            text = "Nominate for series"
-            return Link("+nominate", text, icon="milestone")
+
+        if launchbag.bugtask.archive:
+            # For archives, check if user can edit the archive to allow
+            # targeting.
+            archive = launchbag.bugtask.archive
+            if check_permission("launchpad.Edit", archive):
+                text = "Target to series"
+                return Link("+nominate", text, icon="milestone")
         else:
-            return Link("+nominate", "", enabled=False, icon="milestone")
+            target = launchbag.product or launchbag.distribution
+            if check_permission("launchpad.Driver", target) or (
+                getFeatureFlag("bugs.nominations.bug_supervisors_can_target")
+                and check_permission("launchpad.BugSupervisor", target)
+            ):
+                text = "Target to series"
+                return Link("+nominate", text, icon="milestone")
+            elif check_permission("launchpad.BugSupervisor", target):
+                text = "Nominate for series"
+                return Link("+nominate", text, icon="milestone")
+
+        return Link("+nominate", "", enabled=False, icon="milestone")
 
     @enabled_with_permission("launchpad.Append")
     def addcomment(self):
@@ -1073,10 +1088,13 @@ class BugSecrecyEditView(LaunchpadFormView, BugSubscriptionPortletDetails):
         bug_target_parents = self.context.bug.affected_bug_target_parents
         service = getUtility(IService, "sharing")
         for bug_target_parent in bug_target_parents:
-            # TODO: ilkeremrekoc 2026-03-25: getAccessPolicyGrantCounts expects
-            # a pillar, when we add a bug_target_parent that isn't a pillar we
-            # need to add a condition here to avoid calling it with something
-            # it doesn't understand.
+
+            # If bug_target_parent is an archive use its distribution instead
+            # because archive bugs need to use the AccessPolicy of their
+            # distribution to determine visibility.
+            if IArchive.providedBy(bug_target_parent):
+                bug_target_parent = bug_target_parent.distribution
+
             grant_counts = service.getAccessPolicyGrantCounts(
                 bug_target_parent
             )

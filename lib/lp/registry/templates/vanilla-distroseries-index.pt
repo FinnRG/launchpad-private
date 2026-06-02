@@ -7,6 +7,10 @@
       <link type="text/css" rel="stylesheet" tal:attributes="href string:${icingroot}/vanilla/pages/distroseries.css" />
       <script type="module" tal:attributes="src string:${view/combo_url}/?lp/app/vanilla/tabs-min.js"></script>
       <script type="module" tal:attributes="src string:${view/combo_url}/?lp/app/vanilla/swap-min.js"></script>
+      <script type="module" tal:attributes="src string:${icingroot}/d3-path.min.js"></script>
+      <script type="module" tal:attributes="src string:${icingroot}/d3-shape.min.js"></script>
+      <script type="module" tal:attributes="src string:${icingroot}/d3-selection.min.js"></script>
+      <script type="module" tal:attributes="src string:${view/combo_url}/?lp/app/vanilla/donut-chart.js"></script>
     </metal:block>
   </head>
   <body>
@@ -24,7 +28,8 @@
         </nav>
       </div>
     </tal:breadcrumbs>
-    <section class="p-section" metal:fill-slot="main">
+    <section class="p-section u-no-padding--bottom" metal:fill-slot="main"
+      tal:attributes="id context/name/fmt:css-id/series-">
       <div tal:replace="structure context/@@+vanilla-distroseries-summary" />
       <section class="p-section">
         <div class="grid-row">
@@ -38,6 +43,26 @@
           </div>
         </div>
       </section>
+      <section class="p-section">
+        <div class="grid-row">
+          <hr class="p-rule" />
+          <h3>Bugs</h3>
+          <div class="grid-col-2 grid-col-medium-8">
+            <div tal:replace="structure context/@@+vanilla-distroseries-bugs-summary" />
+          </div>
+          <div class="grid-col-6 grid-col-medium-8">
+            <div tal:replace="structure context/@@+vanilla-distroseries-bugs-list" />
+          </div>
+        </div>
+      </section>
+      <div class="grid-row">
+        <div class="grid-col-4">
+          <div tal:replace="structure context/@@+vanilla-distroseries-milestones" />
+        </div>
+        <div class="grid-col-4">
+          <div tal:replace="structure context/@@+vanilla-distroseries-translation" />
+        </div>        
+      </div>
     </section>
   </body>
 </html>

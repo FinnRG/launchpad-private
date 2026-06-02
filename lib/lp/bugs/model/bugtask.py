@@ -75,6 +75,11 @@ from lp.bugs.interfaces.bugtask import (
     normalize_bugtask_status,
 )
 from lp.bugs.interfaces.bugtasksearch import BugTaskSearchParams
+from lp.registry.interfaces.archiveseries import IArchiveSeries
+from lp.registry.interfaces.archivesourcepackage import IArchiveSourcePackage
+from lp.registry.interfaces.archivesourcepackageseries import (
+    IArchiveSourcePackageSeries,
+)
 from lp.registry.interfaces.distribution import IDistribution, IDistributionSet
 from lp.registry.interfaces.distributionsourcepackage import (
     IDistributionSourcePackage,
@@ -123,6 +128,7 @@ from lp.services.searchbuilder import any
 from lp.services.webapp.interfaces import ILaunchBag
 from lp.services.webapp.snapshot import notify_modified
 from lp.services.xref.interfaces import IXRefSet
+from lp.soyuz.interfaces.archive import IArchive
 
 
 def bugtask_sort_key(bugtask):
@@ -140,6 +146,7 @@ def bugtask_sort_key(bugtask):
     ociproject = ""
     packagetype = ""
     channel = ""
+    archive_name = ""
 
     if bugtask.product:
         product_name = bugtask.product.name
@@ -163,6 +170,9 @@ def bugtask_sort_key(bugtask):
     if bugtask.channel:
         channel = channel_list_to_string(*bugtask.channel)
 
+    if bugtask.archive:
+        archive_name = bugtask.archive.name
+
     # Move ubuntu to the top.
     if distribution_name == "ubuntu":
         distribution_name = "-"
@@ -177,6 +187,7 @@ def bugtask_sort_key(bugtask):
         ociproject,
         packagetype,
         channel,
+        archive_name,
     )
 
 
@@ -189,6 +200,7 @@ def bug_target_from_key(
     ociproject,
     packagetype,
     channel,
+    archive,
 ):
     """Returns the IBugTarget defined by the given DB column values."""
     if ociproject:
@@ -197,6 +209,19 @@ def bug_target_from_key(
         # in the database table (that is, ociproject-based BugTask will have
         # either the distribution or the product column filled too).
         return ociproject
+    elif archive:
+        if sourcepackagename and distroseries:
+            return archive.getArchiveSourcePackageSeries(
+                distroseries, sourcepackagename, check_publication=False
+            )
+        elif distroseries:
+            return archive.getArchiveSeries(distroseries)
+        elif sourcepackagename:
+            return archive.getArchiveSourcePackage(
+                sourcepackagename, check_publication=False
+            )
+        else:
+            return archive
     elif product:
         return product
     elif productseries:
@@ -234,8 +259,21 @@ def bug_target_to_key(target):
         ociproject=None,
         packagetype=None,
         channel=None,
+        archive=None,
     )
-    if IProduct.providedBy(target):
+    if IArchiveSourcePackageSeries.providedBy(target):
+        values["archive"] = target.archive
+        values["distroseries"] = target.distroseries
+        values["sourcepackagename"] = target.sourcepackagename
+    elif IArchiveSeries.providedBy(target):
+        values["archive"] = target.archive
+        values["distroseries"] = target.distroseries
+    elif IArchiveSourcePackage.providedBy(target):
+        values["archive"] = target.archive
+        values["sourcepackagename"] = target.sourcepackagename
+    elif IArchive.providedBy(target):
+        values["archive"] = target
+    elif IProduct.providedBy(target):
         values["product"] = target
     elif IProductSeries.providedBy(target):
         values["productseries"] = target
@@ -393,7 +431,41 @@ def validate_target(
             % target.displayname
         )
 
-    if IDistributionSourcePackage.providedBy(
+    if IArchive.providedBy(target):
+        # Only PPAs can be bug targets, not primary/partner/copy archives
+        if not target.is_ppa:
+            raise IllegalTarget(
+                "Only PPAs can be bug targets. "
+                "Primary and partner archives are covered by distribution "
+                "bug tasks."
+            )
+    elif IArchiveSourcePackage.providedBy(
+        target
+    ) or IArchiveSourcePackageSeries.providedBy(target):
+        # Only PPAs can be bug targets, not primary/partner/copy archives
+        if not target.archive.is_ppa:
+            raise IllegalTarget(
+                "Only PPAs can be bug targets. "
+                "Primary and partner archives are covered by distribution "
+                "bug tasks."
+            )
+        # Check that the source package has been published in the archive.
+        if check_source_package and target.sourcepackagename is not None:
+            # For archive source packages, verify the package exists in the
+            # archive
+            archive_package = target.archive.getArchiveSourcePackage(
+                target.sourcepackagename, check_publication=True
+            )
+            if archive_package is None:
+                raise IllegalTarget(
+                    "The source package %s has not been published in the "
+                    "archive %s."
+                    % (
+                        target.sourcepackagename.name,
+                        target.archive.displayname,
+                    )
+                )
+    elif IDistributionSourcePackage.providedBy(
         target
     ) or ISourcePackage.providedBy(target):
         # If the distribution has at least one series and has published
@@ -487,6 +559,33 @@ def validate_new_target(bug, target, check_source_package=True):
                 "specified. You should fill in a package name for "
                 "the existing bug." % target.distribution.displayname
             )
+    elif IArchive.providedBy(target):
+        # Prevent having a task targeting the archive if there is already a
+        # task targeting a source package within that archive or the target
+        # itself
+        archive_tasks_for_bug = [
+            bugtask
+            for bugtask in shortlist(bug.bugtasks, longest_expected=50)
+            if bugtask.archive == target
+        ]
+
+        if len(archive_tasks_for_bug) > 0:
+            raise IllegalTarget(
+                "This bug is already on %s. Please specify an "
+                "affected package in which the bug has not yet "
+                "been reported." % target.displayname
+            )
+    elif IArchiveSourcePackage.providedBy(target):
+        # Ensure that there isn't already a generic task open on the
+        # archive for this bug, because if there were, that task
+        # should be reassigned to the sourcepackage, rather than a new
+        # task opened.
+        if bug.getBugTask(target.archive) is not None:
+            raise IllegalTarget(
+                "This bug is already open on %s with no package "
+                "specified. You should fill in a package name for "
+                "the existing bug." % target.archive.displayname
+            )
 
     validate_target(
         bug,
@@ -563,6 +662,9 @@ class BugTask(StormBase):
 
     distroseries_id = Int(name="distroseries", allow_none=True)
     distroseries = Reference(distroseries_id, "DistroSeries.id")
+
+    archive_id = Int(name="archive", allow_none=True)
+    archive = Reference(archive_id, "Archive.id")
 
     milestone_id = Int(
         name="milestone",
@@ -727,6 +829,7 @@ class BugTask(StormBase):
             self.ociproject,
             self.packagetype,
             self.channel,
+            self.archive,
         )
 
     @property
@@ -835,16 +938,17 @@ class BugTask(StormBase):
         """See `IBugTask`."""
         if self.product is not None:
             context_params = {"product": self.product}
-        elif (
-            self.sourcepackagename is not None
-            and self.distribution is not None
-        ):
-            context_params = {
-                "distribution": self.distribution,
-                "sourcepackagename": self.sourcepackagename,
-            }
         elif self.distribution is not None:
             context_params = {"distribution": self.distribution}
+
+            if self.sourcepackagename is not None:
+                context_params["sourcepackagename"] = self.sourcepackagename
+
+        elif self.archive is not None:
+            context_params = {"archive": self.archive}
+
+            if self.sourcepackagename is not None:
+                context_params["sourcepackagename"] = self.sourcepackagename
         else:
             raise AssertionError("BugTask doesn't have a searchable target.")
 
@@ -938,6 +1042,35 @@ class BugTask(StormBase):
                 if bugtask.distroseries == current_series:
                     conjoined_primary = bugtask
                     break
+        elif self.archive and not self.distroseries:
+            # Archive tasks look for archive series tasks in the current
+            # series of the archive's distribution.
+            if bugtasks_by_package is None:
+                bugtasks_by_package = self.bug.getBugTasksByPackageName(
+                    bugtasks
+                )
+            bugtasks = bugtasks_by_package[self.sourcepackagename]
+            archive = self.archive
+            possible_primaries = [
+                bugtask
+                for bugtask in bugtasks
+                if (
+                    bugtask.archive == archive
+                    and bugtask.distroseries is not None
+                    and bugtask.sourcepackagename == self.sourcepackagename
+                    and bugtask.packagetype == self.packagetype
+                    and bugtask.channel == self.channel
+                )
+            ]
+            # Return early, so that we don't have to get currentseries,
+            # which is expensive.
+            if len(possible_primaries) == 0:
+                return None
+            current_series = archive.distribution.currentseries
+            for bugtask in possible_primaries:
+                if bugtask.distroseries == current_series:
+                    conjoined_primary = bugtask
+                    break
         elif self.product:
             assert (
                 self.product.development_focus_id is not None
@@ -969,19 +1102,40 @@ class BugTask(StormBase):
         """See `IBugTask`."""
         conjoined_replica = None
         if self.distroseries:
-            distribution = self.distroseries.distribution
-            if self.distroseries != distribution.currentseries:
-                # Only current series tasks are conjoined.
-                return None
-            for bugtask in self._get_shortlisted_bugtasks():
-                if (
-                    bugtask.distribution == distribution
-                    and bugtask.sourcepackagename == self.sourcepackagename
-                    and bugtask.packagetype == self.packagetype
-                    and bugtask.channel == self.channel
-                ):
-                    conjoined_replica = bugtask
-                    break
+            if self.archive:
+                # Archive series tasks conjoin with archive (non-series) tasks
+                # of the same archive, but only for the current series.
+                archive = self.archive
+                current_series = archive.distribution.currentseries
+                if self.distroseries != current_series:
+                    # Only current series tasks are conjoined.
+                    return None
+                for bugtask in self._get_shortlisted_bugtasks():
+                    if (
+                        bugtask.archive == archive
+                        and bugtask.distroseries is None
+                        and bugtask.sourcepackagename == self.sourcepackagename
+                        and bugtask.packagetype == self.packagetype
+                        and bugtask.channel == self.channel
+                    ):
+                        conjoined_replica = bugtask
+                        break
+            else:
+                # Regular distribution series tasks conjoin with distribution
+                # tasks (both have archive=None).
+                distribution = self.distroseries.distribution
+                if self.distroseries != distribution.currentseries:
+                    # Only current series tasks are conjoined.
+                    return None
+                for bugtask in self._get_shortlisted_bugtasks():
+                    if (
+                        bugtask.distribution == distribution
+                        and bugtask.sourcepackagename == self.sourcepackagename
+                        and bugtask.packagetype == self.packagetype
+                        and bugtask.channel == self.channel
+                    ):
+                        conjoined_replica = bugtask
+                        break
         elif self.productseries:
             product = self.productseries.product
             if self.productseries != product.development_focus:
@@ -1277,7 +1431,7 @@ class BugTask(StormBase):
         """See `IBugTask`."""
         if user is None:
             return False
-        elif self.bug_target_parent.bug_supervisor is None:
+        elif getattr(self.bug_target_parent, "bug_supervisor", None) is None:
             return True
         else:
             return self.userHasBugSupervisorPrivileges(user)
@@ -1533,6 +1687,20 @@ class BugTask(StormBase):
                 "componentname": component_name,
             }
         elif self.distroseries:
+
+            if self.archive:
+                header_value = (
+                    "archive=%(archivename)s; "
+                    "distroseries=%(distroseriesname)s; "
+                    "sourcepackage=%(sourcepackagename)s; "
+                    "component=%(componentname)s;"
+                ) % {
+                    "archivename": self.archive.name,
+                    "distroseriesname": self.distroseries.name,
+                    "sourcepackagename": sourcepackagename_value,
+                    "componentname": component_name,
+                }
+
             header_value = (
                 "distribution=%(distroname)s; "
                 "distroseries=%(distroseriesname)s; "
@@ -1541,6 +1709,17 @@ class BugTask(StormBase):
             ) % {
                 "distroname": self.distroseries.distribution.name,
                 "distroseriesname": self.distroseries.name,
+                "sourcepackagename": sourcepackagename_value,
+                "componentname": component_name,
+            }
+        elif self.archive:
+
+            header_value = (
+                "archive=%(archivename)s; "
+                "sourcepackage=%(sourcepackagename)s; "
+                "component=%(componentname)s;"
+            ) % {
+                "archivename": self.archive.name,
                 "sourcepackagename": sourcepackagename_value,
                 "componentname": component_name,
             }
@@ -1785,6 +1964,7 @@ class BugTaskSet:
         product=None,
         distribution=None,
         sourcepackagename=None,
+        archive=None,
     ):
         """See `IBugTaskSet`."""
         if not summary:
@@ -1794,19 +1974,29 @@ class BugTaskSet:
 
         search_params = BugTaskSearchParams(user)
         constraint_clauses = [BugTask.bug == Bug.id]
+
+        if not (product or distribution or archive):
+            raise AssertionError(
+                "Need either a product, distribution, or archive."
+            )
+
         if product:
             search_params.setProduct(product)
             constraint_clauses.append(BugTask.product == product)
-        elif distribution:
-            search_params.setDistribution(distribution)
-            constraint_clauses.append(BugTask.distribution == distribution)
+        else:
+
             if sourcepackagename:
                 search_params.sourcepackagename = sourcepackagename
                 constraint_clauses.append(
                     BugTask.sourcepackagename == sourcepackagename
                 )
-        else:
-            raise AssertionError("Need either a product or distribution.")
+
+            if distribution:
+                search_params.setDistribution(distribution)
+                constraint_clauses.append(BugTask.distribution == distribution)
+            else:
+                search_params.setArchive(archive)
+                constraint_clauses.append(BugTask.archive == archive)
 
         search_params.fast_searchtext = nl_phrase_search(
             summary, Bug, constraint_clauses
@@ -1857,6 +2047,15 @@ class BugTaskSet:
             get_bugsummary_filter_for_user,
         )
 
+        # group_on entries may be BugSummary column references or plain
+        # strings naming BugSummary attributes (e.g. "status").
+        # Resolve strings here so callers outside the bugs model layer need
+        # not import BugSummary.
+        resolved_group_on = tuple(
+            getattr(BugSummary, col) if isinstance(col, str) else col
+            for col in group_on
+        )
+
         conditions = []
         # Open bug statuses
         conditions.append(
@@ -1876,10 +2075,10 @@ class BugTaskSet:
         # bugsummary by design requires either grouping by tag or excluding
         # non-null tags.
         # This is an awkward way of saying
-        # if BugSummary.tag not in group_on:
+        # if BugSummary.tag not in resolved_group_on:
         # - see bug 799602
         group_on_tag = False
-        for column in group_on:
+        for column in resolved_group_on:
             if column is BugSummary.tag:
                 group_on_tag = True
         if not group_on_tag:
@@ -1895,14 +2094,16 @@ class BugTaskSet:
         conditions.extend(user_where)
 
         sum_count = Sum(BugSummary.count)
-        resultset = store.find(group_on + (sum_count,), *conditions)
-        resultset.group_by(*group_on)
+        resultset = store.find(resolved_group_on + (sum_count,), *conditions)
+        resultset.group_by(*resolved_group_on)
         resultset.having(sum_count != 0)
         # Ensure we have no order clauses.
         resultset.order_by()
         result = {}
         for row in resultset:
-            result[row[:-1]] = row[-1]
+            # Row shape is: (<group columns...>, <sum_count>)
+            *group_values, count = tuple(row)
+            result[tuple(group_values)] = count
         return result
 
     def getPrecachedNonConjoinedBugTasks(self, user, milestone_data):
@@ -1968,6 +2169,7 @@ class BugTaskSet:
                 key["packagetype"],
                 key["channel"],
                 key["ociproject"],
+                key["archive"],
                 status,
                 importance,
                 assignee,
@@ -1988,6 +2190,7 @@ class BugTaskSet:
                 BugTask.packagetype,
                 BugTask.channel,
                 BugTask.ociproject,
+                BugTask.archive,
                 BugTask._status,
                 BugTask.importance,
                 BugTask.assignee,
@@ -2030,13 +2233,39 @@ class BugTaskSet:
         targets = [target]
         key = bug_target_to_key(target)
         existing_targets = {bugtask.target for bugtask in bug.bugtasks}
+
+        # Determine the distribution to use for finding approved nominations.
+        # Distribution tasks use the distribution directly; archive tasks
+        # (without a distroseries) use the archive's distribution.
         if key["distribution"] is not None:
-            for nomination in bug.getNominations(key["distribution"]):
+            nomination_distribution = key["distribution"]
+        elif key["archive"] is not None and key["distroseries"] is None:
+            nomination_distribution = key["archive"].distribution
+        else:
+            nomination_distribution = None
+
+        if nomination_distribution is not None:
+            for nomination in bug.getNominations(nomination_distribution):
                 if not nomination.isApproved():
                     continue
-                nominated_target = nomination.distroseries.getSourcePackage(
-                    key["sourcepackagename"]
-                )
+                distroseries = nomination.distroseries
+                if key["archive"] is not None:
+                    if key["sourcepackagename"] is not None:
+                        nominated_target = (
+                            distroseries.getArchiveSourcePackageSeries(
+                                key["archive"], key["sourcepackagename"]
+                            )
+                        )
+                    else:
+                        nominated_target = distroseries.getArchiveSeries(
+                            key["archive"]
+                        )
+                elif key["sourcepackagename"] is not None:
+                    nominated_target = distroseries.getSourcePackage(
+                        key["sourcepackagename"]
+                    )
+                else:
+                    nominated_target = distroseries
                 if nominated_target not in existing_targets:
                     targets.append(nominated_target)
                     # Note: addTask calls createTask with

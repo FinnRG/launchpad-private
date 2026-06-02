@@ -101,6 +101,7 @@ class SharingService:
 
     def checkPillarAccess(self, pillars, information_type, person):
         """See `ISharingService`."""
+
         policies = getUtility(IAccessPolicySource).find(
             [(pillar, information_type) for pillar in pillars]
         )

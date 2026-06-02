@@ -1,0 +1,31 @@
+meter {
+  --meter-border-radius: var(--dimension-radius-small);
+  --meter-width: 162px;
+  --meter-height: var(--dimension-size-xxs);
+
+  background: var(--color-meter-background);
+  border: none;
+  border-radius: var(--meter-border-radius);
+  width: var(--meter-width);
+  height: var(--meter-height);
+
+  &::-webkit-meter-bar {
+    width: var(--meter-width);
+    height: var(--meter-height);
+    background: var(--color-meter-background);
+    border: none;
+    border-radius: var(--meter-border-radius);
+  }
+
+  &::-webkit-meter-optimum-value,
+  &::-webkit-meter-suboptimum-value,
+  &::-webkit-meter-even-less-good-value {
+    background: var(--color-meter-fill);
+    border-radius: var(--meter-border-radius);
+  }
+
+  &::-moz-meter-bar {
+    background: var(--color-meter-fill);
+    border-radius: var(--meter-border-radius);
+  }
+}

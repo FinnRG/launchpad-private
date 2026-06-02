@@ -1,6 +1,8 @@
 # Copyright 2009-2021 Canonical Ltd.  This software is licensed under the
 # GNU Affero General Public License version 3 (see the file LICENSE).
 
+from typing import Dict
+
 __all__ = [
     "BinaryPackageBuild",
     "BinaryPackageBuildSet",
@@ -1248,8 +1250,14 @@ class BinaryPackageBuildSet(SpecificBuildFarmJobSourceMixin):
             DecoratedResultSet(result_set, result_decorator=itemgetter(0))
         )
 
-    def getCountsForDistro(self, context, date_finished_since=None):
-        """See `IBinaryPackageBuildSet`."""
+    def _getCountsForDistroClauses(self, context):
+        """
+        Construct query clauses shared by all getCountsForDistro() methods.
+
+        :param context: An `IDistribution`, `IDistroSeries`, or
+            `IDistroArchSeries`.
+        :return: A list of query clauses.
+        """
         if IDistribution.providedBy(context):
             col = BinaryPackageBuild.distribution_id
         elif IDistroSeries.providedBy(context):
@@ -1267,10 +1275,19 @@ class BinaryPackageBuildSet(SpecificBuildFarmJobSourceMixin):
                 BinaryPackageBuild.date_finished != None,
             ),
         ]
+
+        return clauses
+
+    def getCountsForDistro(
+        self, context, date_finished_since=None
+    ) -> Dict[BuildStatus, int]:
+        """See `IBinaryPackageBuildSet`."""
+        clauses = self._getCountsForDistroClauses(context)
         if date_finished_since is not None:
             clauses.append(
                 BinaryPackageBuild.date_finished >= date_finished_since
             )
+
         rows = (
             IStore(BinaryPackageBuild)
             .find(
@@ -1279,7 +1296,32 @@ class BinaryPackageBuildSet(SpecificBuildFarmJobSourceMixin):
             )
             .group_by(BinaryPackageBuild.status)
         )
-        return dict(rows)
+
+        counts = {status: 0 for status in BuildStatus.items}
+        counts.update(rows)
+        return counts
+
+    def getPocketCountsForDistro(
+        self, context, statuses=None
+    ) -> Dict[PackagePublishingPocket, int]:
+        """See `IBinaryPackageBuildSet`."""
+        clauses = self._getCountsForDistroClauses(context)
+
+        if statuses is not None:
+            clauses.append(BinaryPackageBuild.status.is_in(statuses))
+
+        rows = (
+            IStore(BinaryPackageBuild)
+            .find(
+                (BinaryPackageBuild.pocket, Count()),
+                *clauses,
+            )
+            .group_by(BinaryPackageBuild.pocket)
+        )
+
+        counts = {pocket: 0 for pocket in PackagePublishingPocket.items}
+        counts.update(rows)
+        return counts
 
     def _decorate_with_prejoins(self, result_set):
         """Decorate build records with related data prefetch functionality."""

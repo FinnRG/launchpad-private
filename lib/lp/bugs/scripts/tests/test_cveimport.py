@@ -10,14 +10,19 @@ import tempfile
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import responses
 from testtools.matchers import Contains
 from zope.component import getUtility
 
 from lp.bugs.interfaces.cve import CveStatus, ICveSet
-from lp.bugs.scripts.cveimport import CVEUpdater
-from lp.services.log.logger import DevNullLogger
+from lp.bugs.scripts.cveimport import (
+    CVEUpdater,
+    HTTPScriptFailure,
+    retry_on_failure,
+)
+from lp.services.log.logger import BufferLogger, DevNullLogger
 from lp.services.scripts.base import LaunchpadScriptFailure
 from lp.testing import TestCase
 from lp.testing.layers import LaunchpadZopelessLayer
@@ -263,6 +268,57 @@ class TestCVEUpdater(TestCase):
             expected = f"_delta_CVEs_at_{current_hour:02d}00Z.zip"
             self.assertThat(url, Contains(expected))
 
+    def test_construct_github_url_candidates_delta(self):
+        """Delta yields primary and +1h fallback URL."""
+        updater = CVEUpdater(
+            "cve-updater", test_args=[], logger=DevNullLogger()
+        )
+        fixed_now = datetime(2026, 1, 29, 2, 0, tzinfo=timezone.utc)
+        with patch("lp.bugs.scripts.cveimport.datetime") as mock_dt:
+            mock_dt.now.return_value = fixed_now
+            candidates = updater.construct_github_url_candidates(delta=True)
+
+        self.assertEqual(2, len(candidates))
+        # Primary: release tag and filename both match 0200Z
+        self.assertThat(candidates[0], Contains("cve_2026-01-29_0200Z"))
+        self.assertThat(
+            candidates[0],
+            Contains("2026-01-29_delta_CVEs_at_0200Z.zip"),
+        )
+        # Fallback: same release tag, filename shifted to 0300Z
+        self.assertThat(candidates[1], Contains("cve_2026-01-29_0200Z"))
+        self.assertThat(
+            candidates[1],
+            Contains("2026-01-29_delta_CVEs_at_0300Z.zip"),
+        )
+
+    def test_construct_github_url_candidates_delta_2300Z(self):
+        """Delta at 2300Z yields primary and a next-day 0000Z fallback URL.
+
+        The +1h filename wraps past midnight, so the fallback uses tomorrow's
+        date with 0000Z within the same 2300Z release tag.
+        """
+        updater = CVEUpdater(
+            "cve-updater", test_args=[], logger=DevNullLogger()
+        )
+        fixed_now = datetime(2026, 1, 29, 23, 0, tzinfo=timezone.utc)
+        with patch("lp.bugs.scripts.cveimport.datetime") as mock_dt:
+            mock_dt.now.return_value = fixed_now
+            candidates = updater.construct_github_url_candidates(delta=True)
+
+        self.assertEqual(2, len(candidates))
+        self.assertThat(candidates[0], Contains("cve_2026-01-29_2300Z"))
+        self.assertThat(
+            candidates[0],
+            Contains("2026-01-29_delta_CVEs_at_2300Z.zip"),
+        )
+        # Fallback: same release tag, filename uses next day + 0000Z
+        self.assertThat(candidates[1], Contains("cve_2026-01-29_2300Z"))
+        self.assertThat(
+            candidates[1],
+            Contains("2026-01-30_delta_CVEs_at_0000Z.zip"),
+        )
+
     def test_processCVEJSON(self):
         """Test handling of CVE JSON data."""
         updater = CVEUpdater(
@@ -442,3 +498,124 @@ class TestCVEUpdater(TestCase):
         empty_dir = updater.extract_github_zip(buffer.getvalue(), delta=True)
         self.assertTrue(empty_dir.endswith("deltaCves"))
         self.assertEqual(os.listdir(empty_dir), [])
+
+    @responses.activate
+    def test_fetch_http_error_raises_http_script_failure(self):
+        """fetchCVEURL raises HTTPScriptFailure with status_code."""
+        url = "http://cve.example.com/allitems.xml"
+        responses.add("GET", url, status=503)
+        updater = CVEUpdater(
+            "cve-updater", test_args=[], logger=DevNullLogger()
+        )
+        exc = self.assertRaises(HTTPScriptFailure, updater.fetchCVEURL, url)
+        self.assertEqual(503, exc.status_code)
+
+    def test_retry_on_failure_swallows_404_on_last_attempt(self):
+        """retry_on_failure does not raise if the final attempt gets a 404."""
+        calls = []
+
+        def always_404():
+            calls.append(1)
+            raise HTTPScriptFailure("HTTP 404 at 'url'", status_code=404)
+
+        # Should not raise even though every attempt raises HTTPScriptFailure.
+        result = retry_on_failure(
+            always_404, max_retries=2, delay=0, logger=DevNullLogger()
+        )
+        self.assertIsNone(result)
+        self.assertEqual(2, len(calls))
+
+    def test_retry_on_failure_raises_non_404_on_last_attempt(self):
+        """retry_on_failure re-raises non-404 HTTPScriptFailure."""
+
+        def always_503():
+            raise HTTPScriptFailure("HTTP 503 at 'url'", status_code=503)
+
+        exc = self.assertRaises(
+            HTTPScriptFailure,
+            retry_on_failure,
+            always_503,
+            2,
+            0,
+            DevNullLogger(),
+        )
+        self.assertEqual(503, exc.status_code)
+
+    @responses.activate
+    def test_try_fetch_delta_candidates_falls_back_to_next_url(self):
+        """_try_fetch_delta_candidates tries the next URL if the first fails"""
+        updater = CVEUpdater(
+            "cve-updater", test_args=[], logger=DevNullLogger()
+        )
+        success_response = b"zip content"
+        responses.add("GET", "http://example.com/url1", status=404)
+        responses.add("GET", "http://example.com/url2", body=success_response)
+
+        result = updater._try_fetch_delta_candidates(
+            ["http://example.com/url1", "http://example.com/url2"]
+        )
+
+        self.assertEqual(success_response, result)
+        self.assertEqual(
+            ["http://example.com/url1", "http://example.com/url2"],
+            [call.request.url for call in responses.calls],
+        )
+
+    @responses.activate
+    def test_try_fetch_delta_candidates_raises_when_all_fail(self):
+        """_try_fetch_delta_candidates raises if all candidate URLs fail."""
+        updater = CVEUpdater(
+            "cve-updater", test_args=[], logger=DevNullLogger()
+        )
+        urls = ["http://example.com/url1", "http://example.com/url2"]
+        for url in urls:
+            responses.add("GET", url, status=404)
+
+        exc = self.assertRaises(
+            HTTPScriptFailure,
+            updater._try_fetch_delta_candidates,
+            urls,
+        )
+
+        self.assertIn("All candidate URLs failed", str(exc))
+        self.assertIn("http://example.com/url1", str(exc))
+        self.assertIn("http://example.com/url2", str(exc))
+        self.assertEqual(404, exc.status_code)
+
+    @responses.activate
+    def test_try_fetch_delta_candidates_raises_immediately_on_non_404(self):
+        """_try_fetch_delta_candidates re-raises non-404 errors immediately."""
+        updater = CVEUpdater(
+            "cve-updater", test_args=[], logger=DevNullLogger()
+        )
+        responses.add("GET", "http://example.com/url1", status=503)
+
+        exc = self.assertRaises(
+            HTTPScriptFailure,
+            updater._try_fetch_delta_candidates,
+            ["http://example.com/url1", "http://example.com/url2"],
+        )
+
+        # Should have stopped after the first URL, not tried the second.
+        self.assertEqual(1, len(responses.calls))
+        self.assertEqual(503, exc.status_code)
+
+    def test_handle_github_delta_all_404_returns_zero_and_logs_skip(self):
+        """_handle_github_delta returns (0, 0) and logs a skip message when
+        all candidate URLs return 404 across all retries (release skipped).
+        """
+        logger = BufferLogger()
+        updater = CVEUpdater("cve-updater", test_args=[], logger=logger)
+
+        # Simulate retry_on_failure exhausting all retries on 404s by
+        # returning None, which is the contract documented in retry_on_failure.
+        with patch(
+            "lp.bugs.scripts.cveimport.retry_on_failure", return_value=None
+        ):
+            result = updater._handle_github_delta()
+
+        self.assertEqual((0, 0), result)
+        self.assertIn(
+            "No delta release found for this hour",
+            logger.getLogBuffer(),
+        )

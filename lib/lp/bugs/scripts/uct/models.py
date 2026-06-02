@@ -32,11 +32,20 @@ from zope.schema.interfaces import InvalidURI
 from lp.bugs.enums import VulnerabilityStatus
 from lp.bugs.interfaces.bugtask import BugTaskImportance, BugTaskStatus
 from lp.bugs.scripts.svthandler import SVTRecord
+from lp.bugs.scripts.uct.subprojects import (
+    PPAReference,
+    SubProjectPPAs,
+    create_archive_to_subproject_map,
+)
 from lp.registry.interfaces.distribution import IDistributionSet
 from lp.registry.interfaces.distroseries import IDistroSeriesSet
 from lp.registry.interfaces.person import IPersonSet
 from lp.registry.interfaces.series import SeriesStatus
 from lp.registry.interfaces.sourcepackagename import ISourcePackageNameSet
+from lp.registry.model.archivesourcepackage import ArchiveSourcePackage
+from lp.registry.model.archivesourcepackageseries import (
+    ArchiveSourcePackageSeries,
+)
 from lp.registry.model.distribution import Distribution
 from lp.registry.model.distributionsourcepackage import (
     DistributionSourcePackage,
@@ -47,6 +56,7 @@ from lp.registry.model.product import Product
 from lp.registry.model.sourcepackage import SourcePackage
 from lp.registry.model.sourcepackagename import SourcePackageName
 from lp.services.propertycache import cachedproperty
+from lp.soyuz.model.archive import Archive
 
 __all__ = [
     "CVE",
@@ -445,6 +455,19 @@ class CVE:
         status: BugTaskStatus
         status_explanation: str
 
+    class PPAPackage(NamedTuple):
+        target: ArchiveSourcePackage
+        package_name: SourcePackageName
+        importance: Optional[BugTaskImportance]
+        tags: Set[str]
+
+    class PPASeriesPackage(NamedTuple):
+        target: ArchiveSourcePackageSeries
+        package_name: SourcePackageName
+        importance: Optional[BugTaskImportance]
+        status: BugTaskStatus
+        status_explanation: str
+
     class UpstreamPackage(NamedTuple):
         target: Product
         package_name: SourcePackageName
@@ -525,6 +548,8 @@ class CVE:
         break_fix_data: List[BreakFix],
         patch_urls: Optional[List[PatchURL]] = None,
         importance_explanation: str = "",
+        ppa_packages: Optional[List[PPAPackage]] = None,
+        ppa_series_packages: Optional[List[PPASeriesPackage]] = None,
     ):
         self.sequence = sequence
         self.date_made_public = date_made_public
@@ -533,6 +558,10 @@ class CVE:
         self.distro_packages = distro_packages
         self.series_packages = series_packages
         self.upstream_packages = upstream_packages
+        self.ppa_packages: List[CVE.PPAPackage] = ppa_packages or []
+        self.ppa_series_packages: List[CVE.PPASeriesPackage] = (
+            ppa_series_packages or []
+        )
         self.importance = importance
         self.importance_explanation = importance_explanation
         self.status = status
@@ -552,6 +581,7 @@ class CVE:
     @classmethod
     def new_cache(cls) -> Dict[str, Dict[Any, Any]]:
         return {
+            "archive": {},
             "distribution": {},
             "distroseries": {},
             "product": {},
@@ -587,10 +617,119 @@ class CVE:
         return (distribution_name, source_package_name.name)
 
     @classmethod
+    def _get_ppa_archive(
+        cls,
+        ppa_ref: PPAReference,
+        ubuntu: Distribution,
+        cache_entities: Optional[Dict[str, Dict[Any, Any]]] = None,
+    ):
+        """Resolve a single PPAReference to an Archive object.
+
+        Returns the archive if found, None otherwise. Logs a warning if the
+        owner or archive could not be resolved.
+        """
+
+        if cache_entities is None:
+            cache_entities = cls.new_cache()
+
+        cache_key = (ppa_ref.owner, ppa_ref.archive)
+
+        found, cached = cls._get_from_cache(
+            cache_entities, "archive", cache_key
+        )
+
+        if found:
+            return cached
+
+        person = getUtility(IPersonSet).getByName(ppa_ref.owner)
+        if person is None:
+            logger.warning("Could not find PPA owner: %s", ppa_ref.owner)
+
+            cls._set_in_cache(cache_entities, "archive", cache_key, None)
+            return None
+
+        archive = person.getPPAByName(ubuntu, ppa_ref.archive)
+
+        if archive is None:
+            logger.warning(
+                "Could not find PPA: %s/%s", ppa_ref.owner, ppa_ref.archive
+            )
+            cls._set_in_cache(cache_entities, "archive", cache_key, None)
+            return None
+
+        cls._set_in_cache(cache_entities, "archive", cache_key, archive)
+
+        return archive
+
+    @classmethod
+    def _find_upstream_product(
+        cls,
+        source_package_name: SourcePackageName,
+        packages: Union[List["CVE.DistroPackage"], List["CVE.PPAPackage"]],
+        cache_entities: Dict,
+    ) -> Optional[Product]:
+        """
+        Find the upstream Product for a source package by checking packages.
+
+        For DistroPackages, looks up via target.upstream_product.
+        For PPAPackages, looks up via the corresponding DSP (if it exists).
+
+        Args:
+            source_package_name: The package to find upstream product for
+            packages: List of DistroPackage or PPAPackage objects to search
+            cache_entities: Cache dictionary for storing/retrieving products
+
+        Returns:
+            Product if found, None otherwise
+        """
+        for package in packages:
+            if source_package_name != package.package_name:
+                continue
+
+            # Determine distribution name and product source based on package
+            # type
+            if isinstance(package, cls.DistroPackage):
+                distro_name = package.target.distribution.name
+                product_source = package.target
+            elif isinstance(package, cls.PPAPackage):
+                distro_name = package.target.archive.distribution.name
+                # For PPA packages, try to find upstream via DSP
+                dsp = package.target.archive.distribution.getSourcePackage(
+                    package.package_name
+                )
+                if not dsp:
+                    continue
+                product_source = dsp
+            else:
+                continue
+
+            # Check cache
+            product_cache_key = cls._get_product_cache_key(
+                source_package_name, distro_name
+            )
+            found, cached_product = cls._get_from_cache(
+                cache_entities, "product", product_cache_key
+            )
+            if found:
+                return cached_product
+
+            # Fetch and cache
+            product = product_source.upstream_product
+            cls._set_in_cache(
+                cache_entities, "product", product_cache_key, product
+            )
+
+            if product is not None:
+                return product
+
+        return None
+
+    @classmethod
     def make_from_uct_record(
         cls,
         uct_record: UCTRecord,
         cache_entities: Optional[Dict[str, Dict[Any, Any]]] = None,
+        subprojects: Optional[Dict[str, SubProjectPPAs]] = None,
     ) -> "CVE":
         """
         Create a `CVE` from a `UCTRecord`
@@ -603,6 +742,11 @@ class CVE:
 
         distro_packages = []
         series_packages = []
+        ppa_packages = []
+        ppa_packages_by_name: Dict[
+            Tuple[SourcePackageName, Archive], cls.PPAPackage
+        ] = {}
+        ppa_series_packages = []
         patch_urls = []
         break_fix_data = []
 
@@ -647,6 +791,86 @@ class CVE:
                     upstream_statuses[source_package_name] = uct_package_status
                     continue
 
+                subproject_ppas = (
+                    subprojects.get(uct_package_status.series)
+                    if subprojects is not None
+                    else None
+                )
+                if subproject_ppas is not None:
+                    ubuntu = getUtility(IDistributionSet).getByName("ubuntu")
+                    distro_series = cls.get_distro_series(
+                        subproject_ppas.ubuntu_series,
+                        cache_entities=cache_entities,
+                    )
+                    if distro_series is None:
+                        continue
+
+                    ppa_ref = subproject_ppas.ppa
+
+                    archive = cls._get_ppa_archive(
+                        ppa_ref,
+                        ubuntu,
+                        cache_entities,
+                    )
+
+                    if not archive:
+                        continue
+
+                    # Check if the source package is actually published in this
+                    # archive. We can only create bug tasks if the package
+                    # exists
+                    archive_source_package = archive.getArchiveSourcePackage(
+                        source_package_name, check_publication=True
+                    )
+
+                    if archive_source_package is None:
+                        # Skip creating PPA tasks for packages not in the
+                        # archive
+                        logger.info(
+                            "Package %s not published in archive %s/%s, "
+                            "skipping PPA tasks",
+                            source_package_name.name,
+                            ppa_ref.owner,
+                            ppa_ref.archive,
+                        )
+                        continue
+
+                    # Check if we already have a PPAPackage for this
+                    # (package_name, archive) combination. Create one
+                    # PPAPackage per package per archive.
+                    ppa_package_key = (source_package_name, archive)
+                    if ppa_package_key not in ppa_packages_by_name:
+                        ppa_package = cls.PPAPackage(
+                            target=archive_source_package,
+                            package_name=source_package_name,
+                            importance=package_importance,
+                            tags=uct_package.tags,
+                        )
+                        ppa_packages.append(ppa_package)
+                        ppa_packages_by_name[ppa_package_key] = ppa_package
+
+                    # Create series-level task
+                    ppa_series_packages.append(
+                        cls.PPASeriesPackage(
+                            target=ArchiveSourcePackageSeries(
+                                archive=archive,
+                                distroseries=distro_series,
+                                sourcepackagename=source_package_name,
+                            ),
+                            package_name=source_package_name,
+                            importance=series_package_importance,
+                            status=cls.BUG_TASK_STATUS_MAP[
+                                uct_package_status.status
+                            ],
+                            status_explanation=uct_package_status.reason,
+                        )
+                    )
+
+                    # If this status is in a PPA, we don't want to also create
+                    # a distro/series package for it, so we continue to the
+                    # next status without doing that.
+                    continue
+
                 distro_series = cls.get_distro_series(
                     uct_package_status.series, cache_entities=cache_entities
                 )
@@ -682,39 +906,19 @@ class CVE:
 
         upstream_packages = []
         for source_package_name, upstream_status in upstream_statuses.items():
+            # Try distro packages first
+            product = cls._find_upstream_product(
+                source_package_name, distro_packages, cache_entities
+            )
 
-            product = None
-            for distro_package in distro_packages:
-                if source_package_name != distro_package.package_name:
-                    continue
-
-                product_cache_key = cls._get_product_cache_key(
-                    source_package_name,
-                    distro_package.target.distribution.name,
+            # If no distro package found, try PPA packages.
+            # This is relevant if there are upstream packages that have a
+            # corresponding PPA package, but no corresponding distro package
+            # (which is an edge case but could happen).
+            if product is None:
+                product = cls._find_upstream_product(
+                    source_package_name, ppa_packages, cache_entities
                 )
-                found, cached_product = cls._get_from_cache(
-                    cache_entities,
-                    "product",
-                    product_cache_key,
-                )
-                if found:
-                    product = cached_product
-                else:
-                    # This is the `Product` corresponding to the package of
-                    # this name with the highest version across any of this
-                    # distribution's series that has a packaging link
-                    # (it can make a difference if a package name switches to a
-                    # different upstream project between series)
-                    product = distro_package.target.upstream_product
-                    cls._set_in_cache(
-                        cache_entities,
-                        "product",
-                        product_cache_key,
-                        product,
-                    )
-
-                if product is not None:
-                    break
 
             if product is None:
                 logger.warning(
@@ -769,14 +973,84 @@ class CVE:
             global_tags=uct_record.global_tags,
             patch_urls=patch_urls,
             break_fix_data=break_fix_data,
+            ppa_packages=ppa_packages,
+            ppa_series_packages=ppa_series_packages,
         )
 
-    def to_uct_record(self) -> UCTRecord:
+    def _get_subproject_key(
+        self,
+        archive_name: str,
+        series_name: str,
+        archive_to_subproject: Dict[Tuple[str, str], str],
+    ) -> str:
+        """
+        Get the subproject key for an archive/series combination.
+
+        If the mapping doesn't exist in subprojects.json, logs a warning
+        and returns a fallback format. The fallback format may not round-trip
+        correctly on re-import.
+
+        Args:
+            archive_name: PPA archive name (e.g., "esm-infra-security")
+            series_name: Series name or "devel"
+            archive_to_subproject: Mapping from (archive, series) to subproject
+
+        Returns:
+            Subproject key from mapping, or fallback format "archive/series"
+        """
+        key = (archive_name, series_name)
+        if key in archive_to_subproject:
+            return archive_to_subproject[key]
+
+        # Fallback: create ad-hoc format
+        fallback = f"{archive_name}/{series_name}"
+        logger.warning(
+            "No subproject mapping found for archive '%s' series '%s'. "
+            "Using fallback format '%s'. This may not round-trip correctly "
+            "on re-import. Consider adding this mapping to subprojects.json.",
+            archive_name,
+            series_name,
+            fallback,
+        )
+        return fallback
+
+    def to_uct_record(
+        self, subprojects: Optional[Dict[str, SubProjectPPAs]] = None
+    ) -> UCTRecord:
         """
         Convert a `CVE` to a `UCTRecord`.
 
         This maps Launchpad data structures to the format that UCT understands.
+
+        Args:
+            subprojects: Optional mapping of subproject keys to PPA
+                configurations. If provided, PPA archive references will be
+                mapped back to their original subproject keys (e.g.,
+                "esm-infra/focal"). If None or if a mapping is missing, falls
+                back to "{archive_name}/{series_name}" format with a warning.
+
+        Returns:
+            UCTRecord suitable for export to UCT file format
         """
+        # Create reverse mapping from (archive_name, series_name) to subproject
+        # key. This mapping is used to convert Launchpad PPA references back
+        # to their original UCT subproject keys (e.g., "esm-infra/focal").
+        #
+        # Type: Dict[Tuple[str, str], str]
+        #   Key: (archive_name, series_name)
+        #   Value: subproject key from UCT file e.g., "esm-infra/focal"
+        #
+        # Fallback behavior when no mapping exists:
+        #   - Uses format "{archive_name}/{series_name}"
+        #   - Logs a warning about potential round-trip issues
+        #   - May fail on re-import if the fallback format doesn't match any
+        #     subproject definition
+        archive_to_subproject = (
+            create_archive_to_subproject_map(subprojects)
+            if subprojects
+            else {}
+        )
+
         series_packages_by_name: Dict[
             SourcePackageName, List[CVE.SeriesPackage]
         ] = defaultdict(list)
@@ -784,6 +1058,16 @@ class CVE:
             series_packages_by_name[series_package.package_name].append(
                 series_package
             )
+
+        ppa_series_packages_by_key: Dict[
+            Tuple[SourcePackageName, str], List[CVE.PPASeriesPackage]
+        ] = defaultdict(list)
+        for ppa_series_package in self.ppa_series_packages:
+            key = (
+                ppa_series_package.package_name,
+                ppa_series_package.target.archive.name,
+            )
+            ppa_series_packages_by_key[key].append(ppa_series_package)
 
         packages_by_name: Dict[str, UCTRecord.Package] = OrderedDict()
         processed_packages: Set[SourcePackageName] = set()
@@ -832,6 +1116,76 @@ class CVE:
                 tags=distro_package.tags,
                 patches=[],
             )
+
+        for ppa_package in self.ppa_packages:
+            spn = ppa_package.package_name
+            archive_name = ppa_package.target.archive.name
+            ppa_series_packages = ppa_series_packages_by_key.get(
+                (spn, archive_name), []
+            )
+
+            statuses: List[UCTRecord.SeriesPackageStatus] = []
+            for ppa_series_package in ppa_series_packages:
+                series = ppa_series_package.target.distroseries
+                if series.status == SeriesStatus.DEVELOPMENT:
+                    series_name = "devel"
+                else:
+                    series_name = series.name
+                status = self.BUG_TASK_STATUS_MAP_REVERSE[
+                    ppa_series_package.status
+                ]
+                # Use subproject key if available, otherwise use fallback
+                uct_series = self._get_subproject_key(
+                    archive_name, series_name, archive_to_subproject
+                )
+                statuses.append(
+                    UCTRecord.SeriesPackageStatus(
+                        series=uct_series,
+                        status=status,
+                        reason=ppa_series_package.status_explanation,
+                        priority=(
+                            self.PRIORITY_MAP_REVERSE[
+                                ppa_series_package.importance
+                            ]
+                            if ppa_series_package.importance
+                            else None
+                        ),
+                    )
+                )
+
+            if spn.name in packages_by_name:
+                existing = packages_by_name[spn.name]
+                existing_statuses = list(existing.statuses)
+                for status in statuses:
+                    if status not in existing_statuses:
+                        existing_statuses.append(status)
+                packages_by_name[spn.name] = UCTRecord.Package(
+                    name=existing.name,
+                    statuses=existing_statuses,
+                    priority=(
+                        existing.priority
+                        if existing.priority is not None
+                        else (
+                            self.PRIORITY_MAP_REVERSE[ppa_package.importance]
+                            if ppa_package.importance
+                            else None
+                        )
+                    ),
+                    tags=existing.tags.union(ppa_package.tags),
+                    patches=existing.patches,
+                )
+            else:
+                packages_by_name[spn.name] = UCTRecord.Package(
+                    name=spn.name,
+                    statuses=statuses,
+                    priority=(
+                        self.PRIORITY_MAP_REVERSE[ppa_package.importance]
+                        if ppa_package.importance
+                        else None
+                    ),
+                    tags=ppa_package.tags,
+                    patches=[],
+                )
 
         for upstream_package in self.upstream_packages:
             status = UCTRecord.SeriesPackageStatus(
@@ -942,14 +1296,7 @@ class CVE:
 
         # Standardize distro series name
         if "/" in distro_series_name:
-            if distro_series_name.startswith("esm-"):
-                distro_name = "ubuntu-esm"
-                series_name = distro_series_name.split("/", 1)[1]
-            elif distro_series_name.endswith("/esm"):
-                distro_name = "ubuntu-esm"
-                series_name = distro_series_name.split("/", 1)[0]
-            else:
-                series_name, distro_name = distro_series_name.split("/", 1)
+            series_name, distro_name = distro_series_name.split("/", 1)
         else:
             distro_name = "ubuntu"
             series_name = distro_series_name

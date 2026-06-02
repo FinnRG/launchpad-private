@@ -12,20 +12,22 @@ __all__ = [
 ]
 
 import bz2
-import gzip
 import hashlib
 import lzma
 import os
 import re
 import shutil
+import time
 from collections import defaultdict
-from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from functools import partial
 from itertools import chain, groupby
 from operator import attrgetter
 
 from artifactory import ArtifactoryPath
 from debian.deb822 import Release, _multivalued
+from isal import igzip_threaded as gzip
 from storm.expr import And, Desc, Exists, Join, Not, Select
 from storm.locals import ClassAlias
 from zope.component import getUtility
@@ -39,6 +41,10 @@ from lp.archivepublisher.indices import (
     build_binary_stanza_fields,
     build_source_stanza_fields,
     build_translations_stanza_fields,
+    generate_packages_index,
+    generate_sources_index,
+    get_overrides_for_arch,
+    read_extra_overrides,
 )
 from lp.archivepublisher.interfaces.archivegpgsigningkey import (
     ISignableArchive,
@@ -47,7 +53,7 @@ from lp.archivepublisher.model.ftparchive import FTPArchiveHandler
 from lp.archivepublisher.utils import RepositoryIndexFile, get_ppa_reference
 from lp.registry.interfaces.pocket import PackagePublishingPocket, pocketsuffix
 from lp.registry.interfaces.series import SeriesStatus
-from lp.registry.model.distroseries import DistroSeries
+from lp.registry.model.distroseries import STABLE_STATUSES, DistroSeries
 from lp.services.database.bulk import load
 from lp.services.database.constants import UTC_NOW
 from lp.services.database.interfaces import IStore
@@ -441,6 +447,59 @@ class Publisher:
     def isDirty(self, distroseries, pocket):
         """True if a publication has happened in this release and pocket."""
         return distroseries.getSuite(pocket) in self.dirty_suites
+
+    def checkValidUntilNeedsRefresh(self, distroseries, pocket, release_path):
+        """Check if this release file's Valid-Until has expired."""
+
+        # we publish "Valid-until" flags only for the primary archives
+        if not self.archive.purpose == ArchivePurpose.PRIMARY:
+            return False
+
+        # RELEASE pocket should not have Valid-Until for stable series.
+        # While the validator prevents users from configuring this via the API,
+        # we perform this check as a safety measure against direct database
+        # modifications or internal code bypasses.
+        # It's fine to proceed with additional checks for all other
+        # pocket/series types so that "Valid-Until" tags can still be applied
+        # to pockets where uploads are restricted.
+        if (
+            pocket == PackagePublishingPocket.RELEASE
+            and distroseries.status in STABLE_STATUSES
+        ):
+            return False
+
+        try:
+            with open(release_path) as release_file:
+                release_data = Release(release_file)
+        except FileNotFoundError:
+            # Valid-Until is no reason to publish NEW Release files
+            return False
+
+        if "Valid-Until" in release_data:
+            # Release file needs a refresh if Valid-Until was enabled
+            # previously, but has been disabled now.
+            if (
+                not distroseries.valid_until_config
+                or pocket not in distroseries.valid_until_config
+            ):
+                return True
+
+        # check if the intended pockets are there
+        if pocket not in distroseries.valid_until_config:
+            return False
+
+        # Check if the tag is not present in the release file, but a Release
+        # file exists
+        if "Valid-Until" not in release_data:
+            return True
+
+        expiry = datetime.strptime(
+            release_data["Valid-Until"], "%a, %d %b %Y %H:%M:%S UTC"
+        ).replace(tzinfo=timezone.utc)
+        pocket_config = distroseries.valid_until_config[pocket]
+        return expiry <= datetime.now(timezone.utc) + timedelta(
+            days=pocket_config["refresh_threshold"]
+        )
 
     def markSuiteDirty(self, distroseries, pocket):
         """Mark a suite dirty only if it's allowed."""
@@ -865,6 +924,198 @@ class Publisher:
                         distroseries, pocket, component
                     )
 
+    def C_doDirectIndexes(self, is_careful):
+        """Generate indexes directly from DB, with full override support.
+
+        This is the direct-SQL replacement for C_doFTPArchive.
+        Override and file-list generation is kept identical to
+        FTPArchiveHandler.run() so that downstream consumers
+        (30-copy-indices, generate-contents-files) continue to work.
+
+        Instead of running apt-ftparchive, index files are generated
+        by querying the database directly.
+        """
+        self.log.debug("* Step C'': Direct index generation from DB")
+
+        # Reuse FTPArchiveHandler for override and file-list generation.
+        # See FTPArchiveHandler.run for reference.
+        apt_handler = FTPArchiveHandler(
+            self.log, self._config, self._diskpool, self.distro, self
+        )
+        apt_handler.createEmptyPocketRequests(is_careful)
+        self.log.debug("Preparing file lists and overrides.")
+        apt_handler.generateOverrides(is_careful)
+        self.log.debug("Generating overrides for the distro.")
+        apt_handler.generateFileLists(is_careful)
+
+        # Loop structure closely follows C_writeIndexes
+        self.log.debug("Generating index files directly from DB.")
+        store = IStore(SourcePackagePublishingHistory)
+        for distroseries in self.distro.series:
+            for pocket in self.archive.getPockets():
+                if not is_careful:
+                    if not self.isDirty(distroseries, pocket):
+                        self.log.debug(
+                            "Skipping direct index generation for %s/%s"
+                            % (distroseries.name, pocket.name)
+                        )
+                        continue
+                    self.checkDirtySuiteBeforePublishing(distroseries, pocket)
+                else:
+                    if not self.isAllowed(distroseries, pocket):
+                        continue
+
+                suite = distroseries.getSuite(pocket)
+                self.release_files_needed.add(suite)
+
+                components = self.archive.getComponentsForSeries(distroseries)
+                for component in components:
+                    self._writeDirectComponentIndexes(
+                        store,
+                        distroseries,
+                        pocket,
+                        component,
+                        suite,
+                    )
+
+    def _writeDirectComponentIndexes(
+        self, store, distroseries, pocket, component, suite
+    ):
+        """Generate index files for a single suite/component from SQL.
+
+        Sources and binary Packages are generated via direct SQL queries.
+        """
+        self.log.debug(
+            "Generating direct indexes for %s/%s" % (suite, component.name)
+        )
+
+        self.log.debug(
+            "Generating Sources for %s/%s" % (suite, component.name)
+        )
+
+        extra_override_path = os.path.join(
+            self._config.overrideroot,
+            "override.%s.extra.%s" % (suite, component.name),
+        )
+        extra_overrides = read_extra_overrides(extra_override_path)
+        t_start = time.time()
+        sources_bytes = generate_sources_index(
+            store,
+            archive_id=self.archive.id,
+            distroseries_id=distroseries.id,
+            pocket=pocket.value,
+            component_id=component.id,
+        )
+
+        self.log.debug(
+            "d-i: Sources %s/%s (%d bytes, %.3fs)",
+            suite,
+            component.name,
+            len(sources_bytes),
+            time.time() - t_start,
+        )
+
+        source_index = RepositoryIndexFile(
+            get_sources_path(self._config, suite, component),
+            self._config.temproot,
+            distroseries.index_compressors,
+        )
+        source_index.write(sources_bytes)
+        source_index.close()
+
+        separate_long_descriptions = not distroseries.include_long_descriptions
+        # shared across all arch calls so arch-all packages produce only
+        # one Translation-en entry regardless of how many arches see them.
+        seen_translations = set() if separate_long_descriptions else None
+
+        if separate_long_descriptions:
+            translation_en = RepositoryIndexFile(
+                os.path.join(
+                    self._config.distsroot,
+                    suite,
+                    component.name,
+                    "i18n",
+                    "Translation-en",
+                ),
+                self._config.temproot,
+                distroseries.index_compressors,
+            )
+
+        for arch in distroseries.architectures:
+            if not arch.enabled:
+                continue
+
+            arch_path = "binary-%s" % arch.architecturetag
+            self.log.debug("Generating Packages for %s" % arch_path)
+
+            arch_overrides = get_overrides_for_arch(
+                extra_overrides, arch.architecturetag
+            )
+
+            t_start = time.time()
+            packages_bytes, translations_bytes = generate_packages_index(
+                store,
+                archive_id=self.archive.id,
+                distroseries_id=distroseries.id,
+                pocket=pocket.value,
+                component_id=component.id,
+                distroarchseries_id=arch.id,
+                architecturetag=arch.architecturetag,
+                underlying_architecturetag=arch.underlying_architecturetag,
+                separate_long_descriptions=separate_long_descriptions,
+                overrides=arch_overrides,
+                formats=[BinaryPackageFormat.DEB],
+                seen_translations=seen_translations,
+            )
+            self.log.debug(
+                "d-i: Packages %s/%s/%s (%d bytes, %.3fs)",
+                suite,
+                component.name,
+                arch_path,
+                len(packages_bytes),
+                time.time() - t_start,
+            )
+
+            # Write main Packages index (DEBs)
+            main_index = RepositoryIndexFile(
+                get_packages_path(self._config, suite, component, arch),
+                self._config.temproot,
+                distroseries.index_compressors,
+            )
+            main_index.write(packages_bytes)
+            main_index.close()
+
+            # Write subcomponent indices (debian-installer)
+            for subcomp in self.subcomponents:
+                sub_index = RepositoryIndexFile(
+                    get_packages_path(
+                        self._config, suite, component, arch, subcomp
+                    ),
+                    self._config.temproot,
+                    distroseries.index_compressors,
+                )
+                if subcomp == "debian-installer":
+                    di_bytes, _ = generate_packages_index(
+                        store,
+                        archive_id=self.archive.id,
+                        distroseries_id=distroseries.id,
+                        pocket=pocket.value,
+                        component_id=component.id,
+                        distroarchseries_id=arch.id,
+                        architecturetag=arch.architecturetag,
+                        underlying_architecturetag=arch.underlying_architecturetag,  # noqa: E501
+                        overrides=arch_overrides,
+                        formats=[BinaryPackageFormat.UDEB],
+                    )
+                    sub_index.write(di_bytes)
+                sub_index.close()
+
+            if separate_long_descriptions and translations_bytes:
+                translation_en.write(translations_bytes)
+
+        if separate_long_descriptions:
+            translation_en.close()
+
     def C_updateArtifactoryProperties(self, is_careful):
         """Update Artifactory properties to match our database."""
         self.log.debug("* Step C'': Updating properties in Artifactory")
@@ -1044,9 +1295,22 @@ class Publisher:
                     if file_exists(release_path):
                         self.release_files_needed.add(suite)
 
+                needs_refresh = self.checkValidUntilNeedsRefresh(
+                    distroseries, pocket, release_path
+                )
+                if needs_refresh:
+                    self.log.debug(
+                        "Valid-Until needs refresh in release files for %s/%s"
+                        % (distroseries.name, pocket.name)
+                    )
+                    self.release_files_needed.add(suite)
+
                 write_release = suite in self.release_files_needed
                 if not is_careful:
-                    if not self.isDirty(distroseries, pocket):
+                    if (
+                        not self.isDirty(distroseries, pocket)
+                        and not needs_refresh
+                    ):
                         self.log.debug(
                             "Skipping release files for %s/%s"
                             % (distroseries.name, pocket.name)
@@ -1639,9 +1903,17 @@ class Publisher:
             release_file["Snapshots"] = metadata_overrides["Snapshots"]
         release_file["Version"] = distroseries.version
         release_file["Codename"] = distroseries.name
-        release_file["Date"] = datetime.utcnow().strftime(
-            "%a, %d %b %Y %k:%M:%S UTC"
-        )
+
+        now = datetime.now(timezone.utc)
+        release_file["Date"] = now.strftime("%a, %d %b %Y %k:%M:%S UTC")
+        if (
+            self.archive.purpose == ArchivePurpose.PRIMARY
+            and pocket in distroseries.valid_until_config
+        ):
+            pocket_config = distroseries.valid_until_config[pocket]
+            release_file["Valid-Until"] = (
+                now + timedelta(days=pocket_config["validity_period"])
+            ).strftime("%a, %d %b %Y %k:%M:%S UTC")
         release_file["Architectures"] = " ".join(sorted(all_architectures))
         release_file["Components"] = " ".join(
             reorder_components(all_components)
@@ -1657,14 +1929,20 @@ class Publisher:
             release_file["NotAutomatic"] = "yes"
             release_file["ButAutomaticUpgrades"] = "yes"
 
-        for filename in sorted(all_files):
-            hashes = self._readIndexFileHashes(suite, filename)
+        file_list = sorted(all_files)
+        with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+            worker_func = partial(
+                self._readIndexFileHashes,
+                suite,
+            )
+            result_hashes = list(executor.map(worker_func, file_list))
+        for hashes in result_hashes:
             if hashes is None:
                 continue
+
             for archive_hash in archive_hashes:
-                release_file.setdefault(archive_hash.apt_name, []).append(
-                    hashes[archive_hash.deb822_name]
-                )
+                hash = hashes[archive_hash.deb822_name]
+                release_file.setdefault(archive_hash.apt_name, []).append(hash)
 
         if distroseries.publish_by_hash and distroseries.advertise_by_hash:
             release_file["Acquire-By-Hash"] = "yes"

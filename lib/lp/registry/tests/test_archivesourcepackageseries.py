@@ -230,11 +230,9 @@ class TestArchiveSourcePackageSeries(TestCaseWithFactory):
     def test_official_bug_tags(self):
         """Test official_bug_tags property"""
 
-        # Official bug tags aren't implemented yet due to Archive not having
-        # the bug tag mixin, so this should return None for now
         self.assertEqual(
             self.archivesourcepackageseries.official_bug_tags,
-            None,
+            self.archive.official_bug_tags,
         )
 
     def test_bug_target_parent(self):
@@ -274,3 +272,28 @@ class TestArchiveSourcePackageSeries(TestCaseWithFactory):
             other_distroseries,
             self.sourcepackagename,
         )
+
+    def test_returns_object_for_series_without_publication(self):
+        """getArchiveSourcePackageSeries returns an object even when the
+        package has no publication in the requested series, as long as it is
+        published somewhere in the archive (no per-series check)."""
+        # self.sourcepackagename is published in self.archive/self.distroseries
+        # via setUp, but unpublished_series has no publication for it.
+        unpublished_series = self.factory.makeDistroSeries(
+            distribution=self.distribution
+        )
+        result = self.archive.getArchiveSourcePackageSeries(
+            unpublished_series, self.sourcepackagename
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(self.sourcepackagename, result.sourcepackagename)
+        self.assertEqual(self.archive, result.archive)
+        self.assertEqual(unpublished_series, result.distroseries)
+
+    def test_returns_none_without_archive_publication(self):
+        """getArchiveSourcePackageSeries returns None when the package has
+        never been published anywhere in the archive (archive-wide check)."""
+        archive = self.factory.makeArchive(distribution=self.distribution)
+        spn = self.factory.makeSourcePackageName("unpublished")
+        result = archive.getArchiveSourcePackageSeries(self.distroseries, spn)
+        self.assertIsNone(result)

@@ -8,14 +8,17 @@ __all__ = [
 ]
 
 import json
+from datetime import date, timedelta
 
 import transaction
 from testtools.matchers import Equals
 from zope.component import getUtility
+from zope.security.interfaces import Unauthorized
 from zope.security.proxy import removeSecurityProxy
 
 from lp.app.interfaces.launchpad import ILaunchpadCelebrities
 from lp.bugs.interfaces.bugtargetparent import IBugTargetParent
+from lp.bugs.interfaces.bugtask import BugTaskImportance, BugTaskStatus
 from lp.registry.errors import NoSuchDistroSeries
 from lp.registry.interfaces.distribution import IDistribution
 from lp.registry.interfaces.distroseries import IDistroSeriesSet
@@ -199,6 +202,19 @@ class TestDistroSeriesCurrentSourceReleases(
 
 class TestDistroSeries(TestCaseWithFactory):
     layer = DatabaseFunctionalLayer
+
+    def _makeBugTask(
+        self, distroseries, owner, status, importance, milestone=None
+    ):
+        task = self.factory.makeBugTask(owner=owner, target=distroseries)
+        with person_logged_in(owner):
+            if milestone is not None:
+                task.transitionToMilestone(milestone, milestone.target.owner)
+            if task.status != status:
+                task.transitionToStatus(status)
+            if task.importance != importance:
+                task.transitionToImportance(importance)
+        return task
 
     def test_getSuite_release_pocket(self):
         # The suite of a distro series and the release pocket is the name of
@@ -462,6 +478,86 @@ class TestDistroSeries(TestCaseWithFactory):
             naked_distroseries.publishing_options["publish_i18n_index"]
         )
 
+    def test_valid_until_config(self):
+        distroseries = self.factory.makeDistroSeries()
+        self.assertFalse(distroseries.valid_until_config)
+        with admin_logged_in():
+            distroseries.valid_until_config = {
+                PackagePublishingPocket.BACKPORTS: {
+                    "refresh_threshold": 5,
+                    "validity_period": 10,
+                }
+            }
+        naked_distroseries = removeSecurityProxy(distroseries)
+        self.assertEqual(
+            {"BACKPORTS": {"refresh_threshold": 5, "validity_period": 10}},
+            naked_distroseries.publishing_options["valid_until_config"],
+        )
+
+    def test_valid_until_config_empty(self):
+        distroseries = self.factory.makeDistroSeries()
+        self.assertFalse(distroseries.valid_until_config)
+        with admin_logged_in():
+            distroseries.valid_until_config = {}
+        naked_distroseries = removeSecurityProxy(distroseries)
+        self.assertEqual(
+            {},
+            naked_distroseries.publishing_options["valid_until_config"],
+        )
+
+    def test_valid_until_raises_assert(self):
+        """
+        Test that setting valid_until_config to non-dict values raises
+        AssertionError
+        """
+        distroseries = self.factory.makeDistroSeries()
+        values = [None, [], (), 12]
+        for value in values:
+            with admin_logged_in():
+                self.assertRaises(
+                    AssertionError,
+                    setattr,
+                    distroseries,
+                    "valid_until_config",
+                    value,
+                )
+        self.assertFalse(distroseries.valid_until_config)
+
+    def test_anonymous_users_cant_modify_valid_until_config(self):
+        """Test that anonymous users cannot edit valid_until_config."""
+        distroseries = self.factory.makeDistroSeries()
+
+        self.assertRaises(
+            Unauthorized, setattr, distroseries, "valid_until_config", {}
+        )
+
+    def test_regular_users_cant_modify_valid_until_config(self):
+        """
+        Test that regular authenticated users cannot edit
+        valid_until_config.
+        """
+        distroseries = self.factory.makeDistroSeries()
+        regular_user = self.factory.makePerson()
+        with person_logged_in(regular_user):
+            self.assertRaises(
+                Unauthorized, setattr, distroseries, "valid_until_config", {}
+            )
+
+    def test_distribution_owner_can_modify_valid_until_config(self):
+        """Test that distribution owners can edit valid_until_config."""
+        distroseries = self.factory.makeDistroSeries()
+        distribution_owner = distroseries.distribution.owner
+
+        # Distribution owner can modify valid_until_config
+        with person_logged_in(distribution_owner):
+            distroseries.valid_until_config = {
+                PackagePublishingPocket.BACKPORTS: {
+                    "refresh_threshold": 5,
+                    "validity_period": 10,
+                }
+            }
+        self.assertTrue(distroseries.valid_until_config)
+
     def test_getExternalPackageSeries(self):
         # Test that we get the ExternalPackageSeries that belongs to the
         # distribution with the proper attributes
@@ -561,6 +657,194 @@ class TestDistroSeries(TestCaseWithFactory):
         result = distroseries.getArchiveSourcePackageSeries(
             archive=archive, name="nonexistent-package"
         )
+        self.assertIsNone(result)
+
+    def test_getBugSummaryStatusImportanceCounts_returns_grouped_counts(self):
+        distroseries = self.factory.makeDistroSeries()
+        owner = self.factory.makePerson()
+
+        # Unresolved tasks should be counted.
+        self._makeBugTask(
+            distroseries,
+            owner=owner,
+            status=BugTaskStatus.NEW,
+            importance=BugTaskImportance.CRITICAL,
+        )
+        self._makeBugTask(
+            distroseries,
+            owner=owner,
+            status=BugTaskStatus.INPROGRESS,
+            importance=BugTaskImportance.HIGH,
+        )
+        # Resolved tasks should be excluded by countBugs.
+        self._makeBugTask(
+            distroseries,
+            owner=owner,
+            status=BugTaskStatus.FIXRELEASED,
+            importance=BugTaskImportance.CRITICAL,
+        )
+
+        counts = distroseries.getBugSummaryStatusImportanceCounts(owner)
+
+        self.assertIsInstance(counts, dict)
+        self.assertEqual(
+            counts[(BugTaskStatus.NEW, BugTaskImportance.CRITICAL)], 1
+        )
+        self.assertEqual(
+            counts[(BugTaskStatus.INPROGRESS, BugTaskImportance.HIGH)], 1
+        )
+        self.assertNotIn(
+            (BugTaskStatus.FIXRELEASED, BugTaskImportance.CRITICAL), counts
+        )
+
+    def test_getBugSummaryStatusImportanceCounts_filters_by_milestone(self):
+        distroseries = self.factory.makeDistroSeries()
+        owner = self.factory.makePerson()
+        milestone = self.factory.makeMilestone(distroseries=distroseries)
+
+        # Included: task on the selected milestone.
+        self._makeBugTask(
+            distroseries,
+            owner=owner,
+            status=BugTaskStatus.NEW,
+            importance=BugTaskImportance.HIGH,
+            milestone=milestone,
+        )
+        # Excluded: task not on that milestone.
+        self._makeBugTask(
+            distroseries,
+            owner=owner,
+            status=BugTaskStatus.NEW,
+            importance=BugTaskImportance.CRITICAL,
+        )
+
+        counts = distroseries.getBugSummaryStatusImportanceCounts(
+            owner, milestone=milestone
+        )
+
+        self.assertEqual(
+            counts[(BugTaskStatus.NEW, BugTaskImportance.HIGH)], 1
+        )
+        self.assertNotIn(
+            (BugTaskStatus.NEW, BugTaskImportance.CRITICAL), counts
+        )
+
+    def test_get_milestone_returns_matching_milestone(self):
+        distroseries = self.factory.makeDistroSeries()
+        milestone = self.factory.makeMilestone(distroseries=distroseries)
+        IStore(distroseries).flush()
+        self.assertEqual(milestone, distroseries.get_milestone(milestone.id))
+
+    def test_get_milestone_unknown_id_returns_None(self):
+        distroseries = self.factory.makeDistroSeries()
+        self.assertIsNone(distroseries.get_milestone(-1))
+
+    def test_get_milestone_other_series_returns_None(self):
+        distroseries = self.factory.makeDistroSeries()
+        other_series = self.factory.makeDistroSeries()
+        other_milestone = self.factory.makeMilestone(distroseries=other_series)
+        IStore(distroseries).flush()
+        self.assertIsNone(distroseries.get_milestone(other_milestone.id))
+
+    def test_get_milestone_product_milestone_returns_None(self):
+        distroseries = self.factory.makeDistroSeries()
+        product_milestone = self.factory.makeMilestone(
+            product=self.factory.makeProduct()
+        )
+        IStore(distroseries).flush()
+        self.assertIsNone(distroseries.get_milestone(product_milestone.id))
+
+    def test_get_milestone_returns_inactive_milestone(self):
+        distroseries = self.factory.makeDistroSeries()
+        milestone = self.factory.makeMilestone(
+            distroseries=distroseries, active=False
+        )
+        IStore(distroseries).flush()
+        self.assertEqual(milestone, distroseries.get_milestone(milestone.id))
+
+    def test_get_upcoming_milestone_no_milestones(self):
+        distroseries = self.factory.makeDistroSeries()
+        self.assertIsNone(distroseries.get_upcoming_milestone())
+
+    def test_get_upcoming_milestone_no_dateexpected(self):
+        distroseries = self.factory.makeDistroSeries()
+        self.factory.makeMilestone(distroseries=distroseries)
+        self.assertIsNone(distroseries.get_upcoming_milestone())
+
+    def test_get_upcoming_milestone_past_excluded(self):
+        distroseries = self.factory.makeDistroSeries()
+        self.factory.makeMilestone(
+            distroseries=distroseries,
+            dateexpected=date.today() - timedelta(days=1),
+        )
+        self.assertIsNone(distroseries.get_upcoming_milestone())
+
+    def test_get_upcoming_milestone_inactive_excluded(self):
+        distroseries = self.factory.makeDistroSeries()
+        self.factory.makeMilestone(
+            distroseries=distroseries,
+            dateexpected=date.today() + timedelta(days=1),
+            active=False,
+        )
+        self.assertIsNone(distroseries.get_upcoming_milestone())
+
+    def test_get_upcoming_milestone_other_series_excluded(self):
+        distroseries = self.factory.makeDistroSeries()
+        other_series = self.factory.makeDistroSeries()
+        self.factory.makeMilestone(
+            distroseries=other_series,
+            dateexpected=date.today() + timedelta(days=1),
+        )
+        self.assertIsNone(distroseries.get_upcoming_milestone())
+
+    def test_get_upcoming_milestone_returns_earliest(self):
+        distroseries = self.factory.makeDistroSeries()
+        later = self.factory.makeMilestone(
+            distroseries=distroseries,
+            dateexpected=date.today() + timedelta(days=10),
+        )
+        earlier = self.factory.makeMilestone(
+            distroseries=distroseries,
+            dateexpected=date.today() + timedelta(days=2),
+        )
+        self.assertEqual(earlier, distroseries.get_upcoming_milestone())
+        self.assertNotEqual(later, distroseries.get_upcoming_milestone())
+
+    def test_get_upcoming_milestone_ties_broken_by_name(self):
+        distroseries = self.factory.makeDistroSeries()
+        same_date = date.today() + timedelta(days=5)
+        milestone_b = self.factory.makeMilestone(
+            distroseries=distroseries, name="b", dateexpected=same_date
+        )
+        milestone_a = self.factory.makeMilestone(
+            distroseries=distroseries, name="a", dateexpected=same_date
+        )
+        self.assertEqual(milestone_a, distroseries.get_upcoming_milestone())
+        self.assertNotEqual(milestone_b, distroseries.get_upcoming_milestone())
+
+    def test_get_upcoming_milestone_includes_today(self):
+        distroseries = self.factory.makeDistroSeries()
+        milestone = self.factory.makeMilestone(
+            distroseries=distroseries, dateexpected=date.today()
+        )
+        self.assertEqual(milestone, distroseries.get_upcoming_milestone())
+
+    def test_getArchiveSeries(self):
+        # Test that we get the ArchiveSeries that belongs to the
+        # distroseries with the proper attributes
+        distroseries = self.factory.makeDistroSeries()
+        archive = self.factory.makeArchive(
+            distribution=distroseries.distribution
+        )
+        archiveseries = distroseries.getArchiveSeries(archive=archive)
+        self.assertEqual(
+            removeSecurityProxy(archiveseries).distroseries, distroseries
+        )
+        self.assertEqual(removeSecurityProxy(archiveseries).archive, archive)
+
+        # Returns None if archive is from a different distribution
+        other_archive = self.factory.makeArchive()
+        result = distroseries.getArchiveSeries(archive=other_archive)
         self.assertIsNone(result)
 
 

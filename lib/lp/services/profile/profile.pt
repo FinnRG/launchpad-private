@@ -33,15 +33,18 @@ a.clicktext {font-weight: normal;}
                  help actions/help|nothing;
                  callgrind actions/callgrind|nothing;
                  pstats actions/pstats|nothing;
-                 log python: callgrind or pstats;
+                 pyinstrument actions/pyinstrument|nothing;
+                 log python: callgrind or pstats or pyinstrument;
                  show actions/show|nothing;
                  always_log options/always_log;
                  dump_path options/dump_path;
                  callgrind_path options/callgrind_path|nothing;
                  pstats_path options/pstats_path|nothing;
+                 pyinstrument_path options/pyinstrument_path|nothing;
                  time options/time|nothing;
                  cumulative options/cumulative|nothing;
                  calls options/calls|nothing;
+                 pyinstrument_output options/pyinstrument_output|nothing;
                  oops options/oops|nothing;
                  profile_count options/profile_count|nothing;
                  multiple_profiles options/multiple_profiles|nothing;
@@ -68,12 +71,14 @@ a.clicktext {font-weight: normal;}
     (<code>++profile++show</code>), a KCacheGrind-friendly log on the
     filesystem (<code>++profile++callgrind</code>), a PStats-friendly log
     (Python standard library) on the filesystem
-    (<code>++profile++pstats</code>), an HTML view of the SQL and the
+    (<code>++profile++pstats</code>), a PyInstrument HTML report on the
+    filesystem (<code>++profile++pyinstrument</code>), an HTML view of the SQL and the
     Python stacktrace when each SQL call was made
     (<code>++profile++sqltrace</code>), or an HTML view of only the SQL
     (<code>++profile++sql</code>). You can also combine these
     (<code>++profile++show&callgrind</code> or
-    <code>++profile++show&pstats</code> or others, with each action separated
+    <code>++profile++show&pstats</code> or
+    <code>++profile++pyinstrument&show</code> or others, with each action separated
     with ampersands).</tal:block></p>
     <p>The <code>++profile++sqltrace</code> can take too much time to let a
     page practically render, especially on our staging environments.  You can
@@ -100,7 +105,7 @@ with profiling():
     <h2>Inline request ignored</h2>
     <p>You tried to use a profiling call in your code while also using a
     conflicting <code>++profile++</code> request (like <code>show</code> or
-    <code>pstats</code> or <code>callgrind</code>).  You can't use both at the
+    <code>pstats</code> or <code>callgrind</code> or <code>pyinstrument</code>).  You can't use both at the
     same time, so you got the full profile of this request.  If you want the
     results of the inline calls instead, try removing the
     <code>++profile++</code>...<code>/</code> segment from your browser's URL.
@@ -122,11 +127,14 @@ with profiling():
     calls.  If you want a greater profile depth, or if for any other reason
     you want to use the standard Python library's pstats analysis instead, you
     can. To do this, use "pstats" instead as part of your ++profile++ request,
-    as in <code>++profile++pstats</code>.  Profiles are logged to <tal:block
+    as in <code>++profile++pstats</code>.  For a modern, interactive HTML
+    profiler with flame graphs, use <code>++profile++pyinstrument</code>.
+    Profiles are logged to <tal:block
     replace="dump_path" />.</p>
     <p> You can see both the log information and immediate results with
-    <code>++profile++callgrind&show</code> or
-    <code>++profile++pstats&show</code>.</p>
+    <code>++profile++callgrind&show</code>,
+    <code>++profile++pstats&show</code>, or
+    <code>++profile++pyinstrument&show</code>.</p>
   </tal:block>
   <tal:block condition="log">
     <p tal:condition="always_log"><strong>You have configured every
@@ -145,6 +153,15 @@ with profiling():
     interface.  Type &quot;help&quot; at the prompt, or see the <a
     href="http://docs.python.org/library/profile.html#instant-user-s-manual"
     >Python documentation</a>.</p>
+    <p tal:condition="pyinstrument">PyInstrument generated an interactive HTML
+    report at <tal:block replace="pyinstrument_path" />. Open this file in a 
+    web browser to view an interactive flame graph and call tree visualization.
+    PyInstrument uses statistical sampling rather than tracing, providing lower
+    overhead and more accurate timing information. <tal:block 
+    condition="options/multiple_profiles|nothing">Note: Multiple profiling 
+    segments were combined into a single report.</tal:block> See the 
+    <a href="https://pyinstrument.readthedocs.io/">PyInstrument documentation
+    </a> for more details.</p>
   </tal:block>
   <h2>SQL trace</h2>
   <tal:block condition="not:sqltrace">
@@ -336,12 +353,21 @@ with profiling():
     <p tal:condition="multiple_profiles">This request made <tal:block
     replace="profile_count" /> profiles. The statistics below represent an
     aggregate of them all.</p>
-    <h3>Top Inline Time</h3>
-    <pre tal:content="time" />
-    <h3>Top Total Time</h3>
-    <pre tal:content="cumulative" />
-    <h3>Top Call Count</h3>
-    <pre tal:content="calls" />
+    <tal:block condition="pyinstrument_output">
+        <pre tal:content="pyinstrument_output" />
+    </tal:block>
+    <tal:block condition="time">
+        <h3>Top Inline Time</h3>
+        <pre tal:content="time" />
+    </tal:block>
+    <tal:block condition="cumulative">
+        <h3>Top Total Time</h3>
+        <pre tal:content="cumulative" />
+    </tal:block>
+    <tal:block condition="calls">
+        <h3>Top Call Count</h3>
+        <pre tal:content="calls" />
+    </tal:block>
     <h2>Raw OOPS Information</h2>
     <pre tal:content="oops" />
   </tal:block>

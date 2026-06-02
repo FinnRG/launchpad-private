@@ -8,13 +8,16 @@ __all__ = [
     "ACTIVE_UNRELEASED_STATUSES",
     "DistroSeries",
     "DistroSeriesSet",
+    "INACTIVE_STATUSES",
+    "STABLE_STATUSES",
+    "UNSTABLE_STATUSES",
 ]
 
 import collections
-from datetime import timezone
+from datetime import datetime, timezone
 from io import BytesIO
 from operator import itemgetter
-from typing import List
+from typing import List, Optional
 
 import apt_pkg
 from lazr.delegates import delegate_to
@@ -42,6 +45,7 @@ from lp.blueprints.model.specification import (
 from lp.blueprints.model.specificationsearch import search_specifications
 from lp.bugs.interfaces.bugsummary import IBugSummaryDimension
 from lp.bugs.interfaces.bugtarget import ISeriesBugTarget
+from lp.bugs.interfaces.bugtask import IBugTaskSet
 from lp.bugs.interfaces.bugtaskfilter import OrderedBugTask
 from lp.bugs.model.bugtarget import BugTargetBase
 from lp.bugs.model.structuralsubscription import (
@@ -69,6 +73,7 @@ from lp.registry.interfaces.sourcepackagename import (
     ISourcePackageName,
     ISourcePackageNameSet,
 )
+from lp.registry.model.archiveseries import ArchiveSeries
 from lp.registry.model.archivesourcepackageseries import (
     ArchiveSourcePackageSeries,
 )
@@ -152,12 +157,18 @@ ACTIVE_RELEASED_STATUSES = [
     SeriesStatus.SUPPORTED,
 ]
 
+STABLE_STATUSES = ACTIVE_RELEASED_STATUSES + [SeriesStatus.OBSOLETE]
 
 ACTIVE_UNRELEASED_STATUSES = [
     SeriesStatus.EXPERIMENTAL,
     SeriesStatus.DEVELOPMENT,
     SeriesStatus.FROZEN,
 ]
+
+UNSTABLE_STATUSES = ACTIVE_UNRELEASED_STATUSES + [SeriesStatus.FUTURE]
+
+
+INACTIVE_STATUSES = [SeriesStatus.OBSOLETE]
 
 
 DEFAULT_INDEX_COMPRESSORS = [
@@ -290,6 +301,7 @@ class DistroSeries(
             "advertise_by_hash": False,
             "strict_supported_component_dependencies": True,
             "publish_i18n_index": True,
+            "valid_until_config": {},
         }
 
     @property
@@ -822,6 +834,33 @@ class DistroSeries(
         """See `HasMilestonesMixin`."""
         return Milestone.distroseries == self
 
+    def get_milestone(self, milestone_id: int) -> Optional[Milestone]:
+        """See `IDistroSeries`."""
+        return (
+            IStore(Milestone)
+            .find(
+                Milestone,
+                Milestone.distroseries == self,
+                Milestone.id == milestone_id,
+            )
+            .one()
+        )
+
+    def get_upcoming_milestone(self) -> Optional[Milestone]:
+        """See `IDistroSeries`."""
+        today = datetime.today().date()
+        return (
+            Store.of(self)
+            .find(
+                Milestone,
+                Milestone.distroseries == self,
+                Milestone.active == True,
+                Milestone.dateexpected >= today,
+            )
+            .order_by(Milestone.dateexpected, Milestone.name)
+            .first()
+        )
+
     def updatePackageCount(self):
         """See `IDistroSeries`."""
         self.sourcecount = (
@@ -993,6 +1032,22 @@ class DistroSeries(
         assert isinstance(value, bool)
         self.publishing_options["publish_i18n_index"] = value
 
+    @property
+    def valid_until_config(self):
+        stored = self.publishing_options.get("valid_until_config", {})
+
+        return {
+            PackagePublishingPocket.items[key]: value
+            for key, value in stored.items()
+        }
+
+    @valid_until_config.setter
+    def valid_until_config(self, value):
+        assert isinstance(value, dict)
+
+        normalized = {pocket.name: config for pocket, config in value.items()}
+        self.publishing_options["valid_until_config"] = normalized
+
     def _customizeSearchParams(self, search_params):
         """Customize `search_params` for this distribution series."""
         search_params.setDistroSeries(self)
@@ -1127,6 +1182,13 @@ class DistroSeries(
             if sourcepackagename is None:
                 return None
         return ArchiveSourcePackageSeries(archive, self, sourcepackagename)
+
+    def getArchiveSeries(self, archive):
+        """See `IDistroSeries`."""
+        if archive.distribution != self.distribution:
+            return None
+
+        return ArchiveSeries(archive, self)
 
     def getBinaryPackage(self, name):
         """See `IDistroSeries`."""
@@ -1612,6 +1674,25 @@ class DistroSeries(
             name=name,
             version=version,
             exact_match=exact_match,
+        )
+
+    def getBugSummaryStatusImportanceCounts(self, user, milestone=None):
+        """See `IDistroSeries`.
+
+        Counts come from the BugSummary fact table via ``IBugTaskSet`` and
+        are grouped by ``("status", "importance")``.
+        """
+        if milestone is not None:
+            # Circular import.
+            from lp.bugs.model.bugsummary import CombineBugSummaryConstraint
+
+            context = CombineBugSummaryConstraint(self, milestone)
+        else:
+            context = self
+        return getUtility(IBugTaskSet).countBugs(
+            user,
+            [context],
+            ("status", "importance"),
         )
 
     def getBugSummaryContextWhereClause(self):

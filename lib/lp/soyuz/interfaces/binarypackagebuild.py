@@ -2,6 +2,7 @@
 # GNU Affero General Public License version 3 (see the file LICENSE).
 
 """BinaryPackageBuild interfaces."""
+from typing import Dict
 
 __all__ = [
     "BuildSetStatus",
@@ -38,6 +39,7 @@ from lp.buildmaster.interfaces.packagebuild import (
     IPackageBuildView,
 )
 from lp.buildmaster.interfaces.processor import IProcessor
+from lp.registry.interfaces.pocket import PackagePublishingPocket
 from lp.registry.interfaces.sourcepackagename import ISourcePackageName
 from lp.soyuz.interfaces.publishing import ISourcePackagePublishingHistory
 from lp.soyuz.interfaces.sourcepackagerelease import ISourcePackageRelease
@@ -479,11 +481,13 @@ class IBinaryPackageBuildSet(ISpecificBuildFarmJobSource):
         sourcepackagename matches (SQL LIKE).
         """
 
-    def getCountsForDistro(context, date_finished_since=None):
+    def getCountsForDistro(
+        context, date_finished_since=None
+    ) -> Dict[BuildStatus, int]:
         """Count builds grouped by status for a Distribution/DS/DAS.
 
         Returns a dict mapping `BuildStatus` values to their count.
-        Only statuses with at least one matching build are included.
+        Statuses with no matching builds are included with a count of 0.
 
         Gina-generated builds (``FULLYBUILT`` with no ``date_finished``)
         are excluded.  Gina is a legacy script that imports packages from
@@ -495,7 +499,32 @@ class IBinaryPackageBuildSet(ISpecificBuildFarmJobSource):
         :param date_finished_since: Optional datetime; when given, only
             builds with ``date_finished >= date_finished_since`` are
             counted.
-        :return: ``dict`` of ``{BuildStatus: int}``.
+        :return: ``dict`` of ``{BuildStatus: int}`` containing an entry
+            for every ``BuildStatus`` value.
+        """
+
+    def getPocketCountsForDistro(
+        context,
+        statuses=None,
+    ) -> Dict[PackagePublishingPocket, int]:
+        """Count builds grouped by pocket for a Distribution/DS/DAS.
+
+        Returns a dict mapping ``PackagePublishingPocket`` values to the
+        number of binary package builds.
+        Builds with no matching pockets are included with a count of 0.
+
+        Gina-generated builds (``FULLYBUILT`` with no ``date_finished``)
+        are excluded.  Gina is a legacy script that imports packages from
+        an external repository (see ``lp/soyuz/scripts/gina/README``);
+        the resulting build records have no ``date_finished``.
+
+        :param context: An `IDistribution`, `IDistroSeries`, or
+            `IDistroArchSeries`.
+        :param statuses: Optional iterable of `BuildStatus` values to filter
+            by. If ``None`` (the default), builds across all statuses are
+            counted.
+        :return: ``dict`` of ``{PackagePublishingPocket: int}`` containing
+            an entry for every ``PackagePublishingPocket`` value.
         """
 
     def getBuildsBySourcePackageRelease(

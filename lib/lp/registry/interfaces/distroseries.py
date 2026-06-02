@@ -16,6 +16,7 @@ __all__ = [
 import http.client
 import typing
 from datetime import datetime
+from typing import Optional
 
 from lazr.lifecycle.snapshot import doNotSnapshot
 from lazr.restful.declarations import (
@@ -36,13 +37,23 @@ from lazr.restful.declarations import (
 from lazr.restful.fields import CollectionField, Reference, ReferenceChoice
 from zope.component import getUtility
 from zope.interface import Attribute, Interface
-from zope.schema import Bool, Choice, Datetime, List, Object, TextLine
+from zope.schema import (
+    Bool,
+    Choice,
+    Datetime,
+    Dict,
+    Int,
+    List,
+    Object,
+    TextLine,
+)
 
 from lp import _
 from lp.app.interfaces.launchpad import IServiceUsage
 from lp.app.validators import LaunchpadValidationError
 from lp.app.validators.email import email_validator
 from lp.app.validators.name import name_validator
+from lp.app.validators.validation import validate_valid_until_config
 from lp.app.validators.version import sane_version
 from lp.blueprints.interfaces.specificationtarget import ISpecificationGoal
 from lp.bugs.interfaces.bugtarget import (
@@ -591,6 +602,58 @@ class IDistroSeriesPublic(
         )
     )
 
+    valid_until_config = exported(
+        Dict(
+            title=_("Valid-Until configuration"),
+            key_type=Choice(vocabulary=PackagePublishingPocket),
+            value_type=Dict(
+                key_type=TextLine(),
+                value_type=Int(min=1),
+                required=True,
+            ),
+            required=False,
+            constraint=validate_valid_until_config,
+            description=_(
+                """
+                Optional dict configuration to control publishing of
+                Valid-Until tags in Release files for main archives.
+
+                Each key must be one of:
+
+                - Release (can be specified only for unreleased series)
+                - Security
+                - Updates
+                - Proposed
+                - Backports
+
+                Each value must be a dict with two integer fields (both >= 1):
+
+                - refresh_threshold: Refresh when Valid-Until is within this
+                  many days (must be <= validity_period)
+                - validity_period: How many days the Release file remains valid
+
+                Example::
+
+                    {
+                      "SECURITY": {
+                        "refresh_threshold": 7,
+                        "validity_period": 14
+                      },
+                      "UPDATES": {
+                        "refresh_threshold": 5,
+                        "validity_period": 10
+                      }
+                    }
+
+                Note: Setting this attribute will overwrite the existing value
+                entirely. To update the existing configuration, retrieve the
+                current value first, update it, and then set the complete
+                configuration.
+                """
+            ),
+        )
+    )
+
     inherit_overrides_from_parents = Bool(
         title=_("Inherit overrides from parents"),
         readonly=False,
@@ -724,6 +787,13 @@ class IDistroSeriesPublic(
         doesn't exist.
         """
 
+    def getArchiveSeries(archive):
+        """Return an archive series for the given archive.
+
+        Returns None if the archive's distribution doesn't match this
+        distroseries's distribution.
+        """
+
     def getTranslatableSourcePackages():
         """Return a list of Source packages in this distribution series
         that can be translated.
@@ -828,6 +898,34 @@ class IDistroSeriesPublic(
     def getUnlinkedTranslatableSourcePackages():
         """Return a list of source packages that can be translated in
         this distribution series but which lack Packaging links.
+        """
+
+    def getBugSummaryStatusImportanceCounts(user, milestone=None):
+        """Return BugSummary counts grouped by status and importance.
+
+        If ``milestone`` is provided, counts are restricted to bugs that
+        match both this distroseries and that milestone.
+
+        :param user: The user to query on behalf of.
+        :param milestone: Optional milestone filter.
+        :return: A dict in the same shape as ``IBugTaskSet.countBugs`` for
+            ``("status", "importance")`` grouping, i.e.
+            ``{(status, importance): count, ...}``.
+        """
+
+    def get_milestone(milestone_id: int) -> Optional[IMilestone]:
+        """Return the milestone for this distroseries with the given id.
+
+        :param milestone_id: The milestone's numeric id.
+        :return: The matching `IMilestone`, or None when no milestone with
+            that id belongs to this distroseries.
+        """
+
+    def get_upcoming_milestone() -> Optional[IMilestone]:
+        """Return the closest active upcoming milestone for this distroseries.
+
+        :return: The active `IMilestone` with the earliest ``dateexpected``
+            on or after today (ties broken by name), or None.
         """
 
     def getBinaryPackage(name):

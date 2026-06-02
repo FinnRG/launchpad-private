@@ -1129,11 +1129,16 @@ class IBugTaskSet(Interface):
         """
 
     def findSimilar(
-        user, summary, product=None, distribution=None, sourcepackagename=None
+        user,
+        summary,
+        product=None,
+        distribution=None,
+        sourcepackagename=None,
+        archive=None,
     ):
         """Find bugs similar to the given summary.
 
-        The search is limited to the given product or distribution
+        The search is limited to the given product, distribution, or archive
         (together with an optional source package).
 
         Only BugTasks that the user has access to will be returned.
@@ -1171,9 +1176,10 @@ class IBugTaskSet(Interface):
         :param user: The user to query on behalf of.
         :param contexts: A list of contexts to search. Contexts must support
             the IBugSummaryDimension interface.
-        :param group_on: The column(s) group on - .e.g (
-            BugSummary.distroseries_id, BugSummary.milestone_id) will cause
-            grouping by distro series and then milestone.
+        :param group_on: The column(s) group on.  Each entry may be either
+            a BugSummary Storm column reference (e.g.
+            ``BugSummary.distroseries_id``) or a plain string naming a
+            BugSummary attribute (e.g. ``"distroseries_id"``).
         :return: A dict {group_instance: count, ...}
         """
 

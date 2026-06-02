@@ -1,8 +1,12 @@
 @import "icons";
-@import "patterns/description-list";
 @import "patterns/description-list-item";
+@import "patterns/description-list-layout";
+@import "patterns/description-list";
+@import "patterns/donut-chart";
+@import "patterns/meter";
 @import "tokens/color";
 @import "tokens/dimension";
+@import "tokens/transition";
 @import "tokens/typography";
 @import "utilities";
 
@@ -15,6 +19,10 @@
   font-size: 14px;
 
   body {
+    &.is-dark {
+      color-scheme: dark;
+    }
+
     // overrides to vanilla framework
     .u-fixed-width,
     .p-navigation__row,
@@ -38,15 +46,19 @@
     .p-pricing-block--50-50 {
       max-width: 100%;
     }
+
     // remove the overflow which is used for text ellipsis, this prevents the tooltip from showing up
-    td,th {
+    td,
+    th {
       overflow: unset;
     }
+
     // small adjustment to the tooltip arrow position to remove the gap
     .p-tooltip__message::before {
       bottom: 99%;
     }
   }
+
 }
 
 .hidden {
@@ -56,6 +68,10 @@
 .swap-loading {
   opacity: 0.5;
   pointer-events: none;
+}
+
+.p-tabs__list {
+  margin-block-end: var(--dimension-spacing-block-m);
 }
 
 .p-tabs__link[aria-current="page"] {
@@ -69,5 +85,33 @@
     height: 0.1875rem;
     left: 0;
     right: 0;
+  }
+}
+
+table {
+  margin-bottom: var(--dimension-spacing-block-xxs);
+}
+
+.table-container+a {
+  padding-inline: var(--dimension-spacing-inline-xxs);
+}
+
+@media (max-width: 621px) {
+  .grid-row {
+    row-gap: var(--dimension-spacing-block-l);
+  }
+
+  .table-container {
+    overflow-x: auto;
+
+    table {
+      table-layout: auto;
+    }
+
+  }
+
+
+  .p-tabs__list {
+    scrollbar-width: thin;
   }
 }

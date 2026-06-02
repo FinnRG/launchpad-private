@@ -63,6 +63,10 @@ from lp.registry.interfaces.person import IPersonSet
 from lp.registry.interfaces.product import IProductSet
 from lp.registry.interfaces.projectgroup import IProjectGroupSet
 from lp.registry.interfaces.sourcepackage import ISourcePackage
+from lp.registry.model.archivesourcepackage import ArchiveSourcePackage
+from lp.registry.model.archivesourcepackageseries import (
+    ArchiveSourcePackageSeries,
+)
 from lp.registry.model.sourcepackage import SourcePackage
 from lp.registry.tests.test_accesspolicy import get_policies_for_artifact
 from lp.services.database.sqlbase import (
@@ -1235,6 +1239,53 @@ class TestSimilarBugs(TestCaseWithFactory):
         similar_bugs = sorted(similar_bugs, key=attrgetter("id"))
 
         self.assertEqual(len(similar_bugs), 2)
+
+    def test_with_archive(self):
+        """findSimilarBugs works when the bug task targets a PPA archive."""
+        firefox, new_ff_bug, ff_bugtask = self._setupFirefoxBugTask()
+        sample_person = getUtility(IPersonSet).getByEmail("test@canonical.com")
+
+        # Create a PPA and a bug on it
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        ppa_bugtask = self.factory.makeBugTask(bug=new_ff_bug, target=ppa)
+
+        # Create another bug on the same PPA with similar title
+        another_ppa_bug = self.factory.makeBug(
+            target=ppa, title="Firefox on PPA"
+        )
+
+        # Find similar bugs
+        similar_bugs = ppa_bugtask.findSimilarBugs(user=sample_person)
+        self.assertEqual(len(similar_bugs), 1)
+        self.assertEqual(similar_bugs[0].id, another_ppa_bug.id)
+
+    def test_with_archive_source_package(self):
+        """findSimilarBugs works when the bug task targets an archive source
+        package."""
+        from lp.registry.model.archivesourcepackage import ArchiveSourcePackage
+
+        firefox, new_ff_bug, ff_bugtask = self._setupFirefoxBugTask()
+        sample_person = getUtility(IPersonSet).getByEmail("test@canonical.com")
+
+        # Create a PPA and a source package within it
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        spn = self.factory.makeSourcePackageName(name="firefox-pkg")
+        # Create publishing history so the package is actually in the PPA
+        self.factory.makeSourcePackagePublishingHistory(
+            archive=ppa, sourcepackagename=spn
+        )
+        asp = ArchiveSourcePackage(ppa, spn)
+
+        # Create bugs on the archive source package
+        asp_bug1 = self.factory.makeBug(target=asp, title="Firefox package")
+        asp_bug2 = self.factory.makeBug(target=asp, title="Firefox bug")
+
+        asp_bugtask = asp_bug1.bugtasks[0]
+
+        # Find similar bugs
+        similar_bugs = asp_bugtask.findSimilarBugs(user=sample_person)
+        self.assertEqual(len(similar_bugs), 1)
+        self.assertEqual(similar_bugs[0].id, asp_bug2.id)
 
 
 class TestBugTaskPermissionsToSetAssigneeMixin:
@@ -3332,6 +3383,7 @@ class TestBugTargetKeys(TestCaseWithFactory):
                 ociproject=None,
                 packagetype=None,
                 channel=None,
+                archive=None,
             ),
         )
 
@@ -3348,6 +3400,7 @@ class TestBugTargetKeys(TestCaseWithFactory):
                 packagetype=None,
                 channel=None,
                 ociproject=None,
+                archive=None,
             ),
         )
 
@@ -3364,6 +3417,7 @@ class TestBugTargetKeys(TestCaseWithFactory):
                 packagetype=None,
                 channel=None,
                 ociproject=None,
+                archive=None,
             ),
         )
 
@@ -3380,6 +3434,7 @@ class TestBugTargetKeys(TestCaseWithFactory):
                 packagetype=None,
                 channel=None,
                 ociproject=None,
+                archive=None,
             ),
         )
 
@@ -3396,6 +3451,7 @@ class TestBugTargetKeys(TestCaseWithFactory):
                 packagetype=None,
                 channel=None,
                 ociproject=None,
+                archive=None,
             ),
         )
 
@@ -3412,6 +3468,7 @@ class TestBugTargetKeys(TestCaseWithFactory):
                 packagetype=externalpackage.packagetype,
                 channel=externalpackage.channel,
                 ociproject=None,
+                archive=None,
             ),
         )
 
@@ -3428,6 +3485,7 @@ class TestBugTargetKeys(TestCaseWithFactory):
                 packagetype=None,
                 channel=None,
                 ociproject=None,
+                archive=None,
             ),
         )
 
@@ -3445,6 +3503,7 @@ class TestBugTargetKeys(TestCaseWithFactory):
                 packagetype=None,
                 channel=None,
                 ociproject=ociproject,
+                archive=None,
             ),
         )
 
@@ -3462,8 +3521,138 @@ class TestBugTargetKeys(TestCaseWithFactory):
                 packagetype=None,
                 channel=None,
                 ociproject=ociproject,
+                archive=None,
             ),
         )
+
+    def test_archive(self):
+        archive = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        self.assertTargetKeyWorks(
+            archive,
+            dict(
+                product=None,
+                productseries=None,
+                distribution=None,
+                distroseries=None,
+                sourcepackagename=None,
+                packagetype=None,
+                channel=None,
+                ociproject=None,
+                archive=archive,
+            ),
+        )
+
+    def test_archivesourcepackage(self):
+        archive = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        spn = self.factory.makeSourcePackageName()
+        from lp.registry.model.archivesourcepackage import ArchiveSourcePackage
+
+        asp = ArchiveSourcePackage(archive, spn)
+        self.assertTargetKeyWorks(
+            asp,
+            dict(
+                product=None,
+                productseries=None,
+                distribution=None,
+                distroseries=None,
+                sourcepackagename=spn,
+                packagetype=None,
+                channel=None,
+                ociproject=None,
+                archive=archive,
+            ),
+        )
+
+    def test_archiveseries(self):
+        archive = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        distroseries = self.factory.makeDistroSeries(
+            distribution=archive.distribution
+        )
+        from lp.registry.model.archiveseries import ArchiveSeries
+
+        archive_series = ArchiveSeries(archive, distroseries)
+        self.assertTargetKeyWorks(
+            archive_series,
+            dict(
+                product=None,
+                productseries=None,
+                distribution=None,
+                distroseries=distroseries,
+                sourcepackagename=None,
+                packagetype=None,
+                channel=None,
+                ociproject=None,
+                archive=archive,
+            ),
+        )
+
+    def test_archivesourcepackage_unpublished(self):
+        """bug_target_from_key reconstructs ArchiveSourcePackage targets
+        even when the package is deleted or unpublished from the archive.
+        """
+
+        # Create a PPA and a source package name (but no publication)
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        spn = self.factory.makeSourcePackageName(name="test-package")
+
+        # Create an ArchiveSourcePackage target (without any publication)
+        asp = ArchiveSourcePackage(ppa, spn)
+
+        # Create the flat key representation
+        flat = dict(
+            product=None,
+            productseries=None,
+            distribution=None,
+            distroseries=None,
+            sourcepackagename=spn,
+            ociproject=None,
+            packagetype=None,
+            channel=None,
+            archive=ppa,
+        )
+
+        # Without check_publication=False, this would return None because the
+        # package is not published in the archive.
+        target = bug_target_from_key(**flat)
+
+        # Verify we got a valid target
+        self.assertIsNotNone(target)
+        self.assertEqual(target, asp)
+
+    def test_archivesourcepackageseries_unpublished(self):
+        """bug_target_from_key reconstructs ArchiveSourcePackageSeries targets
+        even when the package is deleted or unpublished from the archive.
+        """
+        # Create a PPA, distroseries, and source package name (no publication)
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        distroseries = self.factory.makeDistroSeries(
+            distribution=ppa.distribution
+        )
+        spn = self.factory.makeSourcePackageName(name="test-package")
+
+        # Create an ArchiveSourcePackageSeries target (without publication)
+        asps = ArchiveSourcePackageSeries(ppa, distroseries, spn)
+
+        # Create the flat key representation
+        flat = dict(
+            product=None,
+            productseries=None,
+            distribution=None,
+            distroseries=distroseries,
+            sourcepackagename=spn,
+            ociproject=None,
+            packagetype=None,
+            channel=None,
+            archive=ppa,
+        )
+
+        # Without check_publication=False, this would return None because the
+        # package is not published in the archive.
+        target = bug_target_from_key(**flat)
+
+        # Verify we got a valid target
+        self.assertIsNotNone(target)
+        self.assertEqual(target, asps)
 
     def test_no_key_for_non_targets(self):
         self.assertRaises(
@@ -3474,6 +3663,7 @@ class TestBugTargetKeys(TestCaseWithFactory):
         self.assertRaises(
             AssertionError,
             bug_target_from_key,
+            None,
             None,
             None,
             None,
@@ -3845,6 +4035,111 @@ class TestValidateTarget(TestCaseWithFactory, ValidateTargetMixin):
             prod.setBugSharingPolicy(BugSharingPolicy.PROPRIETARY)
             validate_target(bug, series)
 
+    def test_ppa_archive_is_allowed(self):
+        # A PPA archive is allowed as a bug target.
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        bug = self.factory.makeBug()
+        validate_target(bug, ppa)
+
+    def test_primary_archive_is_forbidden(self):
+        # A primary archive cannot be a bug target.
+        primary = self.factory.makeArchive(purpose=ArchivePurpose.PRIMARY)
+        bug = self.factory.makeBug()
+        self.assertRaisesWithContent(
+            IllegalTarget,
+            "Only PPAs can be bug targets. "
+            "Primary and partner archives are covered by distribution "
+            "bug tasks.",
+            validate_target,
+            bug,
+            primary,
+        )
+
+    def test_ppa_source_package_is_allowed(self):
+        # A source package in a PPA is allowed as a bug target.
+        from lp.registry.model.archivesourcepackage import ArchiveSourcePackage
+
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        spn = self.factory.makeSourcePackageName()
+        # Create publishing history so the package is actually in the PPA
+        self.factory.makeSourcePackagePublishingHistory(
+            archive=ppa, sourcepackagename=spn
+        )
+        asp = ArchiveSourcePackage(ppa, spn)
+        bug = self.factory.makeBug()
+        validate_target(bug, asp)
+
+    def test_primary_archive_source_package_is_forbidden(self):
+        # A source package in a primary archive cannot be a bug target.
+        from lp.registry.model.archivesourcepackage import ArchiveSourcePackage
+
+        primary = self.factory.makeArchive(purpose=ArchivePurpose.PRIMARY)
+        spn = self.factory.makeSourcePackageName()
+        asp = ArchiveSourcePackage(primary, spn)
+        bug = self.factory.makeBug()
+        self.assertRaisesWithContent(
+            IllegalTarget,
+            "Only PPAs can be bug targets. "
+            "Primary and partner archives are covered by distribution "
+            "bug tasks.",
+            validate_target,
+            bug,
+            asp,
+        )
+
+    def test_ppa_source_package_without_publication_disallowed(self):
+        # An unpublished source package in a PPA cannot be a bug target
+        # when check_source_package is True.
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        spn = self.factory.makeSourcePackageName()
+        asp = ArchiveSourcePackage(ppa, spn)
+        bug = self.factory.makeBug()
+        self.assertRaisesWithContent(
+            IllegalTarget,
+            "The source package %s has not been published in the "
+            "archive %s." % (spn.name, ppa.displayname),
+            validate_target,
+            bug,
+            asp,
+        )
+
+    def test_ppa_source_package_with_publication_allowed(self):
+        # A published source package in a PPA is allowed as a bug target.
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        # makeArchiveSourcePackage creates a publication automatically
+        asp = self.factory.makeArchiveSourcePackage(archive=ppa)
+        bug = self.factory.makeBug()
+        # This should not raise an exception
+        validate_target(bug, asp)
+
+    def test_ppa_source_package_series_without_publication_disallowed(self):
+        # An unpublished source package series in a PPA cannot be a bug target
+        # when check_source_package is True.
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        distroseries = ppa.distribution.currentseries
+        spn = self.factory.makeSourcePackageName()
+        asps = ArchiveSourcePackageSeries(ppa, distroseries, spn)
+        bug = self.factory.makeBug()
+        self.assertRaisesWithContent(
+            IllegalTarget,
+            "The source package %s has not been published in the "
+            "archive %s." % (spn.name, ppa.displayname),
+            validate_target,
+            bug,
+            asps,
+        )
+
+    def test_ppa_source_package_series_with_publication_allowed(self):
+        # A published source package series in a PPA is allowed as a bug target
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        # makeArchiveSourcePackageSeries creates a publication automatically
+        asps = self.factory.makeArchiveSourcePackageSeries(
+            archive=ppa, distroseries=ppa.distribution.currentseries
+        )
+        bug = self.factory.makeBug()
+        # This should not raise an exception
+        validate_target(bug, asps)
+
 
 class TestValidateNewTarget(TestCaseWithFactory, ValidateTargetMixin):
     layer = DatabaseFunctionalLayer
@@ -3938,6 +4233,81 @@ class TestValidateNewTarget(TestCaseWithFactory, ValidateTargetMixin):
             validate_new_target,
             task.bug,
             d,
+        )
+
+    def test_archive_task_allowed(self):
+        # A generic archive task can be added when no archive tasks exist.
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        bug = self.factory.makeBug()
+        # This should not raise an exception
+        validate_new_target(bug, ppa)
+
+    def test_archive_task_with_existing_archive_task_forbidden(self):
+        # A second generic archive task is forbidden when one already exists.
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        task = self.factory.makeBugTask(target=ppa)
+        self.assertRaisesWithContent(
+            IllegalTarget,
+            "This bug is already on %s. Please specify an affected "
+            "package in which the bug has not yet been reported."
+            % ppa.displayname,
+            validate_new_target,
+            task.bug,
+            ppa,
+        )
+
+    def test_archive_source_package_task_allowed(self):
+        # An archive source package task can be added when no generic
+        # archive task exists.
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        asp = self.factory.makeArchiveSourcePackage(archive=ppa)
+        bug = self.factory.makeBug()
+        # This should not raise an exception
+        validate_new_target(bug, asp)
+
+    def test_multiple_archive_source_package_tasks_allowed(self):
+        # Multiple archive source package tasks with different packages
+        # can coexist on the same archive.
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        asp1 = self.factory.makeArchiveSourcePackage(archive=ppa)
+        task = self.factory.makeBugTask(target=asp1)
+        asp2 = self.factory.makeArchiveSourcePackage(archive=ppa)
+        # This should not raise an exception
+        validate_new_target(task.bug, asp2)
+
+    def test_archive_source_package_task_with_archive_task_forbidden(self):
+        # An archive source package task cannot be added when a generic
+        # archive task already exists.
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        # Create a generic archive task
+        task = self.factory.makeBugTask(target=ppa)
+        # makeArchiveSourcePackage creates a publication automatically
+        asp = self.factory.makeArchiveSourcePackage(archive=ppa)
+        self.assertRaisesWithContent(
+            IllegalTarget,
+            "This bug is already open on %s with no package specified. "
+            "You should fill in a package name for the existing bug."
+            % ppa.displayname,
+            validate_new_target,
+            task.bug,
+            asp,
+        )
+
+    def test_archive_task_with_archive_source_package_task_forbidden(self):
+        # A generic archive task cannot be added when an archive source
+        # package task already exists.
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        # makeArchiveSourcePackage creates a publication automatically
+        asp = self.factory.makeArchiveSourcePackage(archive=ppa)
+        task = self.factory.makeBugTask(target=asp)
+        self.assertRaisesWithContent(
+            IllegalTarget,
+            "This bug is already on %s. Please specify an affected "
+            "package in which the bug has not yet been reported."
+            % ppa.displayname,
+            validate_new_target,
+            task.bug,
+            ppa,
         )
 
 

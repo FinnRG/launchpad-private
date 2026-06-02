@@ -286,6 +286,18 @@ class TestRequestStartHandler(TestCleanupProfiler):
             set(profile._profilers.actions), {"pstats", "callgrind"}
         )
 
+    def test_optional_profiling_with_pyinstrument_request_starts_profiling(
+        self,
+    ):
+        # If profiling is allowed and a request with the "pyinstrument" marker,
+        # profiling starts with the pyinstrument profiler.
+        self.pushProfilingConfig(profiling_allowed="True")
+        profile.start_request(
+            self._get_start_event("/++profile++pyinstrument/")
+        )
+        self.assertIsInstance(profile._profilers.profiler, profile.Profiler)
+        self.assertEqual(set(profile._profilers.actions), {"pyinstrument"})
+
     def test_forced_profiling_registers_action(self):
         # profile_all_requests should register as a callgrind action.
         self.pushProfilingConfig(
@@ -418,8 +430,15 @@ class BaseRequestEndHandlerTest(BaseTest):
     def getCallgrindProfilePaths(self):
         return glob.glob(os.path.join(self.profile_dir, "callgrind.out.*"))
 
+    def getPyInstrumentProfilePaths(self):
+        return glob.glob(os.path.join(self.profile_dir, "*.html"))
+
     def getAllProfilePaths(self):
-        return self.getPStatsProfilePaths() + self.getCallgrindProfilePaths()
+        return (
+            self.getPStatsProfilePaths()
+            + self.getCallgrindProfilePaths()
+            + self.getPyInstrumentProfilePaths()
+        )
 
     def assertBasicProfileExists(self, request, show=False):
         self.assertNotEqual(None, request.oops)
@@ -438,12 +457,21 @@ class BaseRequestEndHandlerTest(BaseTest):
         self.assertEqual(len(paths), 1)
         self.assertIn(paths[0], response)
         self.assertEqual(0, len(self.getCallgrindProfilePaths()))
+        self.assertEqual(0, len(self.getPyInstrumentProfilePaths()))
 
     def assertCallgrindProfile(self, response):
         paths = self.getCallgrindProfilePaths()
         self.assertEqual(len(paths), 1)
         self.assertIn(paths[0], response)
         self.assertEqual(0, len(self.getPStatsProfilePaths()))
+        self.assertEqual(0, len(self.getPyInstrumentProfilePaths()))
+
+    def assertPyInstrumentProfile(self, response):
+        paths = self.getPyInstrumentProfilePaths()
+        self.assertEqual(len(paths), 1)
+        self.assertIn(paths[0], response)
+        self.assertEqual(0, len(self.getPStatsProfilePaths()))
+        self.assertEqual(0, len(self.getCallgrindProfilePaths()))
 
     def assertBothProfiles(self, response):
         paths = self.getAllProfilePaths()
@@ -588,6 +616,39 @@ class TestPStatsProfilerRequestEndHandler(
         )
 
     assertProfilePaths = BaseRequestEndHandlerTest.assertPStatsProfile
+
+
+class TestPyInstrumentProfilerRequestEndHandler(
+    TestCallgrindProfilerRequestEndHandler
+):
+    """Tests for the pyinstrument results.
+
+    If the start-request handler is broken, these tests will fail too, so fix
+    the tests in the above test case first.
+
+    See lib/lp/services/profile/profiling.rst for an end-user description
+    of the functionality.
+    """
+
+    def endRequest(self, path):
+        return TestCallgrindProfilerRequestEndHandler.endRequest(
+            self, path.replace("callgrind", "pyinstrument")
+        )
+
+    assertProfilePaths = BaseRequestEndHandlerTest.assertPyInstrumentProfile
+
+    def test_optional_profiling_with_combined_request_profiles(self):
+        # PyInstrument shows its own output format, not "Top Inline Time".
+        self.pushProfilingConfig(profiling_allowed="True")
+        request = self.endRequest("/++profile++pyinstrument&show")
+        self.assertNotEqual(None, request.oops)
+        response = self.getAddedResponse(request)
+        self.assertIn("Profile was logged to", response)
+        self.assertIn("Profile quick view", response)
+        self.assertIn("Samples:", response)
+        self.assertEqual(self.getMemoryLog(), [])
+        self.assertPyInstrumentProfile(response)
+        self.assertCleanProfilerState()
 
 
 class TestBothProfilersRequestEndHandler(BaseRequestEndHandlerTest):

@@ -205,6 +205,7 @@ from lp.services.webapp.publisher import (
 )
 from lp.services.webapp.snapshot import notify_modified
 from lp.services.xref.interfaces import IXRefSet
+from lp.soyuz.interfaces.archive import IArchive
 
 
 @error_status(http.client.BAD_REQUEST)
@@ -1938,11 +1939,6 @@ class Bug(StormBase, InformationTypeMixin):
             return None
         [valid_bugtask] = non_invalid_bugtasks
         bug_target_parent = valid_bugtask.bug_target_parent
-        # TODO: ilkeremrekoc 2026-03-25: This part is only for pillars
-        # while adding a non pillar example, then return a none.
-        # Soon we will add the IServiceUsage interface where these
-        # attributes come from, to the bug target parent as well to
-        # ensure we have followable contracts for bug_target_parents.
         if (
             bug_target_parent.bug_tracking_usage == ServiceUsage.LAUNCHPAD
             and bug_target_parent.answers_usage == ServiceUsage.LAUNCHPAD
@@ -2141,6 +2137,14 @@ class Bug(StormBase, InformationTypeMixin):
             # series of a product or distro for which we don't have a
             # plain bug target parent task.
             for task in self.bugtasks:
+
+                if (
+                    task.archive
+                    and task.archive.distribution
+                    == bug_target_parent_getter(target)
+                ):
+                    return True
+
                 if bug_target_parent_getter(task) == bug_target_parent_getter(
                     target
                 ):
@@ -2594,8 +2598,20 @@ class Bug(StormBase, InformationTypeMixin):
         roles = IPersonRoles(user)
         if roles.in_admin or roles.in_registry_experts:
             return True
+
+        # Archives aren't pillars, but they need the same access policies
+        # as their distribution, so convert them before checking access.
+        pillars = [
+            pillar if not IArchive.providedBy(pillar) else pillar.distribution
+            for pillar in self.affected_bug_target_parents
+        ]
+
+        # Deduplicate pillars (e.g., if bug has tasks on both a distribution
+        # and PPA for that distribution). Uses dict.fromkeys to preserve order.
+        pillars = list(dict.fromkeys(pillars))
+
         return getUtility(IService, "sharing").checkPillarAccess(
-            self.affected_bug_target_parents,
+            pillars,
             InformationType.USERDATA,
             user,
         )

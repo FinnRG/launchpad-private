@@ -19,9 +19,9 @@
           </span>
         </span>
         <a
-          tal:attributes="
-        href context/menu:overview/edit/url;
-        title context/menu:overview/edit/summary;"
+          class="p-button--base is-inline has-icon u-no-margin"
+          tal:attributes="href context/menu:overview/edit/url;
+            title context/menu:overview/edit/summary;"
           tal:condition="context/menu:overview/edit/enabled"
         >
           <i class="p-icon--edit"></i>
@@ -35,16 +35,17 @@
             tal:content="context/registrant/displayname"
             >Mark Shuttleworth</a
           >
-          on
-          <tal:created
-            replace="structure context/date_created/fmt:displaydatetitle"
-          />
-          .
+          <time
+            tal:attributes="datetime context/date_created/fmt:datetime"
+            tal:content="context/date_created/fmt:displaydate"
+          />.
         </p>
-        <p tal:content="structure context/summary/fmt:text-to-html">
-          The Ubuntu release that will be delivered in April 2026, designated
-          26.04.
-        </p>
+        <div style="margin-bottom: -1.125rem;">
+          <p tal:content="structure context/summary/fmt:text-to-html">
+            The Ubuntu release that will be delivered in April 2026, designated
+            26.04.
+          </p>
+        </div>
       </div>
     </div>
     <div class="links">
@@ -57,7 +58,7 @@
         <div class="description-list__item">
           <dt>Distribution</dt>
           <dd>
-            <div class="u-flex--row">
+            <a class="p-link--soft u-flex--row" tal:attributes="href context/distribution/fmt:url">
               <img
                 tal:attributes="src context/distribution/image:logo_src"
                 alt="Distribution icon"
@@ -66,16 +67,14 @@
               <span tal:content="context/distribution/displayname">
                 Ubuntu
               </span>
-            </div>
+            </a>
           </dd>
         </div>
         <div class="description-list__item">
           <dt>Series</dt>
           <dd>
             <span tal:content="context/displayname"> Resolute </span>
-            (
-            <span tal:content="context/version"> 26.04 </span>
-            )
+            (<span tal:content="context/version"> 26.04 </span>)
           </dd>
         </div>
         <div
@@ -110,7 +109,7 @@
               class="p-list u-no-margin u-no-padding"
             >
               <li class="p-list__item">
-                <a tal:attributes="href driver/fmt:url" class="u-flex--row">
+                <a tal:attributes="href driver/fmt:url" class="u-flex--row" style="flex-wrap: nowrap;">
                   <img
                     tal:attributes="src driver/image:logo_src"
                     alt="Driver icon"
@@ -129,6 +128,7 @@
               tal:attributes="href context/menu:overview/driver/url"
               tal:condition="context/menu:overview/driver/enabled"
               title="Appoint driver"
+              class="p-button--base is-inline has-icon u-no-margin"
             >
               <i class="p-icon--edit"></i>
             </a>
@@ -172,31 +172,43 @@
       </dl>
       <hr class="p-rule" />
       <dl class="description-list is-stats">
-        <div class="description-list__stat">
+        <div
+          class="description-list__stat"
+          tal:define="bugs_summary view/get_bugs_summary"
+        >
           <div class="description-list__item">
             <dt>Open critical bugs</dt>
-            <dd class="u-flex--row">
-              <i class="p-icon--circle is-negative"></i>
-              <span
-                class="p-heading--3 u-no-margin u-no-padding"
-                tal:content="view/bugs_summary/critical_bugs_count/fmt:intcomma"
+            <dd>
+              <a class="p-link--soft u-flex--row" tal:attributes="href view/bugs_url/critical">
+                <i class="p-icon--circle is-negative"></i>
+                <span
+                  class="p-heading--3 u-no-margin u-no-padding"
+                  tal:content="bugs_summary/critical_bugs_count/fmt:intcomma"
+                >
+                  0
+                </span>
+              </a>
+            </dd>
+          </div>
+          <div class="description-list__item">
+            <dt>Open bugs</dt>
+            
+            <dd>
+              <a class="p-link--soft" tal:attributes="href view/bugs_url/latest"
+                tal:content="bugs_summary/open_bugs_count/fmt:intcomma"
               >
                 0
-              </span>
+              </a>
             </dd>
           </div>
           <div class="description-list__item">
-            <dt>In progress</dt>
-            <dd
-              tal:content="view/bugs_summary/inprogress_bugs_count/fmt:intcomma"
-            >
-              0
-            </dd>
-          </div>
-          <div class="description-list__item">
-            <dt>Triaged</dt>
-            <dd tal:content="view/bugs_summary/triaged_bugs_count/fmt:intcomma">
-              0
+            <dt>In progress bugs</dt>
+            <dd>
+              <a class="p-link--soft" tal:attributes="href view/bugs_url/in_progress"
+                tal:content="bugs_summary/inprogress_bugs_count/fmt:intcomma"
+              >
+                0
+              </a>
             </dd>
           </div>
         </div>
@@ -205,12 +217,14 @@
           <div class="description-list__item">
             <dt>Packages built (24h)</dt>
             <dd>
-              <span
-                class="p-heading--3"
-                tal:content="string:${view/packages_summary_24h/built_packages_percentage} %"
-              >
-                0%
-              </span>
+              <a class="p-link--soft" tal:attributes="href view/packages_url">
+                <span
+                  class="p-heading--3"
+                  tal:content="string:${view/packages_summary_24h/built_packages_percentage} %"
+                >
+                  0%
+                </span>
+              </a>
             </dd>
           </div>
           <div class="description-list__item">
@@ -253,13 +267,14 @@
           <div class="description-list__item">
             <dt>Next milestone</dt>
             <dd>
-              <span
-                class="p-heading--3"
+              <a
+                class="p-heading--3 p-link--soft"
                 tal:condition="view/next_milestone"
-                tal:content="view/next_milestone/displayname"
+                tal:content="view/next_milestone/name"
+                tal:attributes="href view/next_milestone/fmt:url"
               >
                 Next milestone
-              </span>
+              </a>
               <span
                 class="p-heading--3 u-text--muted"
                 tal:condition="not: view/next_milestone"
@@ -273,15 +288,19 @@
             tal:condition="view/next_milestone"
           >
             <dt>Expected</dt>
-            <dd tal:content="view/next_milestone/dateexpected/fmt:displaydate">
-              Expected
+            <dd>
+              <time
+                tal:attributes="datetime view/next_milestone/dateexpected/fmt:datetime"
+                tal:content="view/next_milestone/dateexpected/fmt:displaydate"
+              >
+                2026-04-21
+              </time>
             </dd>
           </div>
         </div>
       </dl>
     </div>
     <div class="links-mobile">
-      <hr class="p-rule" />
       <div
         tal:replace="structure context/@@+vanilla-distroseries-summary-links"
       />

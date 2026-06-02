@@ -5,13 +5,14 @@
 """
 
 __all__ = [
+    "ProfilerType",
     "profiling",
     "start",
     "stop",
 ]
 
 # Re-export for convenience.
-from lp.services.profile.profile import profiling, start, stop
+from lp.services.profile.profile import ProfilerType, profiling, start, stop
 
 # Quiet the linter.
-(profiling, start, stop)
+(ProfilerType, profiling, start, stop)

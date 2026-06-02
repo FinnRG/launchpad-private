@@ -3,19 +3,28 @@
 
 """Tests for `VanillaDistroSeriesView`."""
 
+from datetime import datetime, timezone
+
+import transaction
+from zope.security.proxy import removeSecurityProxy
+
+from lp.bugs.interfaces.bugtask import BugTaskImportance, BugTaskStatus
 from lp.buildmaster.enums import BuildStatus
 from lp.registry.browser.vanilla_distroseries import (
     BUILD_STATUS_ICONS,
     ERROR_ICON,
     HELP_ICON,
+    IMPORTANCE_ICONS,
     LOADING_ICON,
     PENDING_ICON,
+    POCKET_CHART_COLORS,
     SKIP_ICON,
     SUCCESS_ICON,
 )
+from lp.registry.interfaces.pocket import PackagePublishingPocket
 from lp.soyuz.enums import PackagePublishingStatus
 from lp.testing import TestCaseWithFactory, person_logged_in
-from lp.testing.layers import DatabaseFunctionalLayer
+from lp.testing.layers import DatabaseFunctionalLayer, LaunchpadFunctionalLayer
 from lp.testing.views import create_initialized_view
 
 
@@ -38,8 +47,158 @@ class TestVanillaDistroSeriesPackagesList(TestCaseWithFactory):
 
     def _getView(self, distroseries, principal=None):
         return create_initialized_view(
-            distroseries, "+vanilla", principal=principal
+            distroseries, "+index", principal=principal
         )
+
+    # -- bugs list methods --
+
+    def test_list_bugs_subscriptions(self):
+        """Subscriptions are fetched from IBugTaskSet for series and user."""
+        distroseries = self._makeDistroSeries()
+        other_distroseries = self._makeDistroSeries()
+        person = self.factory.makePerson()
+
+        subscribed_task = self.factory.makeBugTask(target=distroseries)
+        other_series_task = self.factory.makeBugTask(target=other_distroseries)
+        with person_logged_in(person):
+            subscribed_task.bug.subscribe(person, subscribed_by=person)
+            other_series_task.bug.subscribe(person, subscribed_by=person)
+
+        view = self._getView(distroseries, principal=person)
+        subscriptions = list(view.list_bugs_subscriptions())
+
+        self.assertIn(subscribed_task, subscriptions)
+        self.assertNotIn(other_series_task, subscriptions)
+
+    def test_list_bugs_subscriptions_limit_and_offset(self):
+        """Bugs with subscriptions are paginated with limit and offset."""
+        distroseries = self._makeDistroSeries()
+        person = self.factory.makePerson()
+
+        for _ in range(3):
+            bugtask = self.factory.makeBugTask(target=distroseries)
+            with person_logged_in(person):
+                bugtask.bug.subscribe(person, subscribed_by=person)
+
+        view = self._getView(distroseries, principal=person)
+        all_subscriptions = list(view.list_bugs_subscriptions())
+        paged_subscriptions = list(
+            view.list_bugs_subscriptions(limit=1, offset=1)
+        )
+
+        self.assertEqual(3, len(all_subscriptions))
+        self.assertEqual(all_subscriptions[1:2], paged_subscriptions)
+
+    def test_list_bugs_important(self):
+        """Important bugs list delegates to _search_bug_tasks as CRITICAL."""
+        distroseries = self._makeDistroSeries()
+        other_distroseries = self._makeDistroSeries()
+
+        critical_task = self.factory.makeBugTask(target=distroseries)
+        non_critical_task = self.factory.makeBugTask(target=distroseries)
+        other_series_critical = self.factory.makeBugTask(
+            target=other_distroseries
+        )
+        with person_logged_in(critical_task.target.owner):
+            critical_task.transitionToImportance(
+                BugTaskImportance.CRITICAL, critical_task.target.owner
+            )
+            non_critical_task.transitionToImportance(
+                BugTaskImportance.HIGH, non_critical_task.target.owner
+            )
+            other_series_critical.transitionToImportance(
+                BugTaskImportance.CRITICAL, other_series_critical.target.owner
+            )
+
+        view = self._getView(distroseries)
+        important_tasks = list(view.list_bugs_important())
+
+        self.assertIn(critical_task, important_tasks)
+        self.assertNotIn(non_critical_task, important_tasks)
+        self.assertNotIn(other_series_critical, important_tasks)
+        for bugtask in important_tasks:
+            self.assertEqual(BugTaskImportance.CRITICAL, bugtask.importance)
+
+    def test_list_bugs_important_excludes_fix_released(self):
+        """Critical bugs with FIXRELEASED status are excluded."""
+        distroseries = self._makeDistroSeries()
+
+        open_critical = self.factory.makeBugTask(target=distroseries)
+        fixed_critical = self.factory.makeBugTask(target=distroseries)
+        with person_logged_in(open_critical.target.owner):
+            open_critical.transitionToImportance(
+                BugTaskImportance.CRITICAL, open_critical.target.owner
+            )
+            fixed_critical.transitionToImportance(
+                BugTaskImportance.CRITICAL, fixed_critical.target.owner
+            )
+            fixed_critical.transitionToStatus(
+                BugTaskStatus.FIXRELEASED, fixed_critical.target.owner
+            )
+
+        view = self._getView(distroseries)
+        important_tasks = list(view.list_bugs_important())
+
+        self.assertIn(open_critical, important_tasks)
+        self.assertNotIn(fixed_critical, important_tasks)
+
+    def test_list_bugs_important_limit_and_offset(self):
+        """Important bugs are paginated with limit and offset."""
+        distroseries = self._makeDistroSeries()
+        for _ in range(3):
+            bugtask = self.factory.makeBugTask(target=distroseries)
+            with person_logged_in(bugtask.target.owner):
+                bugtask.transitionToImportance(
+                    BugTaskImportance.CRITICAL, bugtask.target.owner
+                )
+
+        view = self._getView(distroseries)
+        all_important = list(view.list_bugs_important())
+        paged_important = list(view.list_bugs_important(limit=1, offset=1))
+
+        self.assertEqual(3, len(all_important))
+        self.assertEqual(all_important[1:2], paged_important)
+
+    def test_list_bugs_new(self):
+        """New bugs list delegates to _search_bug_tasks with NEW status."""
+        distroseries = self._makeDistroSeries()
+        other_distroseries = self._makeDistroSeries()
+
+        new_task = self.factory.makeBugTask(
+            target=distroseries, status=BugTaskStatus.NEW
+        )
+        non_new_task = self.factory.makeBugTask(target=distroseries)
+        with person_logged_in(non_new_task.target.owner):
+            non_new_task.transitionToStatus(
+                BugTaskStatus.TRIAGED, non_new_task.target.owner
+            )
+        other_series_new = self.factory.makeBugTask(
+            target=other_distroseries, status=BugTaskStatus.NEW
+        )
+
+        view = self._getView(distroseries)
+        new_tasks = list(view.list_bugs_new())
+
+        self.assertIn(new_task, new_tasks)
+        self.assertNotIn(non_new_task, new_tasks)
+        self.assertNotIn(other_series_new, new_tasks)
+        for bugtask in new_tasks:
+            self.assertEqual(BugTaskStatus.NEW, bugtask.status)
+
+    def test_list_bugs_new_limit_and_offset(self):
+        """New bugs are paginated with limit and offset."""
+        distroseries = self._makeDistroSeries()
+        for _ in range(3):
+            self.factory.makeBugTask(
+                target=distroseries, status=BugTaskStatus.NEW
+            )
+
+        view = self._getView(distroseries)
+        all_new = list(view.list_bugs_new())
+        paged_new = list(view.list_bugs_new(limit=1, offset=1))
+
+        self.assertEqual(3, len(all_new))
+        self.assertEqual(all_new[1:2], paged_new)
 
     # -- packages_list_data --
 
@@ -70,7 +229,7 @@ class TestVanillaDistroSeriesPackagesList(TestCaseWithFactory):
         view = self._getView(distroseries)
         html = view.packages_list_data
         for header in ("Source package", "Version", "Pocket", "Builds"):
-            self.assertIn("<th>%s</th>" % header, html)
+            self.assertIn('<th scope="col">%s</th>' % header, html)
 
     def test_packages_list_data_shows_package_info(self):
         """The table row contains the source package name and version."""
@@ -329,3 +488,736 @@ class TestBuildStatusIcons(TestCaseWithFactory):
                 "BuildStatus.%s has no entry in BUILD_STATUS_ICONS"
                 % status.name,
             )
+
+
+class TestVanillaDistroSeriesBinaryPackagesSummary(TestCaseWithFactory):
+    """Tests for the binary_packages_summary_all_time view property."""
+
+    layer = LaunchpadFunctionalLayer
+
+    def _makeBuild(self, distroseries, status, pocket):
+        spph = self.factory.makeSourcePackagePublishingHistory(
+            distroseries=distroseries,
+            archive=distroseries.main_archive,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        build = self.factory.makeBinaryPackageBuild(
+            source_package_release=spph.sourcepackagerelease,
+            distroarchseries=self.factory.makeDistroArchSeries(
+                distroseries=distroseries
+            ),
+            archive=spph.archive,
+            status=status,
+            pocket=pocket,
+        )
+        # FULLYBUILT builds without date_finished are filtered as
+        # gina-generated by the underlying query.
+        if status == BuildStatus.FULLYBUILT:
+            removeSecurityProxy(build).date_finished = datetime.now(
+                timezone.utc
+            )
+        return build
+
+    def _getCounts(self, distroseries):
+        view = create_initialized_view(distroseries, "+index")
+        return view.binary_packages_summary_all_time
+
+    def test_empty_distroseries_returns_zero_for_every_pocket(self):
+        """With no builds, every pocket is present with a count of 0."""
+        distroseries = self.factory.makeDistroSeries()
+        self.assertEqual(
+            {pocket: 0 for pocket in PackagePublishingPocket.items},
+            self._getCounts(distroseries),
+        )
+
+    def test_groups_in_scope_statuses_by_pocket_and_excludes_others(self):
+        """In-scope statuses are counted per-pocket; others are ignored."""
+        distroseries = self.factory.makeDistroSeries()
+        # Two in-scope builds in RELEASE, one in UPDATES.
+        self._makeBuild(
+            distroseries,
+            BuildStatus.FULLYBUILT,
+            PackagePublishingPocket.RELEASE,
+        )
+        self._makeBuild(
+            distroseries,
+            BuildStatus.BUILDING,
+            PackagePublishingPocket.RELEASE,
+        )
+        self._makeBuild(
+            distroseries,
+            BuildStatus.UPLOADING,
+            PackagePublishingPocket.UPDATES,
+        )
+        # Out-of-scope builds in RELEASE should not contribute.
+        self._makeBuild(
+            distroseries,
+            BuildStatus.FAILEDTOBUILD,
+            PackagePublishingPocket.RELEASE,
+        )
+        self._makeBuild(
+            distroseries,
+            BuildStatus.SUPERSEDED,
+            PackagePublishingPocket.RELEASE,
+        )
+
+        counts = self._getCounts(distroseries)
+        self.assertEqual(2, counts[PackagePublishingPocket.RELEASE])
+        self.assertEqual(1, counts[PackagePublishingPocket.UPDATES])
+        self.assertEqual(0, counts[PackagePublishingPocket.SECURITY])
+
+
+class TestPackagesSummaryAllTimeChart(TestCaseWithFactory):
+    """Tests for packages_summary_all_time_chart."""
+
+    layer = LaunchpadFunctionalLayer
+
+    def _makeBuild(self, distroseries, status, pocket):
+        spph = self.factory.makeSourcePackagePublishingHistory(
+            distroseries=distroseries,
+            archive=distroseries.main_archive,
+            status=PackagePublishingStatus.PUBLISHED,
+            pocket=pocket,
+        )
+        build = self.factory.makeBinaryPackageBuild(
+            source_package_release=spph.sourcepackagerelease,
+            distroarchseries=self.factory.makeDistroArchSeries(
+                distroseries=distroseries
+            ),
+            archive=spph.archive,
+            status=status,
+            pocket=pocket,
+        )
+        if status == BuildStatus.FULLYBUILT:
+            removeSecurityProxy(build).date_finished = datetime.now(
+                timezone.utc
+            )
+        return spph, build
+
+    def _getChart(self, distroseries, packages_type):
+        view = create_initialized_view(distroseries, "+index")
+        return view.packages_summary_all_time_chart(packages_type)
+
+    def test_source_empty_returns_zero_segments(self):
+        """Empty distroseries returns segments with zero values."""
+        distroseries = self.factory.makeDistroSeries()
+        segments, total = self._getChart(distroseries, "source")
+        self.assertEqual(0, total)
+        for seg in segments:
+            self.assertEqual(0, seg["value"])
+            self.assertEqual(0, seg["percentage"])
+
+    def test_binary_empty_returns_zero_segments(self):
+        """Empty distroseries returns segments with zero values for binary."""
+        distroseries = self.factory.makeDistroSeries()
+        segments, total = self._getChart(distroseries, "binary")
+        self.assertEqual(0, total)
+        for seg in segments:
+            self.assertEqual(0, seg["value"])
+            self.assertEqual(0, seg["percentage"])
+
+    def test_invalid_type_raises(self):
+        """Invalid packages_type raises ValueError."""
+        distroseries = self.factory.makeDistroSeries()
+        view = create_initialized_view(distroseries, "+index")
+        self.assertRaises(
+            ValueError,
+            view.packages_summary_all_time_chart,
+            "invalid",
+        )
+
+    def test_segment_keys(self):
+        """Each segment dict has expected keys."""
+        distroseries = self.factory.makeDistroSeries()
+        segments, _ = self._getChart(distroseries, "source")
+        expected_keys = {"name", "value", "percentage", "fill", "label"}
+        for seg in segments:
+            self.assertEqual(expected_keys, set(seg.keys()))
+
+    def test_segment_order_matches_pocket_chart_colors(self):
+        """Segments follow POCKET_CHART_COLORS order."""
+        distroseries = self.factory.makeDistroSeries()
+        segments, _ = self._getChart(distroseries, "source")
+        expected_names = [p.title for p in POCKET_CHART_COLORS]
+        actual_names = [seg["name"] for seg in segments]
+        self.assertEqual(expected_names, actual_names)
+
+    def test_segment_fill_matches_pocket_chart_colors(self):
+        """Each segment fill matches its pocket color."""
+        distroseries = self.factory.makeDistroSeries()
+        segments, _ = self._getChart(distroseries, "source")
+        expected_fills = list(POCKET_CHART_COLORS.values())
+        actual_fills = [seg["fill"] for seg in segments]
+        self.assertEqual(expected_fills, actual_fills)
+
+    def test_source_counts_published_packages(self):
+        """Source chart counts published source packages by pocket."""
+        distroseries = self.factory.makeDistroSeries()
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=distroseries,
+            archive=distroseries.main_archive,
+            status=PackagePublishingStatus.PUBLISHED,
+            pocket=PackagePublishingPocket.RELEASE,
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=distroseries,
+            archive=distroseries.main_archive,
+            status=PackagePublishingStatus.PUBLISHED,
+            pocket=PackagePublishingPocket.RELEASE,
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=distroseries,
+            archive=distroseries.main_archive,
+            status=PackagePublishingStatus.PUBLISHED,
+            pocket=PackagePublishingPocket.SECURITY,
+        )
+        segments, total = self._getChart(distroseries, "source")
+        self.assertEqual(3, total)
+        by_name = {seg["name"]: seg for seg in segments}
+        self.assertEqual(2, by_name["Release"]["value"])
+        self.assertEqual(1, by_name["Security"]["value"])
+        self.assertEqual(0, by_name["Backports"]["value"])
+
+    def test_source_excludes_deleted_packages(self):
+        """Source chart excludes non-active publishing statuses."""
+        distroseries = self.factory.makeDistroSeries()
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=distroseries,
+            archive=distroseries.main_archive,
+            status=PackagePublishingStatus.PUBLISHED,
+            pocket=PackagePublishingPocket.RELEASE,
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=distroseries,
+            archive=distroseries.main_archive,
+            status=PackagePublishingStatus.DELETED,
+            pocket=PackagePublishingPocket.RELEASE,
+        )
+        segments, total = self._getChart(distroseries, "source")
+        self.assertEqual(1, total)
+
+    def test_binary_counts_by_pocket(self):
+        """Binary chart counts in-scope builds by pocket."""
+        distroseries = self.factory.makeDistroSeries()
+        self._makeBuild(
+            distroseries,
+            BuildStatus.FULLYBUILT,
+            PackagePublishingPocket.RELEASE,
+        )
+        self._makeBuild(
+            distroseries,
+            BuildStatus.BUILDING,
+            PackagePublishingPocket.RELEASE,
+        )
+        self._makeBuild(
+            distroseries,
+            BuildStatus.UPLOADING,
+            PackagePublishingPocket.UPDATES,
+        )
+        # Out-of-scope status should not count.
+        self._makeBuild(
+            distroseries,
+            BuildStatus.FAILEDTOBUILD,
+            PackagePublishingPocket.RELEASE,
+        )
+        segments, total = self._getChart(distroseries, "binary")
+        self.assertEqual(3, total)
+        by_name = {seg["name"]: seg for seg in segments}
+        self.assertEqual(2, by_name["Release"]["value"])
+        self.assertEqual(1, by_name["Updates"]["value"])
+
+    def test_percentage_calculation(self):
+        """Percentage is computed correctly per segment."""
+        distroseries = self.factory.makeDistroSeries()
+        # Create 3 source packages in RELEASE, 1 in SECURITY = 4 total.
+        for _ in range(3):
+            self.factory.makeSourcePackagePublishingHistory(
+                distroseries=distroseries,
+                archive=distroseries.main_archive,
+                status=PackagePublishingStatus.PUBLISHED,
+                pocket=PackagePublishingPocket.RELEASE,
+            )
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=distroseries,
+            archive=distroseries.main_archive,
+            status=PackagePublishingStatus.PUBLISHED,
+            pocket=PackagePublishingPocket.SECURITY,
+        )
+        segments, total = self._getChart(distroseries, "source")
+        self.assertEqual(4, total)
+        by_name = {seg["name"]: seg for seg in segments}
+        self.assertEqual(75, by_name["Release"]["percentage"])
+        self.assertEqual(25, by_name["Security"]["percentage"])
+        self.assertEqual(0, by_name["Backports"]["percentage"])
+
+    def test_label_format(self):
+        """Label is formatted as 'count pocket_title'."""
+        distroseries = self.factory.makeDistroSeries()
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=distroseries,
+            archive=distroseries.main_archive,
+            status=PackagePublishingStatus.PUBLISHED,
+            pocket=PackagePublishingPocket.RELEASE,
+        )
+        segments, _ = self._getChart(distroseries, "source")
+        by_name = {seg["name"]: seg for seg in segments}
+        self.assertEqual("1 Release", by_name["Release"]["label"])
+        self.assertEqual("0 Backports", by_name["Backports"]["label"])
+
+
+class TestVanillaDistroSeriesBugsSummary(TestCaseWithFactory):
+    """Tests for the get_bugs_summary view property."""
+
+    layer = LaunchpadFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        self.person = self.factory.makePerson()
+        self.distroseries = self.factory.makeDistroSeries()
+
+    def _makeBugTask(self, distroseries, status, importance, milestone=None):
+        """Create a bug task for the given distroseries.
+
+        If provided, assign the task to ``milestone``.
+        """
+        task = self.factory.makeBugTask(
+            owner=self.person,
+            target=distroseries,
+        )
+
+        # For distroseries targets, conjoined-task sync can leave the
+        # initial values as NEW/UNDECIDED; apply explicit transitions so
+        # BugSummary reflects the intended state in tests.
+        with person_logged_in(self.person):
+            if milestone is not None:
+                task.transitionToMilestone(milestone, milestone.target.owner)
+            if task.status != status:
+                task.transitionToStatus(status)
+            if task.importance != importance:
+                task.transitionToImportance(importance)
+
+    def _getView(self, distroseries, principal=None):
+        return create_initialized_view(
+            distroseries, "+index", principal=principal
+        )
+
+    def test_bugs_summary_no_bugs(self):
+        """With no bugs, all counts in bugs_summary are zero."""
+        view = self._getView(self.distroseries, principal=self.person)
+        summary = view.get_bugs_summary()
+        self.assertEqual(summary["critical_bugs_count"], 0)
+        self.assertEqual(summary["high_bugs_count"], 0)
+        self.assertEqual(summary["inprogress_bugs_count"], 0)
+        self.assertEqual(summary["open_bugs_count"], 0)
+
+    def test_bugs_summary_resolved_bugs_not_counted_as_open(self):
+        """Resolved bugs are not counted as open."""
+        # Create an unresolved bug.
+        self._makeBugTask(
+            self.distroseries,
+            status=BugTaskStatus.NEW,
+            importance=BugTaskImportance.LOW,
+        )
+        # Create a resolved bug.
+        self._makeBugTask(
+            self.distroseries,
+            status=BugTaskStatus.FIXRELEASED,
+            importance=BugTaskImportance.LOW,
+        )
+        view = self._getView(self.distroseries, principal=self.person)
+        summary = view.get_bugs_summary()
+        # Only the unresolved bug should be counted.
+        self.assertEqual(summary["open_bugs_count"], 1)
+
+    def test_bugs_summary_excludes_resolved_from_all_counts(self):
+        """Resolved bugs do not contribute to summary aggregates."""
+        # Unresolved tasks.
+        self._makeBugTask(
+            self.distroseries,
+            status=BugTaskStatus.NEW,
+            importance=BugTaskImportance.CRITICAL,
+        )
+        self._makeBugTask(
+            self.distroseries,
+            status=BugTaskStatus.INPROGRESS,
+            importance=BugTaskImportance.HIGH,
+        )
+        # Resolved tasks with the same importances should not contribute.
+        self._makeBugTask(
+            self.distroseries,
+            status=BugTaskStatus.FIXRELEASED,
+            importance=BugTaskImportance.CRITICAL,
+        )
+        self._makeBugTask(
+            self.distroseries,
+            status=BugTaskStatus.FIXRELEASED,
+            importance=BugTaskImportance.HIGH,
+        )
+
+        view = self._getView(self.distroseries, principal=self.person)
+        summary = view.get_bugs_summary()
+
+        self.assertEqual(summary["critical_bugs_count"], 1)
+        self.assertEqual(summary["high_bugs_count"], 1)
+        self.assertEqual(summary["inprogress_bugs_count"], 1)
+        self.assertEqual(summary["open_bugs_count"], 2)
+
+    def test_bugs_summary_mixed_bugs(self):
+        """Verify that bugs with different statuses and importances are counted
+        correctly"""
+        # Create various bugs.
+        self._makeBugTask(
+            self.distroseries,
+            status=BugTaskStatus.NEW,
+            importance=BugTaskImportance.CRITICAL,
+        )
+        self._makeBugTask(
+            self.distroseries,
+            status=BugTaskStatus.CONFIRMED,
+            importance=BugTaskImportance.CRITICAL,
+        )
+        self._makeBugTask(
+            self.distroseries,
+            status=BugTaskStatus.NEW,
+            importance=BugTaskImportance.HIGH,
+        )
+        self._makeBugTask(
+            self.distroseries,
+            status=BugTaskStatus.INPROGRESS,
+            importance=BugTaskImportance.MEDIUM,
+        )
+
+        view = self._getView(self.distroseries, principal=self.person)
+        summary = view.get_bugs_summary()
+        self.assertEqual(summary["critical_bugs_count"], 2)
+        self.assertEqual(summary["high_bugs_count"], 1)
+        self.assertEqual(summary["inprogress_bugs_count"], 1)
+        self.assertEqual(summary["open_bugs_count"], 4)
+
+    # -- milestone filter --
+
+    def test_get_bugs_summary_no_milestone_returns_all(self):
+        """Without a milestone filter all distroseries bugs are counted."""
+        milestone = self.factory.makeMilestone(distroseries=self.distroseries)
+        # One bug on the milestone, one not.
+        self._makeBugTask(
+            self.distroseries,
+            status=BugTaskStatus.NEW,
+            importance=BugTaskImportance.HIGH,
+            milestone=milestone,
+        )
+        self._makeBugTask(
+            self.distroseries,
+            status=BugTaskStatus.NEW,
+            importance=BugTaskImportance.CRITICAL,
+        )
+        view = self._getView(self.distroseries, principal=self.person)
+        summary = view.get_bugs_summary()
+        # Both bugs should be counted.
+        self.assertEqual(summary["open_bugs_count"], 2)
+        self.assertEqual(summary["high_bugs_count"], 1)
+        self.assertEqual(summary["critical_bugs_count"], 1)
+
+    def test_get_bugs_summary_milestone_counts_only_milestone_bugs(self):
+        """With a milestone filter only bugs on that milestone are counted."""
+        milestone = self.factory.makeMilestone(distroseries=self.distroseries)
+        # Bug assigned to the milestone.
+        self._makeBugTask(
+            self.distroseries,
+            status=BugTaskStatus.NEW,
+            importance=BugTaskImportance.CRITICAL,
+            milestone=milestone,
+        )
+        # Bug NOT assigned to the milestone.
+        self._makeBugTask(
+            self.distroseries,
+            status=BugTaskStatus.NEW,
+            importance=BugTaskImportance.HIGH,
+        )
+        view = self._getView(self.distroseries, principal=self.person)
+        summary = view.get_bugs_summary(milestone=milestone)
+        self.assertEqual(summary["open_bugs_count"], 1)
+        self.assertEqual(summary["critical_bugs_count"], 1)
+        self.assertEqual(summary["high_bugs_count"], 0)
+
+    def test_get_bugs_summary_milestone_no_bugs(self):
+        """A milestone with no bugs returns all-zero counts."""
+        milestone = self.factory.makeMilestone(distroseries=self.distroseries)
+        # Bug is NOT on the milestone.
+        self._makeBugTask(
+            self.distroseries,
+            status=BugTaskStatus.NEW,
+            importance=BugTaskImportance.CRITICAL,
+        )
+        view = self._getView(self.distroseries, principal=self.person)
+        summary = view.get_bugs_summary(milestone=milestone)
+        self.assertEqual(summary["critical_bugs_count"], 0)
+        self.assertEqual(summary["high_bugs_count"], 0)
+        self.assertEqual(summary["inprogress_bugs_count"], 0)
+        self.assertEqual(summary["open_bugs_count"], 0)
+
+    def test_get_bugs_summary_milestone_excludes_other_milestone(self):
+        """Bugs on a different milestone are not counted."""
+        milestone_a = self.factory.makeMilestone(
+            distroseries=self.distroseries
+        )
+        milestone_b = self.factory.makeMilestone(
+            distroseries=self.distroseries
+        )
+        self._makeBugTask(
+            self.distroseries,
+            status=BugTaskStatus.NEW,
+            importance=BugTaskImportance.CRITICAL,
+            milestone=milestone_a,
+        )
+        self._makeBugTask(
+            self.distroseries,
+            status=BugTaskStatus.NEW,
+            importance=BugTaskImportance.HIGH,
+            milestone=milestone_b,
+        )
+        view = self._getView(self.distroseries, principal=self.person)
+        summary_a = view.get_bugs_summary(milestone=milestone_a)
+        self.assertEqual(summary_a["critical_bugs_count"], 1)
+        self.assertEqual(summary_a["high_bugs_count"], 0)
+        self.assertEqual(summary_a["open_bugs_count"], 1)
+
+        summary_b = view.get_bugs_summary(milestone=milestone_b)
+        self.assertEqual(summary_b["critical_bugs_count"], 0)
+        self.assertEqual(summary_b["high_bugs_count"], 1)
+        self.assertEqual(summary_b["open_bugs_count"], 1)
+
+
+class TestVanillaDistroSeriesBugsList(TestCaseWithFactory):
+    """Tests for the bugs list markup and URL view properties."""
+
+    layer = LaunchpadFunctionalLayer
+
+    def _getView(self, distroseries, principal=None, form=None):
+        return create_initialized_view(
+            distroseries, "+index", principal=principal, form=form
+        )
+
+    def test_bugs_subscriptions_markup_empty(self):
+        """A logged-in user with no subscriptions sees the empty-state."""
+        distroseries = self.factory.makeDistroSeries()
+        person = self.factory.makePerson()
+        view = self._getView(distroseries, principal=person)
+        html = view.bugs_subscriptions_markup
+        self.assertIn("You have no bug subscriptions in this series", html)
+        self.assertNotIn("<table>", html)
+
+    def test_bugs_subscriptions_markup_renders_table(self):
+        """Subscribed bugs render in a table with bug id/title columns."""
+        distroseries = self.factory.makeDistroSeries()
+        person = self.factory.makePerson()
+        bugtask = self.factory.makeBugTask(target=distroseries)
+        with person_logged_in(person):
+            bugtask.bug.subscribe(person, subscribed_by=person)
+        view = self._getView(distroseries, principal=person)
+        html = view.bugs_subscriptions_markup
+        self.assertIn("<table>", html)
+        self.assertIn(">%d<" % bugtask.bug.id, html)
+        self.assertIn(bugtask.bug.title, html)
+
+    def test_bugs_important_markup_empty(self):
+        """Empty state appears when there are no critical bugs."""
+        distroseries = self.factory.makeDistroSeries()
+        view = self._getView(distroseries)
+        html = view.bugs_important_markup
+        self.assertIn("No critical bugs in this series", html)
+        self.assertNotIn("<table>", html)
+
+    def test_bugs_important_markup_renders_table(self):
+        """Critical bugs render as a table."""
+        distroseries = self.factory.makeDistroSeries()
+        bugtask = self.factory.makeBugTask(target=distroseries)
+        with person_logged_in(bugtask.target.owner):
+            bugtask.transitionToImportance(
+                BugTaskImportance.CRITICAL, bugtask.target.owner
+            )
+        view = self._getView(distroseries)
+        html = view.bugs_important_markup
+        self.assertIn("<table>", html)
+        self.assertIn(">%d<" % bugtask.bug.id, html)
+
+    def test_bugs_new_markup_empty(self):
+        """Empty state appears when there are no new bugs."""
+        distroseries = self.factory.makeDistroSeries()
+        view = self._getView(distroseries)
+        html = view.bugs_new_markup
+        self.assertIn("No new bugs in this series", html)
+        self.assertNotIn("<table>", html)
+
+    def test_bugs_new_markup_renders_table(self):
+        """New bugs render as a table."""
+        distroseries = self.factory.makeDistroSeries()
+        bugtask = self.factory.makeBugTask(
+            target=distroseries, status=BugTaskStatus.NEW
+        )
+        view = self._getView(distroseries)
+        html = view.bugs_new_markup
+        self.assertIn("<table>", html)
+        self.assertIn(">%d<" % bugtask.bug.id, html)
+
+    def test_bugs_markup_table_headers(self):
+        """Bugs table exposes Bug/Title/Affects/Importance/Status columns."""
+        distroseries = self.factory.makeDistroSeries()
+        self.factory.makeBugTask(target=distroseries, status=BugTaskStatus.NEW)
+        view = self._getView(distroseries)
+        html = view.bugs_new_markup
+        for header in ("Bug", "Title", "Affects", "Importance", "Status"):
+            self.assertIn('<th scope="col">%s</th>' % header, html)
+
+    def test_bugs_markup_source_package_affects_and_link(self):
+        """
+        Source-package tasks link the package
+        and use a bugs rootsite URL.
+        """
+        distroseries = self.factory.makeDistroSeries()
+        sourcepackage = self.factory.makeSourcePackage(
+            distroseries=distroseries
+        )
+        bugtask = self.factory.makeBugTask(
+            target=sourcepackage, status=BugTaskStatus.NEW
+        )
+        pkg_name = bugtask.sourcepackagename.name
+        view = self._getView(distroseries)
+        html = view.bugs_new_markup
+        self.assertIn(">%s</a>" % pkg_name, html)
+        self.assertIn("://bugs.", html)
+        self.assertIn("/+source/%s/+bug/%d" % (pkg_name, bugtask.bug.id), html)
+        self.assertIn(IMPORTANCE_ICONS[bugtask.importance], html)
+
+    def test_bugs_markup_series_target_has_empty_affects(self):
+        """Series-only tasks render an empty Affects cell."""
+        distroseries = self.factory.makeDistroSeries()
+        bugtask = self.factory.makeBugTask(
+            target=distroseries, status=BugTaskStatus.NEW
+        )
+        view = self._getView(distroseries)
+        html = view.bugs_new_markup
+        self.assertNotIn("/+source/", html)
+        self.assertIn(">%d<" % bugtask.bug.id, html)
+
+    # -- tab ordering --
+
+    def test_bugs_list_tabs_anonymous_orders_subscriptions_last(self):
+        """Anonymous users see important/new before subscriptions."""
+        distroseries = self.factory.makeDistroSeries()
+        view = self._getView(distroseries, principal=None)
+        tab_ids = [tab[0] for tab in view.bugs_list_tabs._tabs]
+        self.assertEqual(["important", "new", "subscriptions"], tab_ids)
+        self.assertEqual("important", view.bugs_list_tabs._default)
+
+    def test_bugs_list_tabs_logged_in_uses_stable_order(self):
+        """Logged-in users see the same stable tab order."""
+        distroseries = self.factory.makeDistroSeries()
+        person = self.factory.makePerson()
+        with person_logged_in(person):
+            view = self._getView(distroseries, principal=person)
+            tab_ids = [tab[0] for tab in view.bugs_list_tabs._tabs]
+            default = view.bugs_list_tabs._default
+        self.assertEqual(["important", "new", "subscriptions"], tab_ids)
+        self.assertEqual("important", default)
+
+    def test_packages_list_tabs_anonymous_orders_my_uploads_last(self):
+        """Anonymous users see latest uploads before my uploads."""
+        distroseries = self.factory.makeDistroSeries()
+        view = self._getView(distroseries, principal=None)
+        tab_ids = [tab[0] for tab in view.packages_list_tabs._tabs]
+        self.assertEqual(["latest", "my-uploads"], tab_ids)
+        self.assertEqual("latest", view.packages_list_tabs._default)
+
+    def test_packages_list_tabs_logged_in_uses_stable_order(self):
+        """Logged-in users see the same stable tab order."""
+        distroseries = self.factory.makeDistroSeries()
+        person = self.factory.makePerson()
+        with person_logged_in(person):
+            view = self._getView(distroseries, principal=person)
+            tab_ids = [tab[0] for tab in view.packages_list_tabs._tabs]
+            default = view.packages_list_tabs._default
+        self.assertEqual(["latest", "my-uploads"], tab_ids)
+        self.assertEqual("latest", default)
+
+    def test_bugs_url_filters(self):
+        """
+        Important URL points at +bugs on the bugs rootsite, filtered.
+        Bugs URL points at +bugs on the distroseries page, filtered.
+        """
+        distroseries = self.factory.makeDistroSeries()
+        view = self._getView(distroseries)
+        url = view.bugs_url["critical"]
+        self.assertIn("://bugs.", url)
+        self.assertIn("/+bugs?", url)
+        self.assertIn("field.importance=Critical", url)
+
+
+class TestSelectedBugsMilestone(TestCaseWithFactory):
+    """Tests for the ``selected_bugs_milestone`` view property."""
+
+    layer = LaunchpadFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        self.person = self.factory.makePerson()
+        self.distroseries = self.factory.makeDistroSeries()
+
+    def _getView(self, form=None):
+        return create_initialized_view(
+            self.distroseries,
+            "+vanilla-distroseries-bugs-summary",
+            principal=self.person,
+            form=form,
+        )
+
+    def test_returns_none_when_param_missing(self):
+        view = self._getView()
+        self.assertIsNone(view.selected_bugs_milestone)
+
+    def test_returns_none_when_param_empty(self):
+        view = self._getView(form={"bugs-milestone": ""})
+        self.assertIsNone(view.selected_bugs_milestone)
+
+    def test_returns_none_when_param_non_numeric(self):
+        view = self._getView(form={"bugs-milestone": "not-a-number"})
+        self.assertIsNone(view.selected_bugs_milestone)
+
+
+class TestBugsMilestones(TestCaseWithFactory):
+    """Tests for the ``bugs_milestones`` view property."""
+
+    layer = LaunchpadFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        self.person = self.factory.makePerson()
+        self.distroseries = self.factory.makeDistroSeries()
+
+    def _getView(self):
+        return create_initialized_view(
+            self.distroseries,
+            "+vanilla-distroseries-bugs-summary",
+            principal=self.person,
+        )
+
+    def test_empty_when_no_milestones(self):
+        self.assertEqual([], self._getView().bugs_milestones)
+
+    def test_returns_series_milestones(self):
+        milestone = self.factory.makeMilestone(distroseries=self.distroseries)
+        transaction.commit()
+        self.assertEqual([milestone], self._getView().bugs_milestones)
+
+    def test_excludes_other_series_milestones(self):
+        other_series = self.factory.makeDistroSeries()
+        self.factory.makeMilestone(distroseries=other_series)
+        mine = self.factory.makeMilestone(distroseries=self.distroseries)
+        transaction.commit()
+        self.assertEqual([mine], self._getView().bugs_milestones)
+
+    def test_limited_to_100(self):
+        for _ in range(101):
+            self.factory.makeMilestone(distroseries=self.distroseries)
+        transaction.commit()
+        self.assertEqual(100, len(self._getView().bugs_milestones))

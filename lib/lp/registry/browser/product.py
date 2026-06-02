@@ -137,7 +137,7 @@ from lp.registry.browser.menu import (
     RegistryCollectionActionMenuBase,
 )
 from lp.registry.browser.pillar import (
-    PillarBugsMenu,
+    BugTargetParentBugsMenu,
     PillarInvolvementView,
     PillarNavigationMixin,
     PillarViewMixin,
@@ -655,7 +655,7 @@ class ProductOverviewMenu(
         return Link("+download", text, icon="info")
 
 
-class ProductBugsMenu(PillarBugsMenu, ProductEditLinksMixin):
+class ProductBugsMenu(BugTargetParentBugsMenu, ProductEditLinksMixin):
     usedfor = IProduct
     facet = "bugs"
     configurable_bugtracker = True
@@ -1254,6 +1254,19 @@ class ProductView(
             return self.context.development_focus.branch
         else:
             return None
+
+    @cachedproperty
+    def latest_release_with_download_files(self):
+        """Return the latest release with download files.
+
+        Overrides the mixin implementation to avoid materialising all
+        releases for the product into Python objects, which is
+        prohibitively slow for products (such as linux) that have
+        thousands of releases.
+        """
+        return getUtility(
+            IProductReleaseSet
+        ).getLatestReleaseWithDownloadFiles(self.context)
 
 
 class ProductPackagesView(LaunchpadView):

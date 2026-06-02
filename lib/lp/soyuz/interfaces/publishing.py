@@ -27,7 +27,7 @@ __all__ = [
 ]
 
 import http.client
-from typing import List, TypedDict
+from typing import Dict, List, TypedDict
 
 from lazr.restful.declarations import (
     REQUEST_USER,
@@ -130,6 +130,7 @@ class SourceUploadBuildInfo(TypedDict):
 
     arch_tag: str
     build_status: BuildStatus
+    build_url: str
 
 
 class SourceUploadInfo(TypedDict):
@@ -1509,6 +1510,24 @@ class IPublishingSet(Interface):
         :return: A list of `SourceUploadInfo` ordered by ``datecreated``
             descending. The ``builds`` list is empty for uploads that have
             no builds yet.
+        """
+
+    def getPocketCountsForDistro(
+        context,
+        statuses=None,
+    ) -> Dict[PackagePublishingPocket, int]:
+        """Count source publications grouped by pocket for a distro.
+
+        Returns a dict mapping ``PackagePublishingPocket`` values to the
+        number of source publications in the distro's archives. Pockets
+        with no publications are included with a count of 0.
+
+        :param context: An `IDistribution` or `IDistroSeries`.
+        :param statuses: Optional iterable of `PackagePublishingStatus`
+            values to filter by. If ``None`` (the default), publications
+            across all statuses are counted.
+        :return: ``dict`` of ``{PackagePublishingPocket: int}`` containing
+            an entry for every ``PackagePublishingPocket`` value.
         """
 
 
