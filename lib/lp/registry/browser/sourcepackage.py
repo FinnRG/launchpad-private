@@ -61,10 +61,11 @@ from lp.services.webapp import (
     Navigation,
     canonical_url,
     stepto,
+    structured,
 )
 from lp.services.webapp.authorization import check_permission
 from lp.services.webapp.breadcrumb import Breadcrumb
-from lp.services.webapp.escaping import structured
+from lp.services.webapp.escaping import safe_html
 from lp.services.webapp.interfaces import IBreadcrumb
 from lp.services.webapp.menu import enabled_with_permission
 from lp.services.webapp.publisher import LaunchpadView
@@ -490,7 +491,7 @@ class SourcePackageView(LaunchpadView):
                 )
                 self.request.response.redirect(canonical_url(self.context))
             else:
-                self.error_message = structured("Invalid series given.")
+                self.error_message = safe_html("Invalid series given.")
 
     def published_by_pocket(self):
         """This morfs the results of ISourcePackage.published_by_pocket into

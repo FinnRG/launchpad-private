@@ -47,7 +47,7 @@ from lp.services.webapp.authorization import (
     check_permission,
     precache_permission_for_objects,
 )
-from lp.services.webapp.escaping import structured
+from lp.services.webapp.escaping import safe_html, structured
 
 
 class BugSubscriptionAddView(LaunchpadFormView):
@@ -461,7 +461,7 @@ class BugSubscriptionSubscribeSelfView(
         self.context.bug.unsubscribe(self.user, self.user)
 
         self.request.response.addNotification(
-            structured(
+            safe_html(
                 self._getUnsubscribeNotification(self.user, unsubed_dupes)
             )
         )
@@ -486,7 +486,7 @@ class BugSubscriptionSubscribeSelfView(
         self.context.bug.unsubscribe(user, self.user)
         unsubed_dupes = self.context.bug.unsubscribeFromDupes(user, user)
         self.request.response.addNotification(
-            structured(self._getUnsubscribeNotification(user, unsubed_dupes))
+            safe_html(self._getUnsubscribeNotification(user, unsubed_dupes))
         )
 
     def _handleUpdateSubscription(self, level):

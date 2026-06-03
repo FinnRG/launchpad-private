@@ -12,7 +12,7 @@ from zope.interface import Interface
 
 from lp.app.browser.launchpadform import LaunchpadEditFormView, action
 from lp.bugs.interfaces.bugsupervisor import IHasBugSupervisor
-from lp.services.webapp.escaping import structured
+from lp.services.webapp.escaping import safe_html
 from lp.services.webapp.publisher import canonical_url
 
 
@@ -68,5 +68,5 @@ class BugSupervisorEditView(LaunchpadEditFormView):
                 "You can set the bug supervisor again at any time."
             )
         else:
-            message = structured("Bug supervisor privilege granted.")
+            message = safe_html("Bug supervisor privilege granted.")
         self.request.response.addNotification(message)

@@ -126,7 +126,7 @@ from lp.services.webapp import (
 )
 from lp.services.webapp.authorization import check_permission
 from lp.services.webapp.breadcrumb import Breadcrumb
-from lp.services.webapp.escaping import structured
+from lp.services.webapp.escaping import safe_html, structured
 from lp.services.webapp.interfaces import (
     IBreadcrumb,
     ICanonicalUrlData,
@@ -425,7 +425,7 @@ class Hierarchy(LaunchpadView):
                 structured('<a href="%s">%s</a>', crumb.url, crumb.detail)
             )
         if not crumb_markups:
-            crumb_markups.append(structured("<span>Launchpad.net</span>"))
+            crumb_markups.append(safe_html("<span>Launchpad.net</span>"))
         content = structured(
             "<br />".join(["%s"] * len(crumb_markups)), *crumb_markups
         )
@@ -445,7 +445,7 @@ class Hierarchy(LaunchpadView):
             return structured(
                 '<a href="%s">%s</a>',
                 canonical_url(logo_context, rootsite="mainsite"),
-                structured(adapter.logo()),
+                safe_html(adapter.logo()),
             ).escapedtext
         else:
             return adapter.logo()

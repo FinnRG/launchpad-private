@@ -78,7 +78,7 @@ from lp.services.fields import (
     URIField,
     Whiteboard,
 )
-from lp.services.webapp.escaping import html_escape, structured
+from lp.services.webapp.escaping import html_escape, safe_html
 from lp.services.webapp.interfaces import ITableBatchNavigator
 from lp.services.webhooks.interfaces import IWebhookTarget
 
@@ -141,7 +141,7 @@ class BranchURIField(URIField):
                 "cannot be on <code>${domain}</code>.",
                 mapping={"domain": html_escape(launchpad_domain)},
             )
-            raise LaunchpadValidationError(structured(message))
+            raise LaunchpadValidationError(safe_html(message))
 
         for hostname in get_blacklisted_hostnames():
             if uri.underDomain(hostname):
@@ -149,7 +149,7 @@ class BranchURIField(URIField):
                     "Launchpad cannot mirror branches from %s."
                     % html_escape(hostname)
                 )
-                raise LaunchpadValidationError(structured(message))
+                raise LaunchpadValidationError(safe_html(message))
 
         # As well as the check against the config, we also need to check
         # against the actual text used in the database constraint.
@@ -160,7 +160,7 @@ class BranchURIField(URIField):
                 "cannot be on <code>${domain}</code>.",
                 mapping={"domain": html_escape(constraint_text)},
             )
-            raise LaunchpadValidationError(structured(message))
+            raise LaunchpadValidationError(safe_html(message))
 
         if IBranch.providedBy(self.context) and self.context.url == str(uri):
             return  # url was not changed
@@ -181,7 +181,7 @@ class BranchURIField(URIField):
                     "branch": html_escape(branch.displayname),
                 },
             )
-            raise LaunchpadValidationError(structured(message))
+            raise LaunchpadValidationError(safe_html(message))
 
 
 BRANCH_NAME_VALIDATION_ERROR_MESSAGE = _(

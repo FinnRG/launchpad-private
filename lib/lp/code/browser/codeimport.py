@@ -71,7 +71,7 @@ from lp.services.webapp import LaunchpadView, Navigation, canonical_url, stepto
 from lp.services.webapp.authorization import check_permission
 from lp.services.webapp.batching import BatchNavigator
 from lp.services.webapp.breadcrumb import Breadcrumb
-from lp.services.webapp.escaping import structured
+from lp.services.webapp.escaping import safe_html, structured
 
 
 class CodeImportSetNavigation(Navigation):
@@ -724,7 +724,7 @@ class RequestImportView(LaunchpadFormView):
             user = e.requesting_user
             adapter = queryAdapter(user, IPathAdapter, "fmt")
             self.request.response.addNotification(
-                structured(
+                safe_html(
                     "The import has already been requested by %s."
                     % adapter.link(None)
                 )

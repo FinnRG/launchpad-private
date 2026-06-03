@@ -90,7 +90,7 @@ from lp.services.webapp import (
 )
 from lp.services.webapp.authorization import check_permission
 from lp.services.webapp.breadcrumb import Breadcrumb
-from lp.services.webapp.escaping import structured
+from lp.services.webapp.escaping import safe_html, structured
 from lp.services.webapp.interfaces import IAlwaysSubmittedWidget
 from lp.services.webapp.snapshot import notify_modified
 from lp.services.worlddata.helpers import (
@@ -1099,7 +1099,7 @@ class QuestionWorkflowView(LaunchpadFormView, LinkFAQMixin):
                 "solved my problem'</em> button."
             )
             self._addNotificationAndHandlePossibleSubscription(
-                structured(msgid), data
+                safe_html(msgid), data
             )
 
     def canRequestInfo(self, action):
@@ -1526,7 +1526,7 @@ class SearchableFAQRadioWidget(LaunchpadRadioWidget):
         input = renderElement("input", **attributes)
         button = structured(
             '<label style="font-weight: normal">%s&nbsp;%s:</label>',
-            structured(input),
+            input,
             term.token,
         )
         link = structured(

@@ -21,7 +21,7 @@ from lp.app.widgets.itemswidgets import (
     PlainMultiCheckBoxWidget,
 )
 from lp.code.interfaces.branch import IBranch
-from lp.services.webapp.escaping import structured
+from lp.services.webapp.escaping import safe_html
 from lp.services.webapp.servers import LaunchpadTestRequest
 from lp.testing import ANONYMOUS, TestCaseWithFactory, person_logged_in
 from lp.testing.layers import DatabaseFunctionalLayer
@@ -177,7 +177,7 @@ class TestLaunchpadRadioWidget(ItemWidgetTestCase):
     def test__renderItem_without_label(self):
         # Render item omits a wrapping label if the text contains a label.
         html_term = SimpleTerm(
-            "object-3", "token-3", structured("<label>title</label>")
+            "object-3", "token-3", safe_html("<label>title</label>")
         )
         expected = "<input ... />&nbsp;<label>title</label>"
         self.assertRenderItem(expected, html_term, checked=False)

@@ -129,7 +129,7 @@ from lp.services.propertycache import cachedproperty
 from lp.services.webapp import LaunchpadView, canonical_url, urlappend
 from lp.services.webapp.authorization import check_permission
 from lp.services.webapp.batching import BatchNavigator
-from lp.services.webapp.escaping import structured
+from lp.services.webapp.escaping import safe_html
 from lp.soyuz.interfaces.archive import IArchive
 
 # A simple vocabulary for the subscribe_to_existing_bug form field.
@@ -649,7 +649,7 @@ class FileBugViewBase(LaunchpadFormView):
             elif IArchiveSourcePackage.providedBy(context):
                 context = context.archive
 
-        linkified_ack = structured(
+        linkified_ack = safe_html(
             FormattersAPI(
                 self.getAcknowledgementMessage(self.context)
             ).text_to_html(last_paragraph_class="last")
@@ -820,7 +820,7 @@ class FileBugViewBase(LaunchpadFormView):
             self.request.response.addNotification(notification)
         if bug.information_type == InformationType.PRIVATESECURITY:
             self.request.response.addNotification(
-                structured(
+                safe_html(
                     "Security-related bugs are by default private "
                     "(visible only to their direct subscribers). "
                     'You may choose to <a href="+secrecy">publicly '
@@ -829,7 +829,7 @@ class FileBugViewBase(LaunchpadFormView):
             )
         elif bug.information_type in PRIVATE_INFORMATION_TYPES:
             self.request.response.addNotification(
-                structured(
+                safe_html(
                     "This bug report has been marked private "
                     "(visible only to its direct subscribers). "
                     'You may choose to <a href="+secrecy">change this</a>.'

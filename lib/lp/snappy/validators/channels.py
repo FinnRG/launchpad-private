@@ -6,7 +6,7 @@
 from lp import _
 from lp.app.validators import LaunchpadValidationError
 from lp.services.channels import channel_string_to_list
-from lp.services.webapp.escaping import html_escape, structured
+from lp.services.webapp.escaping import html_escape, safe_html
 
 
 def channels_validator(channels):
@@ -25,7 +25,7 @@ def channels_validator(channels):
                 "'risk'.",
                 mapping={"name": html_escape(name)},
             )
-            raise LaunchpadValidationError(structured(message))
+            raise LaunchpadValidationError(safe_html(message))
         tracks.add(track)
         branches.add(branch)
 

@@ -432,7 +432,7 @@ class TestSocialAccountFormatterAPI(WithScenarios, TestCaseWithFactory):
         )
         expected_html = (
             f'<img class="user-social-accounts__icon" alt="{self.name}" '
-            f'title="{self.name}" src="/@@/{self.icon}" /> <a href={self.href}'
+            f'title="{self.name}" src="/@@/{self.icon}" /> <a href="{self.href}"'  # noqa: E501
             f' target="_blank"><strong>{self.display}</strong></a>'
         )
 

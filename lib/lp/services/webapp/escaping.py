@@ -4,6 +4,7 @@
 __all__ = [
     "html_escape",
     "html_unescape",
+    "safe_html",
     "structured",
 ]
 
@@ -85,6 +86,25 @@ def translate_if_i18n(obj_or_msgid):
 
 
 @implementer(IStructuredString)
+class safe_html:
+    """Mark a string as trusted HTML that will not be escaped.
+
+    Use this only for HTML that is known to be safe.
+    """
+
+    def __init__(self, text):
+        text = translate_if_i18n(text)
+        if isinstance(text, bytes):
+            text = text.decode()
+        else:
+            text = str(text)
+        self.escapedtext = text
+
+    def __repr__(self):
+        return "<safe-html '%s'>" % self.escapedtext
+
+
+@implementer(IStructuredString)
 class structured:
     def __init__(self, text, *reps, **kwreps):
         text = translate_if_i18n(text)
@@ -105,7 +125,7 @@ class structured:
                 k: html_escape(v) for k, v in kwreps.items()
             }
         else:
-            self.escapedtext = text
+            self.escapedtext = html_escape(text)
 
     def __repr__(self):
         return "<structured-string '%s'>" % self.text
