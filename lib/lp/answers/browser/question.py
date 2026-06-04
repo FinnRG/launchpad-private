@@ -1526,7 +1526,7 @@ class SearchableFAQRadioWidget(LaunchpadRadioWidget):
         input = renderElement("input", **attributes)
         button = structured(
             '<label style="font-weight: normal">%s&nbsp;%s:</label>',
-            input,
+            safe_html(input),
             term.token,
         )
         link = structured(
