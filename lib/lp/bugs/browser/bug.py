@@ -95,6 +95,7 @@ from lp.services.webapp import (
     Navigation,
     canonical_url,
     enabled_with_permission,
+    safe_html,
     stepthrough,
     structured,
 )
@@ -371,7 +372,7 @@ class BugContextMenu(ContextMenu):
     @enabled_with_permission("launchpad.Edit")
     def linktocve(self):
         """Return the 'Link to CVE' Link."""
-        text = structured(
+        text = safe_html(
             "Link to "
             '<abbr title="Common Vulnerabilities and Exposures Index">'
             "CVE"
@@ -1145,7 +1146,7 @@ class BugSecrecyEditView(LaunchpadFormView, BugSubscriptionPortletDetails):
                 )
             )
             self.request.response.addInfoNotification(
-                structured(notification_text)
+                safe_html(notification_text)
             )
 
 

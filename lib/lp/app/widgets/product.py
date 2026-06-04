@@ -43,7 +43,7 @@ from lp.bugs.interfaces.bugtracker import (
 from lp.registry.interfaces.product import IProduct
 from lp.services.fields import StrippedTextLine
 from lp.services.webapp import canonical_url
-from lp.services.webapp.escaping import structured
+from lp.services.webapp.escaping import safe_html, structured
 from lp.services.webapp.interfaces import ILaunchBag
 from lp.services.webapp.vhosts import allvhosts
 
@@ -400,7 +400,7 @@ class LicenseWidget(CheckBoxMatrixWidget):
         if term.value.url is None:
             return value
         else:
-            return structured(
+            return safe_html(
                 '%s&nbsp;<a href="%s" class="sprite external-link action-icon"'
                 ">view licence</a>" % (value, term.value.url)
             )

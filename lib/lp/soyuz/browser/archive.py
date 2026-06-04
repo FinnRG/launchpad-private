@@ -106,7 +106,7 @@ from lp.services.webapp.authorization import (
     precache_permission_for_objects,
 )
 from lp.services.webapp.batching import BatchNavigator
-from lp.services.webapp.escaping import structured
+from lp.services.webapp.escaping import safe_html, structured
 from lp.services.webapp.interfaces import ICanonicalUrlData, IStructuredString
 from lp.services.webapp.menu import NavigationMenu
 from lp.services.webapp.publisher import RedirectionView
@@ -749,7 +749,7 @@ class ArchiveViewBase(LaunchpadView, SourcesListEntriesWidget):
                     " Since this archive is private, no builds are "
                     "being dispatched."
                 )
-            self.request.response.addNotification(structured(notification))
+            self.request.response.addNotification(safe_html(notification))
         super().initialize()
         # Set properties for SourcesListEntriesWidget.
         self.archive = self.context
@@ -1445,7 +1445,7 @@ class ArchivePackageDeletionView(ArchiveSourceSelectionFormView):
         messages.append(
             structured("</p>\n<p>Deletion comment: %s</p>", comment)
         )
-        notification = structured(
+        notification = safe_html(
             "\n".join([msg.escapedtext for msg in messages])
         )
         self.request.response.addNotification(notification)
@@ -2203,7 +2203,7 @@ class ArchiveEditDependenciesView(ArchiveViewBase, LaunchpadFormView):
 
         # Issue a notification if anything was changed.
         if len(self.messages) > 0:
-            self.request.response.addNotification(structured(self.messages))
+            self.request.response.addNotification(safe_html(self.messages))
         # Redirect after POST.
         self.next_url = self.request.URL
 

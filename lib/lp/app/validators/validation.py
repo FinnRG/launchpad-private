@@ -20,7 +20,7 @@ from lp.app.validators.cve import valid_cve
 from lp.app.validators.email import valid_email
 from lp.services.identity.interfaces.emailaddress import IEmailAddressSet
 from lp.services.webapp import canonical_url
-from lp.services.webapp.escaping import html_escape, structured
+from lp.services.webapp.escaping import html_escape, safe_html
 from lp.services.webapp.interfaces import ILaunchBag
 
 
@@ -78,7 +78,7 @@ def _check_email_availability(email):
                 "person": html_escape(person.displayname),
             },
         )
-        raise LaunchpadValidationError(structured(message))
+        raise LaunchpadValidationError(safe_html(message))
 
 
 def validate_new_team_email(email):

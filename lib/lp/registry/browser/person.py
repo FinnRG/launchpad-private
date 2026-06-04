@@ -208,6 +208,7 @@ from lp.services.webapp import (
     StandardLaunchpadFacets,
     canonical_url,
     enabled_with_permission,
+    safe_html,
     stepthrough,
     stepto,
     structured,
@@ -2681,9 +2682,9 @@ class PersonEditSSHKeysView(LaunchpadView):
         try:
             getUtility(ISSHKeySet).new(self.user, sshkey)
         except SSHKeyAdditionError:
-            self.error_message = structured("Invalid public key")
+            self.error_message = safe_html("Invalid public key")
         else:
-            self.info_message = structured("SSH public key added.")
+            self.info_message = safe_html("SSH public key added.")
 
     def remove_ssh(self):
         key_id = self.request.form.get("key")
@@ -2692,7 +2693,7 @@ class PersonEditSSHKeysView(LaunchpadView):
 
         sshkey = getUtility(ISSHKeySet).getByID(key_id)
         if sshkey is None:
-            self.error_message = structured(
+            self.error_message = safe_html(
                 "Cannot remove a key that doesn't exist"
             )
             return
@@ -2792,7 +2793,7 @@ class PersonGPGView(LaunchpadView):
         key_fingerprints = self.request.form.get("DEACTIVATE_GPGKEY")
 
         if key_fingerprints is None:
-            self.error_message = structured(
+            self.error_message = safe_html(
                 "No key(s) selected for deactivation."
             )
             return
@@ -2808,7 +2809,7 @@ class PersonGPGView(LaunchpadView):
             if gpgkey is None:
                 continue
             if gpgkey.owner != self.user:
-                self.error_message = structured(
+                self.error_message = safe_html(
                     "Cannot deactivate someone else's key"
                 )
                 return
@@ -2824,7 +2825,7 @@ class PersonGPGView(LaunchpadView):
         token_fingerprints = self.request.form.get("REMOVE_GPGTOKEN")
 
         if token_fingerprints is None:
-            self.error_message = structured(
+            self.error_message = safe_html(
                 "No key(s) pending validation selected."
             )
             return
@@ -2852,7 +2853,7 @@ class PersonGPGView(LaunchpadView):
         key_fingerprints = self.request.form.get("REACTIVATE_GPGKEY")
 
         if key_fingerprints is None:
-            self.error_message = structured(
+            self.error_message = safe_html(
                 "No key(s) selected for reactivation."
             )
             return
@@ -2902,7 +2903,7 @@ class PersonGPGView(LaunchpadView):
                     "again." % (", ".join(notfound))
                 )
 
-        self.info_message = structured("\n<br />\n".join(comments))
+        self.info_message = safe_html("\n<br />\n".join(comments))
 
     def _validateGPG(self, key):
         bag = getUtility(ILaunchBag)
@@ -2999,7 +3000,7 @@ class PersonEditView(PersonRenameFormMixin, BasePersonEditView):
             # Warn the user that they might shoot themselves in the foot.
             self.setFieldError(
                 "name",
-                structured(
+                safe_html(
                     dedent(
                         """
             <div class="inline-warning">

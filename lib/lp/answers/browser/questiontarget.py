@@ -64,7 +64,7 @@ from lp.services.webapp import (
 )
 from lp.services.webapp.authorization import check_permission
 from lp.services.webapp.batching import BatchNavigator
-from lp.services.webapp.escaping import structured
+from lp.services.webapp.escaping import html_escape, safe_html
 from lp.services.webapp.publisher import LaunchpadView
 from lp.services.worlddata.helpers import (
     browser_languages,
@@ -879,8 +879,8 @@ class ManageAnswerContactView(UserSupportLanguagesMixin, LaunchpadFormView):
         if person_or_team.is_team:
             person_or_team.addLanguage(english)
             team_mapping = {
-                "name": person_or_team.name,
-                "displayname": person_or_team.displayname,
+                "name": html_escape(person_or_team.name),
+                "displayname": html_escape(person_or_team.displayname),
             }
             msgid = _(
                 "English was added to ${displayname}'s "
@@ -888,7 +888,7 @@ class ManageAnswerContactView(UserSupportLanguagesMixin, LaunchpadFormView):
                 "languages</a>.",
                 mapping=team_mapping,
             )
-            response.addNotification(structured(msgid))
+            response.addNotification(safe_html(msgid))
         else:
             if len(browser_languages(self.request)) > 0:
                 languages = browser_languages(self.request)
@@ -901,9 +901,9 @@ class ManageAnswerContactView(UserSupportLanguagesMixin, LaunchpadFormView):
                 '<a href="/people/+me/+editlanguages">Your preferred '
                 "languages</a> were updated to include your browser "
                 "languages: $languages.",
-                mapping={"languages": language_str},
+                mapping={"languages": html_escape(language_str)},
             )
-            response.addNotification(structured(msgid))
+            response.addNotification(safe_html(msgid))
 
 
 class QuestionTargetPortletAnswerContacts(LaunchpadView):

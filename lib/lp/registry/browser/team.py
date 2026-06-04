@@ -148,7 +148,7 @@ from lp.services.webapp.batching import (
     InactiveBatchNavigator,
 )
 from lp.services.webapp.breadcrumb import Breadcrumb
-from lp.services.webapp.escaping import structured
+from lp.services.webapp.escaping import safe_html, structured
 from lp.services.webapp.interfaces import (
     ILaunchBag,
     IMultiFacetedBreadcrumb,
@@ -527,7 +527,7 @@ class TeamContactAddressView(MailingListTeamBaseView):
                     # responsibility for security on the exception thrower.
                     msg = error.args[0]
                     if not IStructuredString.providedBy(msg):
-                        msg = structured(str(msg))
+                        msg = safe_html(str(msg))
                     self.setFieldError("contact_address", msg)
         elif data["contact_method"] == TeamContactMethod.HOSTED_LIST:
             mailing_list = getUtility(IMailingListSet).get(self.context.name)
@@ -2071,7 +2071,7 @@ class TeamJoinView(LaunchpadFormView, TeamJoinMixin):
                 )
             else:
                 response.addInfoNotification(
-                    structured(
+                    safe_html(
                         _(
                             "You have been subscribed to this "
                             "team&#x2019;s mailing list."

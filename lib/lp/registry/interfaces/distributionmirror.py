@@ -42,7 +42,7 @@ from lp.services.fields import (
     URIField,
     Whiteboard,
 )
-from lp.services.webapp.escaping import html_escape, structured
+from lp.services.webapp.escaping import html_escape, safe_html
 from lp.services.worlddata.interfaces.country import ICountry
 
 # The number of hours before we bother probing a mirror again
@@ -377,7 +377,7 @@ class DistroMirrorURIField(URIField):
                     "mirror": html_escape(mirror.title),
                 },
             )
-            raise LaunchpadValidationError(structured(message))
+            raise LaunchpadValidationError(safe_html(message))
 
 
 class DistroMirrorHTTPURIField(DistroMirrorURIField):

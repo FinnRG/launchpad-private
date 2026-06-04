@@ -90,7 +90,7 @@ from lp.services.webapp import (
     NavigationMenu,
     canonical_url,
     enabled_with_permission,
-    structured,
+    safe_html,
 )
 from lp.services.webapp.authorization import check_permission
 from lp.services.webapp.breadcrumb import Breadcrumb, NameBreadcrumb
@@ -177,14 +177,14 @@ class SourcePackageRecipeView(LaunchpadView):
         recipe = self.context
         if recipe.build_daily and recipe.daily_build_archive is None:
             self.request.response.addWarningNotification(
-                structured(
+                safe_html(
                     "Daily builds for this recipe will <strong>not</strong> "
                     "occur.<br/><br/>There is no PPA."
                 )
             )
         elif self.dailyBuildWithoutUploadPermission():
             self.request.response.addWarningNotification(
-                structured(
+                safe_html(
                     "Daily builds for this recipe will <strong>not</strong> "
                     "occur.<br/><br/>The owner of the recipe (%s) does not "
                     "have permission to upload packages into the daily "
@@ -362,7 +362,7 @@ def new_builds_notification_text(
             "%s<p>The recipe contains an obsolete distroseries, "
             "which has been skipped.</p>" % builds_text
         )
-    return structured(builds_text)
+    return safe_html(builds_text)
 
 
 class SourcePackageRecipeRequestBuildsView(LaunchpadFormView):

@@ -24,6 +24,7 @@ __all__ = [
     "NavigationMenu",
     "nearest",
     "redirection",
+    "safe_html",
     "sorted_dotted_numbers",
     "sorted_version_numbers",
     "StandardLaunchpadFacets",
@@ -38,7 +39,7 @@ __all__ = [
 ]
 
 from lp.services.features import getFeatureFlag
-from lp.services.webapp.escaping import structured
+from lp.services.webapp.escaping import safe_html, structured
 from lp.services.webapp.menu import (
     ApplicationMenu,
     ContextMenu,

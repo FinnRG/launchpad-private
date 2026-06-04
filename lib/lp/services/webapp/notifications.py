@@ -17,7 +17,7 @@ from datetime import datetime
 from zope.interface import implementer
 
 from lp.services.config import config
-from lp.services.webapp.escaping import html_escape, structured
+from lp.services.webapp.escaping import html_escape, safe_html
 from lp.services.webapp.interfaces import (
     BrowserNotificationLevel,
     INotification,
@@ -188,16 +188,16 @@ class NotificationTestView1(LaunchpadView):
         # Add some notifications
         for count in range(1, 3):
             response.addDebugNotification(
-                structured("Debug notification <b>%d</b>" % count)
+                safe_html("Debug notification <b>%d</b>" % count)
             )
             response.addInfoNotification(
-                structured("Info notification <b>%d</b>" % count)
+                safe_html("Info notification <b>%d</b>" % count)
             )
             response.addWarningNotification(
-                structured("Warning notification <b>%d</b>" % count)
+                safe_html("Warning notification <b>%d</b>" % count)
             )
             response.addErrorNotification(
-                structured("Error notification <b>%d</b>" % count)
+                safe_html("Error notification <b>%d</b>" % count)
             )
 
 
