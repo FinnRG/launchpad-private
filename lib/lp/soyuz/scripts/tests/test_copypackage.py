@@ -3,6 +3,7 @@
 
 from datetime import datetime, timedelta, timezone
 from textwrap import dedent
+from unittest.mock import patch
 
 import transaction
 from testtools.content import text_content
@@ -2845,3 +2846,31 @@ class TestCopyClosesBugs(TestCaseWithFactory):
         proposed_bug = getUtility(IBugSet).get(proposed_bug_id)
         [proposed_bug_task] = proposed_bug.bugtasks
         self.assertEqual(proposed_bug_task.status, BugTaskStatus.NEW)
+
+    def test_copy_succeeds_when_close_bugs_fails(self):
+        # If close_bugs_for_sourcepublication raises an exception (e.g. due
+        # to an unparsable Debian changelog), the copy must still succeed.
+        # Bug-closing is best-effort and must never abort a valid copy.
+        bug_id = self.createBug("buggy-source", "bug that won't close")
+        spph = self.createSource(
+            "671",
+            self.hoary_test.main_archive,
+            PackagePublishingPocket.PROPOSED,
+            bug_id,
+        )
+
+        with patch(
+            "lp.soyuz.scripts.packagecopier.close_bugs_for_sourcepublication",
+            side_effect=Exception("changelog parse error"),
+        ):
+            copies = do_copy(
+                [spph],
+                self.hoary_test.main_archive,
+                self.hoary_test,
+                PackagePublishingPocket.UPDATES,
+                check_permissions=False,
+            )
+
+        # The copy should have completed despite the bug-closing failure.
+        self.assertEqual(1, len(copies))
+        self.assertEqual(PackagePublishingStatus.PENDING, copies[0].status)
