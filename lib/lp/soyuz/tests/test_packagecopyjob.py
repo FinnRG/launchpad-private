@@ -41,6 +41,7 @@ from lp.soyuz.enums import (
     SourcePackageFormat,
 )
 from lp.soyuz.interfaces.archive import CannotCopy
+from lp.soyuz.interfaces.archivejob import IPackageUploadNotificationJobSource
 from lp.soyuz.interfaces.component import IComponentSet
 from lp.soyuz.interfaces.packagecopyjob import (
     IPackageCopyJob,
@@ -566,6 +567,35 @@ class PlainPackageCopyJobTests(TestCaseWithFactory, LocalTestHelper):
         # Abort the transaction to simulate the job runner script exiting.
         transaction.abort()
         self.assertOopsRecorded(job)
+
+    def test_unexpected_error_with_packageupload_sends_rejection_notification(
+        self,
+    ):
+        # When a copy job that has an associated PackageUpload fails due to
+        # an unexpected error, a PackageUploadNotificationJob is created so
+        # that the requester is informed of the rejection.
+        job = self.createCopyJob("copyme", "main", "web", "1.0-1", True)
+        pu = (
+            getUtility(IPackageUploadSet)
+            .getByPackageCopyJobIDs([job.id])
+            .one()
+        )
+        pu.acceptFromQueue()
+        switch_dbuser("launchpad_main")
+        # Simulate an unexpected error during the second run (e.g. Librarian
+        # outage when building the notification email).
+        removeSecurityProxy(job).attemptCopy = FakeMethod(
+            failure=Exception("Simulated internal error")
+        )
+        self.runJob(job)
+        # The PackageUpload should be rejected and a notification job created.
+        self.assertEqual(PackageUploadStatus.REJECTED, pu.status)
+        notification_jobs = list(
+            getUtility(IPackageUploadNotificationJobSource).iterReady()
+        )
+        self.assertEqual(1, len(notification_jobs))
+        naked_notification = removeSecurityProxy(notification_jobs[0])
+        self.assertEqual(pu, naked_notification.packageupload)
 
     def test_target_primary_redirects(self):
         # For primary archives with redirect_release_uploads set, ordinary

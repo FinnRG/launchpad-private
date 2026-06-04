@@ -49,8 +49,13 @@ from lp.services.job.model.job import EnumeratedSubclass, Job
 from lp.services.job.runner import BaseRunnableJob
 from lp.services.mail.sendmail import format_address_for_person
 from lp.soyuz.adapters.overrides import SourceOverride
-from lp.soyuz.enums import ArchivePurpose, PackageCopyPolicy
+from lp.soyuz.enums import (
+    ArchivePurpose,
+    PackageCopyPolicy,
+    PackageUploadStatus,
+)
 from lp.soyuz.interfaces.archive import CannotCopy
+from lp.soyuz.interfaces.archivejob import IPackageUploadNotificationJobSource
 from lp.soyuz.interfaces.component import IComponentSet
 from lp.soyuz.interfaces.copypolicy import ICopyPolicy
 from lp.soyuz.interfaces.packagecopyjob import (
@@ -898,6 +903,17 @@ class PlainPackageCopyJob(PackageCopyJobDerived):
                 comment_source.new(dsd, reporting_persona, message)
         else:
             self.setErrorMessage(message)
+        # If there is an associated PackageUpload that was rejected due to
+        # this failure, send a rejection notification
+        pu = (
+            getUtility(IPackageUploadSet)
+            .getByPackageCopyJobIDs([self.context.id])
+            .any()
+        )
+        if pu is not None and pu.status == PackageUploadStatus.REJECTED:
+            getUtility(IPackageUploadNotificationJobSource).create(
+                pu, summary_text=message
+            )
 
     def __repr__(self):
         """Returns an informative representation of the job."""
