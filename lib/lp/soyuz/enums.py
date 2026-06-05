@@ -7,6 +7,7 @@ __all__ = [
     "ArchiveJobType",
     "ArchivePermissionType",
     "ArchivePublishingMethod",
+    "ArchivePublishingSort",
     "ArchivePurpose",
     "ArchiveRepositoryFormat",
     "ArchiveStatus",
@@ -32,7 +33,7 @@ __all__ = [
 
 import re
 
-from lazr.enum import DBEnumeratedType, DBItem
+from lazr.enum import DBEnumeratedType, DBItem, EnumeratedType, Item
 
 # Regexes that match bug numbers for closing in change logs.
 re_closes = re.compile(
@@ -1008,4 +1009,24 @@ class ArchiveRepositoryFormat(DBEnumeratedType):
 
         A Rust package index
         """,
+    )
+
+
+class ArchivePublishingSort(EnumeratedType):
+    """Choices for how to sort list of package publishings."""
+
+    PUBLISHED_DATE_ASC = Item(
+        """
+        published_date_asc
+
+        Sort by package publication date in ascending order (oldest first).
+        """
+    )
+
+    PUBLISHED_DATE_DESC = Item(
+        """
+        published_date_desc
+
+        Sort by package publication date in descending order (newest first).
+        """
     )
