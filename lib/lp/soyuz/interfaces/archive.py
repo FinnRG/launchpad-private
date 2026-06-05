@@ -610,6 +610,22 @@ class IArchiveSubscriberView(Interface):
             ),
             required=False,
         ),
+        published_since=Datetime(
+            title=_("Published Since"),
+            description=_(
+                "Return entries whose `date_published` is greater "
+                "than or equal to this date."
+            ),
+            required=False,
+        ),
+        published_until=Datetime(
+            title=_("Published Until"),
+            description=_(
+                "Return entries whose `date_published` is less "
+                "than or equal to this date."
+            ),
+            required=False,
+        ),
         component_name=TextLine(title=_("Component name"), required=False),
         order_by_date=Bool(
             title=_("Order by creation date"),
@@ -642,6 +658,8 @@ class IArchiveSubscriberView(Interface):
         pocket=None,
         exact_match=False,
         created_since_date=None,
+        published_since=None,
+        published_until=None,
         component_name=None,
         order_by_date=False,
         order_by_date_ascending=False,
@@ -664,6 +682,8 @@ class IArchiveSubscriberView(Interface):
         order_by_date_ascending=False,
         include_removed=True,
         only_unpublished=False,
+        published_since=None,
+        published_until=None,
     ):
         """All `ISourcePackagePublishingHistory` target to this archive.
 
@@ -786,6 +806,22 @@ class IArchiveSubscriberView(Interface):
             ),
             required=False,
         ),
+        published_since=Datetime(
+            title=_("Published Since"),
+            description=_(
+                "Return entries whose `date_published` is greater "
+                "than or equal to this date."
+            ),
+            required=False,
+        ),
+        published_until=Datetime(
+            title=_("Published Until"),
+            description=_(
+                "Return entries whose `date_published` is less "
+                "than or equal to this date."
+            ),
+            required=False,
+        ),
         ordered=Bool(
             title=_("Ordered"),
             description=_(
@@ -825,6 +861,8 @@ class IArchiveSubscriberView(Interface):
         pocket=None,
         exact_match=False,
         created_since_date=None,
+        published_since=None,
+        published_until=None,
         ordered=True,
         order_by_date=False,
         order_by_date_ascending=False,

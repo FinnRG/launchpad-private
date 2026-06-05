@@ -732,6 +732,8 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         order_by_date=False,
         order_by_date_ascending=False,
         component_name=None,
+        published_since=None,
+        published_until=None,
     ):
         """See `IArchive`."""
         # 'eager_load' and 'include_removed' arguments are always True
@@ -749,6 +751,8 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             order_by_date=order_by_date,
             order_by_date_ascending=order_by_date_ascending,
             include_removed=True,
+            published_since=published_since,
+            published_until=published_until,
         )
 
         def load_api_extra_objects(rows):
@@ -807,6 +811,8 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         order_by_date_ascending=False,
         include_removed=True,
         only_unpublished=False,
+        published_since=None,
+        published_until=None,
     ):
         """See `IArchive`."""
         clauses = [SourcePackagePublishingHistory.archive == self]
@@ -908,6 +914,16 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         if only_unpublished:
             clauses.append(
                 SourcePackagePublishingHistory.datepublished == None
+            )
+
+        if published_since is not None:
+            clauses.append(
+                SourcePackagePublishingHistory.datepublished >= published_since
+            )
+
+        if published_until is not None:
+            clauses.append(
+                SourcePackagePublishingHistory.datepublished <= published_until
             )
 
         store = Store.of(self)
@@ -1137,6 +1153,8 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         only_unpublished=False,
         need_bpr=False,
         component_name=None,
+        published_since=None,
+        published_until=None,
     ):
         """Base clauses for binary publishing queries.
 
@@ -1235,6 +1253,16 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                 BinaryPackagePublishingHistory.datepublished == None
             )
 
+        if published_since is not None:
+            clauses.append(
+                BinaryPackagePublishingHistory.datepublished >= published_since
+            )
+
+        if published_until is not None:
+            clauses.append(
+                BinaryPackagePublishingHistory.datepublished <= published_until
+            )
+
         if component_name is not None:
             clauses.extend(
                 [
@@ -1262,6 +1290,8 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         only_unpublished=False,
         eager_load=False,
         component_name=None,
+        published_since=None,
+        published_until=None,
     ):
         """See `IArchive`."""
         # Circular imports.
@@ -1282,6 +1312,8 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             include_removed=include_removed,
             only_unpublished=only_unpublished,
             component_name=component_name,
+            published_since=published_since,
+            published_until=published_until,
         )
 
         result = (
