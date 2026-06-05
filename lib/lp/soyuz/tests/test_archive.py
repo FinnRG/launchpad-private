@@ -5289,6 +5289,28 @@ class TestgetAllPublishedBinaries(TestCaseWithFactory):
         self.assertEqual(1, publications.count())
         self.assertEqual(publication, publications[0])
 
+    def test_distroseries(self):
+        archive = self.factory.makeArchive()
+        distroseries1 = self.factory.makeDistroSeries(
+            distribution=archive.distribution
+        )
+        distroseries2 = self.factory.makeDistroSeries(
+            distribution=archive.distribution
+        )
+        das1 = self.factory.makeDistroArchSeries(distroseries=distroseries1)
+        das2 = self.factory.makeDistroArchSeries(distroseries=distroseries2)
+        pub1 = self.factory.makeBinaryPackagePublishingHistory(
+            archive=archive, distroarchseries=das1
+        )
+        self.factory.makeBinaryPackagePublishingHistory(
+            archive=archive, distroarchseries=das2
+        )
+        publications = archive.getAllPublishedBinaries(
+            distroseries=distroseries1
+        )
+        self.assertEqual(1, publications.count())
+        self.assertEqual(pub1, publications[0])
+
     def test_created_since_date_newer(self):
         archive = self.factory.makeArchive()
         datecreated = self.factory.getUniqueDate()

@@ -779,7 +779,9 @@ class IArchiveSubscriberView(Interface):
 
     @call_with(eager_load=True)
     @rename_parameters_as(
-        name="binary_name", distroarchseries="distro_arch_series"
+        name="binary_name",
+        distroarchseries="distro_arch_series",
+        distroseries="distro_series",
     )
     @operation_parameters(
         name=TextLine(title=_("Binary Package Name"), required=False),
@@ -866,6 +868,9 @@ class IArchiveSubscriberView(Interface):
             vocabulary=ArchivePublishingSort,
             required=False,
         ),
+        distroseries=Reference(
+            IDistroSeries, title=_("Distro Series"), required=False
+        ),
         component_name=TextLine(title=_("Component name"), required=False),
     )
     # Really IBinaryPackagePublishingHistory, patched in
@@ -892,6 +897,7 @@ class IArchiveSubscriberView(Interface):
         eager_load=False,
         component_name=None,
         order_by=None,
+        distroseries=None,
     ):
         """All `IBinaryPackagePublishingHistory` target to this archive.
 
@@ -919,6 +925,7 @@ class IArchiveSubscriberView(Interface):
             have never been published to disk.
         :param component_name: component filter. Only return binaries that are
             in this component.
+        :param distroseries: `IDistroSeries` filter.
 
         :return: A collection containing `BinaryPackagePublishingHistory`.
         """
