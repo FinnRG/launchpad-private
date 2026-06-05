@@ -3,7 +3,7 @@
 
 import json
 import os.path
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import responses
 from testtools.matchers import (
@@ -1126,6 +1126,100 @@ class TestGetPublishedBinaries(TestCaseWithFactory):
             self.assertEqual(expected_count, response.jsonBody()["total_size"])
             for entry in response.jsonBody()["entries"]:
                 self.assertEqual(component, entry["component_name"])
+
+    def test_getPublishedBinaries_published_since_until(self):
+        now = datetime.now(timezone.utc)
+        pub0 = self.factory.makeBinaryPackagePublishingHistory(
+            archive=self.archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub0).datepublished = now - timedelta(days=2)
+        pub1 = self.factory.makeBinaryPackagePublishingHistory(
+            archive=self.archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub1).datepublished = now - timedelta(days=1)
+        pub2 = self.factory.makeBinaryPackagePublishingHistory(
+            archive=self.archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub2).datepublished = now
+
+        ws = webservice_for_person(self.person, default_api_version="beta")
+
+        # Query with published_since
+        since_date = now - timedelta(hours=12)
+        response = ws.named_get(
+            self.archive_url,
+            "getPublishedBinaries",
+            published_since=since_date.isoformat(),
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual(1, response.jsonBody()["total_size"])
+
+        # Query with published_until
+        until_date = now - timedelta(hours=12)
+        response = ws.named_get(
+            self.archive_url,
+            "getPublishedBinaries",
+            published_until=until_date.isoformat(),
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual(2, response.jsonBody()["total_size"])
+
+        # Query with both (range)
+        response = ws.named_get(
+            self.archive_url,
+            "getPublishedBinaries",
+            published_since=(now - timedelta(days=1, hours=12)).isoformat(),
+            published_until=(now - timedelta(hours=12)).isoformat(),
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual(1, response.jsonBody()["total_size"])
+
+    def test_getPublishedSources_published_since_until(self):
+        now = datetime.now(timezone.utc)
+        pub0 = self.factory.makeSourcePackagePublishingHistory(
+            archive=self.archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub0).datepublished = now - timedelta(days=2)
+        pub1 = self.factory.makeSourcePackagePublishingHistory(
+            archive=self.archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub1).datepublished = now - timedelta(days=1)
+        pub2 = self.factory.makeSourcePackagePublishingHistory(
+            archive=self.archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub2).datepublished = now
+
+        ws = webservice_for_person(self.person, default_api_version="beta")
+
+        # Query with published_since
+        since_date = now - timedelta(hours=12)
+        response = ws.named_get(
+            self.archive_url,
+            "getPublishedSources",
+            published_since=since_date.isoformat(),
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual(1, response.jsonBody()["total_size"])
+
+        # Query with published_until
+        until_date = now - timedelta(hours=12)
+        response = ws.named_get(
+            self.archive_url,
+            "getPublishedSources",
+            published_until=until_date.isoformat(),
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual(2, response.jsonBody()["total_size"])
+
+        # Query with both (range)
+        response = ws.named_get(
+            self.archive_url,
+            "getPublishedSources",
+            published_since=(now - timedelta(days=1, hours=12)).isoformat(),
+            published_until=(now - timedelta(hours=12)).isoformat(),
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual(1, response.jsonBody()["total_size"])
 
 
 class TestRemoveCopyNotification(TestCaseWithFactory):

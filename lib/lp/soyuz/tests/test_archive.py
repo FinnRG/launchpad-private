@@ -3732,6 +3732,48 @@ class TestGetPublishedSources(TestCaseWithFactory):
             ).count(),
         )
 
+    def test_getPublishedSources_published_since_until(self):
+        archive = self.factory.makeArchive()
+        now = datetime.now(timezone.utc)
+        pub0 = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(pub0).datepublished = now - timedelta(days=2)
+        pub1 = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(pub1).datepublished = now - timedelta(days=1)
+        pub2 = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(pub2).datepublished = now
+
+        # Non-filtered query returns all publications.
+        self.assertEqual(3, archive.getPublishedSources().count())
+
+        # published_since filter.
+        since_date = now - timedelta(hours=12)
+        pubs_since = archive.getPublishedSources(published_since=since_date)
+        self.assertEqual(1, pubs_since.count())
+        self.assertEqual(pub2, pubs_since[0])
+
+        # published_until filter.
+        until_date = now - timedelta(hours=12)
+        pubs_until = archive.getPublishedSources(published_until=until_date)
+        self.assertEqual(2, pubs_until.count())
+        self.assertContentEqual([pub0, pub1], list(pubs_until))
+
+        # range filter.
+        pubs_range = archive.getPublishedSources(
+            published_since=now - timedelta(days=1, hours=12),
+            published_until=now - timedelta(hours=12),
+        )
+        self.assertEqual(1, pubs_range.count())
+        self.assertEqual(pub1, pubs_range[0])
+
     def test_getPublishedSources_name(self):
         # The name parameter allows filtering with a list of
         # names.
@@ -5170,6 +5212,52 @@ class TestgetAllPublishedBinaries(TestCaseWithFactory):
         )
         self.assertEqual(1, publications.count())
         self.assertEqual(later_publication, publications[0])
+
+    def test_published_since_until(self):
+        archive = self.factory.makeArchive()
+        now = datetime.now(timezone.utc)
+        pub0 = self.factory.makeBinaryPackagePublishingHistory(
+            archive=archive,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(pub0).datepublished = now - timedelta(days=2)
+        pub1 = self.factory.makeBinaryPackagePublishingHistory(
+            archive=archive,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(pub1).datepublished = now - timedelta(days=1)
+        pub2 = self.factory.makeBinaryPackagePublishingHistory(
+            archive=archive,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(pub2).datepublished = now
+
+        # Non-filtered query returns all publications.
+        self.assertEqual(3, archive.getAllPublishedBinaries().count())
+
+        # published_since filter.
+        since_date = now - timedelta(hours=12)
+        pubs_since = archive.getAllPublishedBinaries(
+            published_since=since_date
+        )
+        self.assertEqual(1, pubs_since.count())
+        self.assertEqual(pub2, pubs_since[0])
+
+        # published_until filter.
+        until_date = now - timedelta(hours=12)
+        pubs_until = archive.getAllPublishedBinaries(
+            published_until=until_date
+        )
+        self.assertEqual(2, pubs_until.count())
+        self.assertContentEqual([pub0, pub1], list(pubs_until))
+
+        # range filter.
+        pubs_range = archive.getAllPublishedBinaries(
+            published_since=now - timedelta(days=1, hours=12),
+            published_until=now - timedelta(hours=12),
+        )
+        self.assertEqual(1, pubs_range.count())
+        self.assertEqual(pub1, pubs_range[0])
 
     def test_unordered_results(self):
         archive = self.factory.makeArchive()
