@@ -1190,6 +1190,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         published_since=None,
         published_until=None,
         order_by=None,
+        distroseries=None,
     ):
         """Base clauses for binary publishing queries.
 
@@ -1288,6 +1289,17 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                 )
             )
 
+        if distroseries is not None:
+            from lp.soyuz.model.distroarchseries import DistroArchSeries
+
+            clauses.extend(
+                [
+                    BinaryPackagePublishingHistory.distroarchseries_id
+                    == DistroArchSeries.id,
+                    DistroArchSeries.distroseries == distroseries,
+                ]
+            )
+
         if pocket is not None:
             clauses.append(BinaryPackagePublishingHistory.pocket == pocket)
 
@@ -1345,6 +1357,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         published_since=None,
         published_until=None,
         order_by=None,
+        distroseries=None,
     ):
         """See `IArchive`."""
         # Circular imports.
@@ -1368,6 +1381,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             published_since=published_since,
             published_until=published_until,
             order_by=order_by,
+            distroseries=distroseries,
         )
 
         result = (

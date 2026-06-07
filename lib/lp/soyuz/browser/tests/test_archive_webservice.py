@@ -1041,6 +1041,39 @@ class TestGetPublishedBinaries(TestCaseWithFactory):
         self.assertEqual(200, response.status)
         self.assertEqual(0, response.jsonBody()["total_size"])
 
+    def test_getPublishedBinaries_filter_by_distroseries(self):
+        with admin_logged_in():
+            distroseries1 = self.factory.makeDistroSeries(
+                distribution=self.archive.distribution
+            )
+            distroseries2 = self.factory.makeDistroSeries(
+                distribution=self.archive.distribution
+            )
+            das1 = self.factory.makeDistroArchSeries(
+                distroseries=distroseries1
+            )
+            das2 = self.factory.makeDistroArchSeries(
+                distroseries=distroseries2
+            )
+            pub1 = self.factory.makeBinaryPackagePublishingHistory(
+                archive=self.archive, distroarchseries=das1
+            )
+            self.factory.makeBinaryPackagePublishingHistory(
+                archive=self.archive, distroarchseries=das2
+            )
+            distro_series_url = api_url(distroseries1)
+            pub1_url = api_url(pub1)
+
+        ws = webservice_for_person(self.person, default_api_version="beta")
+        response = ws.named_get(
+            self.archive_url,
+            "getPublishedBinaries",
+            distro_series=distro_series_url,
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual(1, response.jsonBody()["total_size"])
+        self.assertIn(pub1_url, response.jsonBody()["entries"][0]["self_link"])
+
     def test_getPublishedBinaries_no_ordering(self):
         self.factory.makeBinaryPackagePublishingHistory(archive=self.archive)
         self.factory.makeBinaryPackagePublishingHistory(archive=self.archive)
