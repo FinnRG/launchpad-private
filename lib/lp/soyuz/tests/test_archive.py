@@ -78,6 +78,7 @@ from lp.soyuz.adapters.overrides import BinaryOverride, SourceOverride
 from lp.soyuz.enums import (
     ArchivePermissionType,
     ArchivePublishingMethod,
+    ArchivePublishingSort,
     ArchivePurpose,
     ArchiveRepositoryFormat,
     ArchiveStatus,
@@ -3884,6 +3885,72 @@ class TestGetPublishedSources(TestCaseWithFactory):
             ),
         )
 
+    def test_order_by_published_date_descending(self):
+        archive = self.factory.makeArchive()
+        pub0 = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(pub0).datepublished = datetime(
+            2026, 1, 1, tzinfo=timezone.utc
+        )
+        pub1 = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(pub1).datepublished = datetime(
+            2026, 1, 3, tzinfo=timezone.utc
+        )
+        pub2 = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(pub2).datepublished = datetime(
+            2026, 1, 2, tzinfo=timezone.utc
+        )
+        expected_order = [pub1, pub2, pub0]
+        self.assertEqual(
+            expected_order,
+            list(
+                archive.getPublishedSources(
+                    order_by=ArchivePublishingSort.PUBLISHED_DATE_DESC
+                )
+            ),
+        )
+
+    def test_order_by_published_date_ascending(self):
+        archive = self.factory.makeArchive()
+        pub0 = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(pub0).datepublished = datetime(
+            2026, 1, 1, tzinfo=timezone.utc
+        )
+        pub1 = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(pub1).datepublished = datetime(
+            2026, 1, 3, tzinfo=timezone.utc
+        )
+        pub2 = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(pub2).datepublished = datetime(
+            2026, 1, 2, tzinfo=timezone.utc
+        )
+        expected_order = [pub0, pub2, pub1]
+        self.assertEqual(
+            expected_order,
+            list(
+                archive.getPublishedSources(
+                    order_by=ArchivePublishingSort.PUBLISHED_DATE_ASC
+                )
+            ),
+        )
+
     def test_matches_version_as_text(self):
         # Versions such as 0.7-4 and 0.07-4 are equal according to the
         # "debversion" type, but for lookup purposes we compare the text of
@@ -3966,6 +4033,57 @@ class TestGetPublishedSourcesWebService(TestCaseWithFactory):
         self.assertEqual(200, response.status)
         self.assertEqual(5, response.jsonBody()["total_size"])
         self.assertThat(collector, HasQueryCount(LessThan(28)))
+
+    def test_getPublishedSources_order_by_published(self):
+        ppa = self.createTestingPPA()
+        ppa_url = f"/~{ppa.owner.name}/+archive/ubuntu/ppa"
+
+        # Sequentialize the publication dates to verify precise sort order.
+        now = datetime.now(timezone.utc)
+        with admin_logged_in():
+            sources = list(ppa.getPublishedSources())
+            for i, source in enumerate(sources):
+                naked_source = removeSecurityProxy(source)
+                naked_source.status = PackagePublishingStatus.PUBLISHED
+                naked_source.datepublished = now - timedelta(days=i)
+            source_ids = [removeSecurityProxy(s).id for s in sources]
+            Store.of(ppa).flush()
+
+        webservice = webservice_for_person(
+            ppa.owner, permission=OAuthPermission.READ_PRIVATE
+        )
+        response = webservice.named_get(
+            ppa_url,
+            "getPublishedSources",
+            order_by="published_date_desc",
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual(5, response.jsonBody()["total_size"])
+        entries = response.jsonBody()["entries"]
+        self.assertEqual(5, len(entries))
+        # Descending: oldest (sources[4], now-4days) should be last.
+        self.assertTrue(
+            entries[0]["self_link"].endswith(f"+sourcepub/{source_ids[0]}")
+        )
+        self.assertTrue(
+            entries[4]["self_link"].endswith(f"+sourcepub/{source_ids[4]}")
+        )
+
+        response_asc = webservice.named_get(
+            ppa_url,
+            "getPublishedSources",
+            order_by="published_date_asc",
+        )
+        self.assertEqual(200, response_asc.status)
+        self.assertEqual(5, response_asc.jsonBody()["total_size"])
+        entries_asc = response_asc.jsonBody()["entries"]
+        self.assertEqual(5, len(entries_asc))
+        self.assertTrue(
+            entries_asc[0]["self_link"].endswith(f"+sourcepub/{source_ids[4]}")
+        )
+        self.assertTrue(
+            entries_asc[4]["self_link"].endswith(f"+sourcepub/{source_ids[0]}")
+        )
 
 
 class TestCopyPackage(TestCaseWithFactory):
@@ -5321,6 +5439,72 @@ class TestgetAllPublishedBinaries(TestCaseWithFactory):
             expected_order,
             list(
                 archive.getAllPublishedBinaries(order_by_date_ascending=True)
+            ),
+        )
+
+    def test_order_by_published_date_descending(self):
+        archive = self.factory.makeArchive()
+        pub0 = self.factory.makeBinaryPackagePublishingHistory(
+            archive=archive,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(pub0).datepublished = datetime(
+            2026, 1, 1, tzinfo=timezone.utc
+        )
+        pub1 = self.factory.makeBinaryPackagePublishingHistory(
+            archive=archive,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(pub1).datepublished = datetime(
+            2026, 1, 3, tzinfo=timezone.utc
+        )
+        pub2 = self.factory.makeBinaryPackagePublishingHistory(
+            archive=archive,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(pub2).datepublished = datetime(
+            2026, 1, 2, tzinfo=timezone.utc
+        )
+        expected_order = [pub1, pub2, pub0]
+        self.assertEqual(
+            expected_order,
+            list(
+                archive.getAllPublishedBinaries(
+                    order_by=ArchivePublishingSort.PUBLISHED_DATE_DESC
+                )
+            ),
+        )
+
+    def test_order_by_published_date_ascending(self):
+        archive = self.factory.makeArchive()
+        pub0 = self.factory.makeBinaryPackagePublishingHistory(
+            archive=archive,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(pub0).datepublished = datetime(
+            2026, 1, 1, tzinfo=timezone.utc
+        )
+        pub1 = self.factory.makeBinaryPackagePublishingHistory(
+            archive=archive,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(pub1).datepublished = datetime(
+            2026, 1, 3, tzinfo=timezone.utc
+        )
+        pub2 = self.factory.makeBinaryPackagePublishingHistory(
+            archive=archive,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(pub2).datepublished = datetime(
+            2026, 1, 2, tzinfo=timezone.utc
+        )
+        expected_order = [pub0, pub2, pub1]
+        self.assertEqual(
+            expected_order,
+            list(
+                archive.getAllPublishedBinaries(
+                    order_by=ArchivePublishingSort.PUBLISHED_DATE_ASC
+                )
             ),
         )
 

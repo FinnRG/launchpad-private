@@ -114,6 +114,7 @@ from lp.services.fields import PersonChoice, StrippedTextLine
 from lp.services.webhooks.interfaces import IWebhookTarget
 from lp.soyuz.enums import (
     ArchivePublishingMethod,
+    ArchivePublishingSort,
     ArchivePurpose,
     ArchiveRepositoryFormat,
     PackagePublishingStatus,
@@ -644,6 +645,15 @@ class IArchiveSubscriberView(Interface):
             description=_("Return oldest results first."),
             required=False,
         ),
+        order_by=Choice(
+            title=_("Sort order"),
+            description=_(
+                "Sort order of the package publication. Can be either "
+                "ascending or descending of publication date."
+            ),
+            vocabulary=ArchivePublishingSort,
+            required=False,
+        ),
     )
     # Really ISourcePackagePublishingHistory, patched in
     # lp.soyuz.interfaces.webservice.
@@ -663,6 +673,7 @@ class IArchiveSubscriberView(Interface):
         component_name=None,
         order_by_date=False,
         order_by_date_ascending=False,
+        order_by=None,
     ):
         """All `ISourcePackagePublishingHistory` target to this archive."""
         # It loads additional related objects only needed in the API call
@@ -684,6 +695,7 @@ class IArchiveSubscriberView(Interface):
         only_unpublished=False,
         published_since=None,
         published_until=None,
+        order_by=None,
     ):
         """All `ISourcePackagePublishingHistory` target to this archive.
 
@@ -845,6 +857,15 @@ class IArchiveSubscriberView(Interface):
             description=_("Return oldest results first."),
             required=False,
         ),
+        order_by=Choice(
+            title=_("Sort order"),
+            description=_(
+                "Sort order of the package publication. Can be either "
+                "ascending or descending of publication date."
+            ),
+            vocabulary=ArchivePublishingSort,
+            required=False,
+        ),
         component_name=TextLine(title=_("Component name"), required=False),
     )
     # Really IBinaryPackagePublishingHistory, patched in
@@ -870,6 +891,7 @@ class IArchiveSubscriberView(Interface):
         only_unpublished=False,
         eager_load=False,
         component_name=None,
+        order_by=None,
     ):
         """All `IBinaryPackagePublishingHistory` target to this archive.
 

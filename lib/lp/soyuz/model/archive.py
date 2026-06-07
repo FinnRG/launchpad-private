@@ -121,6 +121,7 @@ from lp.soyuz.adapters.packagelocation import PackageLocation
 from lp.soyuz.enums import (
     ArchivePermissionType,
     ArchivePublishingMethod,
+    ArchivePublishingSort,
     ArchivePurpose,
     ArchiveRepositoryFormat,
     ArchiveStatus,
@@ -734,6 +735,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         component_name=None,
         published_since=None,
         published_until=None,
+        order_by=None,
     ):
         """See `IArchive`."""
         # 'eager_load' and 'include_removed' arguments are always True
@@ -753,6 +755,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             include_removed=True,
             published_since=published_since,
             published_until=published_until,
+            order_by=order_by,
         )
 
         def load_api_extra_objects(rows):
@@ -813,27 +816,46 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         only_unpublished=False,
         published_since=None,
         published_until=None,
+        order_by=None,
     ):
         """See `IArchive`."""
         clauses = [SourcePackagePublishingHistory.archive == self]
 
-        if order_by_date:
-            order_by = [
+        if order_by == ArchivePublishingSort.PUBLISHED_DATE_DESC:
+            order_by_list = [
+                Desc(SourcePackagePublishingHistory.datepublished),
+                Desc(SourcePackagePublishingHistory.id),
+            ]
+        elif order_by == ArchivePublishingSort.PUBLISHED_DATE_ASC:
+            order_by_list = [
+                Asc(SourcePackagePublishingHistory.datepublished),
+                Asc(SourcePackagePublishingHistory.id),
+            ]
+        elif order_by_date:
+            order_by_list = [
                 Desc(SourcePackagePublishingHistory.datecreated),
                 Desc(SourcePackagePublishingHistory.id),
             ]
         elif order_by_date_ascending:
-            order_by = [
+            order_by_list = [
                 Asc(SourcePackagePublishingHistory.datecreated),
                 Asc(SourcePackagePublishingHistory.id),
             ]
         else:
-            order_by = [
+            order_by_list = [
                 SourcePackageName.name,
                 Desc(SourcePackagePublishingHistory.id),
             ]
 
-        if not (order_by_date or order_by_date_ascending) or name is not None:
+        if (
+            not (
+                order_by_date
+                or order_by_date_ascending
+                or order_by == ArchivePublishingSort.PUBLISHED_DATE_DESC
+                or order_by == ArchivePublishingSort.PUBLISHED_DATE_ASC
+            )
+            or name is not None
+        ):
             clauses.append(
                 SourcePackagePublishingHistory.sourcepackagename_id
                 == SourcePackageName.id
@@ -851,7 +873,12 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                 clauses.append(SourcePackageName.name.is_in(name))
 
         if (
-            not (order_by_date or order_by_date_ascending)
+            not (
+                order_by_date
+                or order_by_date_ascending
+                or order_by == ArchivePublishingSort.PUBLISHED_DATE_DESC
+                or order_by == ArchivePublishingSort.PUBLISHED_DATE_ASC
+            )
             or version is not None
         ):
             clauses.append(
@@ -869,8 +896,15 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                 Cast(SourcePackageRelease.version, "text")
                 == six.ensure_text(version)
             )
-        elif not (order_by_date or order_by_date_ascending):
-            order_by.insert(1, Desc(SourcePackageRelease.version))
+        elif not (
+            order_by_date
+            or order_by_date_ascending
+            or order_by == ArchivePublishingSort.PUBLISHED_DATE_DESC
+            or order_by == ArchivePublishingSort.PUBLISHED_DATE_ASC
+        ):
+            order_by_list.insert(1, Desc(SourcePackageRelease.version))
+
+        order_by = order_by_list
 
         if component_name is not None:
             clauses.extend(
@@ -1155,6 +1189,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         component_name=None,
         published_since=None,
         published_until=None,
+        order_by=None,
     ):
         """Base clauses for binary publishing queries.
 
@@ -1162,21 +1197,36 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         """
         clauses = [BinaryPackagePublishingHistory.archive == self]
 
-        if order_by_date or order_by_date_ascending:
+        if (
+            order_by_date
+            or order_by_date_ascending
+            or order_by == ArchivePublishingSort.PUBLISHED_DATE_DESC
+            or order_by == ArchivePublishingSort.PUBLISHED_DATE_ASC
+        ):
             ordered = False
 
-        if order_by_date:
-            order_by = [
+        if order_by == ArchivePublishingSort.PUBLISHED_DATE_DESC:
+            order_by_list = [
+                Desc(BinaryPackagePublishingHistory.datepublished),
+                Desc(BinaryPackagePublishingHistory.id),
+            ]
+        elif order_by == ArchivePublishingSort.PUBLISHED_DATE_ASC:
+            order_by_list = [
+                Asc(BinaryPackagePublishingHistory.datepublished),
+                Asc(BinaryPackagePublishingHistory.id),
+            ]
+        elif order_by_date:
+            order_by_list = [
                 Desc(BinaryPackagePublishingHistory.datecreated),
                 Desc(BinaryPackagePublishingHistory.id),
             ]
         elif order_by_date_ascending:
-            order_by = [
+            order_by_list = [
                 Asc(BinaryPackagePublishingHistory.datecreated),
                 Asc(BinaryPackagePublishingHistory.id),
             ]
         elif ordered:
-            order_by = [
+            order_by_list = [
                 BinaryPackageName.name,
                 Desc(BinaryPackagePublishingHistory.id),
             ]
@@ -1184,7 +1234,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             # Strictly speaking, this is ordering, but it's an indexed
             # ordering so it will be quick.  It's needed so that we can
             # batch results on the webservice.
-            order_by = [Desc(BinaryPackagePublishingHistory.id)]
+            order_by_list = [Desc(BinaryPackagePublishingHistory.id)]
 
         if ordered or name is not None:
             clauses.append(
@@ -1216,7 +1266,9 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                 == six.ensure_text(version)
             )
         elif ordered:
-            order_by.insert(1, Desc(BinaryPackageRelease.version))
+            order_by_list.insert(1, Desc(BinaryPackageRelease.version))
+
+        order_by = order_by_list
 
         if status is not None:
             try:
@@ -1292,6 +1344,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         component_name=None,
         published_since=None,
         published_until=None,
+        order_by=None,
     ):
         """See `IArchive`."""
         # Circular imports.
@@ -1314,6 +1367,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             component_name=component_name,
             published_since=published_since,
             published_until=published_until,
+            order_by=order_by,
         )
 
         result = (

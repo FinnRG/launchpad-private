@@ -1051,6 +1051,84 @@ class TestGetPublishedBinaries(TestCaseWithFactory):
         self.assertEqual(200, response.status)
         self.assertEqual(2, response.jsonBody()["total_size"])
 
+    def test_getPublishedBinaries_order_by_published_descending(self):
+        now = datetime.now(timezone.utc)
+        pub0 = self.factory.makeBinaryPackagePublishingHistory(
+            archive=self.archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub0).datepublished = now - timedelta(days=2)
+        pub1 = self.factory.makeBinaryPackagePublishingHistory(
+            archive=self.archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub1).datepublished = now - timedelta(days=1)
+        pub2 = self.factory.makeBinaryPackagePublishingHistory(
+            archive=self.archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub2).datepublished = now
+
+        pub0_id = removeSecurityProxy(pub0).id
+        pub1_id = removeSecurityProxy(pub1).id
+        pub2_id = removeSecurityProxy(pub2).id
+
+        ws = webservice_for_person(self.person, default_api_version="beta")
+        response = ws.named_get(
+            self.archive_url,
+            "getPublishedBinaries",
+            order_by="published_date_desc",
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual(3, response.jsonBody()["total_size"])
+        entries = response.jsonBody()["entries"]
+        self.assertEqual(3, len(entries))
+        self.assertTrue(
+            entries[0]["self_link"].endswith(f"+binarypub/{pub2_id}")
+        )
+        self.assertTrue(
+            entries[1]["self_link"].endswith(f"+binarypub/{pub1_id}")
+        )
+        self.assertTrue(
+            entries[2]["self_link"].endswith(f"+binarypub/{pub0_id}")
+        )
+
+    def test_getPublishedBinaries_order_by_published_ascending(self):
+        now = datetime.now(timezone.utc)
+        pub0 = self.factory.makeBinaryPackagePublishingHistory(
+            archive=self.archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub0).datepublished = now - timedelta(days=2)
+        pub1 = self.factory.makeBinaryPackagePublishingHistory(
+            archive=self.archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub1).datepublished = now - timedelta(days=1)
+        pub2 = self.factory.makeBinaryPackagePublishingHistory(
+            archive=self.archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub2).datepublished = now
+
+        pub0_id = removeSecurityProxy(pub0).id
+        pub1_id = removeSecurityProxy(pub1).id
+        pub2_id = removeSecurityProxy(pub2).id
+
+        ws = webservice_for_person(self.person, default_api_version="beta")
+        response_asc = ws.named_get(
+            self.archive_url,
+            "getPublishedBinaries",
+            order_by="published_date_asc",
+        )
+        self.assertEqual(200, response_asc.status)
+        self.assertEqual(3, response_asc.jsonBody()["total_size"])
+        entries_asc = response_asc.jsonBody()["entries"]
+        self.assertEqual(3, len(entries_asc))
+        self.assertTrue(
+            entries_asc[0]["self_link"].endswith(f"+binarypub/{pub0_id}")
+        )
+        self.assertTrue(
+            entries_asc[1]["self_link"].endswith(f"+binarypub/{pub1_id}")
+        )
+        self.assertTrue(
+            entries_asc[2]["self_link"].endswith(f"+binarypub/{pub2_id}")
+        )
+
     def test_getPublishedBinaries_query_count(self):
         # getPublishedBinaries has a query count constant in the number of
         # packages returned.
