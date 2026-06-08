@@ -870,20 +870,9 @@ def _do_direct_copy(
             packageupload=packageupload,
         )
         if close_bugs:
-            try:
-                close_bugs_for_sourcepublication(
-                    source_copy, close_bugs_since_version
-                )
-            except Exception:
-                # Bug-closing is best-effort: any failure must not abort the
-                # whole copy job
-                if logger is not None:
-                    logger.warning(
-                        "Failed to close bugs for %s; the copy will proceed "
-                        "anyway",
-                        source_copy.displayname,
-                        exc_info=True,
-                    )
+            close_bugs_for_sourcepublication(
+                source_copy, close_bugs_since_version
+            )
         copies.append(source_copy)
     else:
         source_copy = source_in_destination.first()
