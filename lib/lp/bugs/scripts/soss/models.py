@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 from packaging.version import Version
@@ -94,15 +94,23 @@ class SOSSRecord(SVTRecord):
     class Package:
         name: str
         channel: "SOSSRecord.Channel"
-        repositories: List[str]
+        repositories: Tuple[str, ...]
         status: "SOSSRecord.PackageStatusEnum"
         note: str
 
+        def __post_init__(self):
+            # Normalize to tuple to preserve immutability from
+            # ImmutablePgJSON (which returns tuples for JSON arrays).
+            if not isinstance(self.repositories, tuple):
+                self.repositories = tuple(self.repositories)
+
         def to_dict(self) -> Dict[str, Any]:
+            # Convert tuple back to list for YAML serialization (tuples
+            # would serialize as !!python/tuple instead of plain lists).
             return {
                 "Name": self.name,
                 "Channel": str(self.channel),
-                "Repositories": self.repositories,
+                "Repositories": list(self.repositories),
                 "Status": self.status.value,
                 "Note": self.note,
             }

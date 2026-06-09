@@ -23,7 +23,6 @@ from itertools import chain, repeat
 from operator import attrgetter, itemgetter
 
 from lazr.lifecycle.event import ObjectDeletedEvent
-from storm.databases.postgres import JSON
 from storm.expr import (
     SQL,
     And,
@@ -122,6 +121,7 @@ from lp.services.database.sqlbase import (
     sqlvalues,
 )
 from lp.services.database.stormbase import StormBase
+from lp.services.database.stormexpr import ImmutablePgJSON
 from lp.services.helpers import shortlist
 from lp.services.propertycache import get_property_cache
 from lp.services.searchbuilder import any
@@ -653,9 +653,9 @@ class BugTask(StormBase):
         default=None,
     )
 
-    channel = JSON(name="channel", allow_none=True, default=None)
+    channel = ImmutablePgJSON(name="channel", allow_none=True, default=None)
 
-    metadata = JSON(name="metadata", allow_none=True, default=None)
+    metadata = ImmutablePgJSON(name="metadata", allow_none=True, default=None)
 
     distribution_id = Int(name="distribution", allow_none=True)
     distribution = Reference(distribution_id, "Distribution.id")
