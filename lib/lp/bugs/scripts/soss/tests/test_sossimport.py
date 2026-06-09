@@ -79,7 +79,7 @@ class TestSOSSImporter(TestCaseWithFactory):
                 ),
                 BugTaskStatus.INVALID,
                 "",
-                {"repositories": ["nvidia-pb3-python-stable-local"]},
+                {"repositories": ("nvidia-pb3-python-stable-local",)},
             ),
             (
                 self.soss.getExternalPackage(
@@ -89,7 +89,7 @@ class TestSOSSImporter(TestCaseWithFactory):
                 ),
                 BugTaskStatus.DEFERRED,
                 "2.22.0+soss.1",
-                {"repositories": ["nvidia-pb3-python-stable-local"]},
+                {"repositories": ("nvidia-pb3-python-stable-local",)},
             ),
             (
                 self.soss.getExternalPackage(
@@ -99,7 +99,7 @@ class TestSOSSImporter(TestCaseWithFactory):
                 ),
                 BugTaskStatus.INVALID,
                 "2.22.0+soss.1",
-                {"repositories": ["nvidia-pb3-python-stable-local"]},
+                {"repositories": ("nvidia-pb3-python-stable-local",)},
             ),
             (
                 self.soss.getExternalPackage(
@@ -109,7 +109,7 @@ class TestSOSSImporter(TestCaseWithFactory):
                 ),
                 BugTaskStatus.FIXRELEASED,
                 "2.22.0+soss.1",
-                {"repositories": ["nvidia-pb3-python-stable-local"]},
+                {"repositories": ("nvidia-pb3-python-stable-local",)},
             ),
             (
                 self.soss.getExternalPackage(
@@ -119,7 +119,7 @@ class TestSOSSImporter(TestCaseWithFactory):
                 ),
                 BugTaskStatus.NEW,
                 "",
-                {"repositories": ["soss-src-stable-local"]},
+                {"repositories": ("soss-src-stable-local",)},
             ),
             (
                 self.soss.getExternalPackage(
@@ -129,7 +129,7 @@ class TestSOSSImporter(TestCaseWithFactory):
                 ),
                 BugTaskStatus.UNKNOWN,
                 "",
-                {"repositories": ["soss-src-stable-local"]},
+                {"repositories": ("soss-src-stable-local",)},
             ),
         ]
 
@@ -381,7 +381,7 @@ class TestSOSSImporter(TestCaseWithFactory):
                 ),
                 BugTaskStatus.DEFERRED,
                 "2.22.0+soss.1",
-                {"repositories": ["nvidia-pb3-python-stable-local"]},
+                {"repositories": ("nvidia-pb3-python-stable-local",)},
             ),
             (
                 self.soss.getExternalPackage(
@@ -391,7 +391,7 @@ class TestSOSSImporter(TestCaseWithFactory):
                 ),
                 BugTaskStatus.DEFERRED,  # Changed status
                 "test note",  # Changed note
-                {"repositories": ["test-repo"]},  # Changed repo
+                {"repositories": ("test-repo",)},  # Changed repo
             ),
             (
                 self.soss.getExternalPackage(
@@ -401,7 +401,7 @@ class TestSOSSImporter(TestCaseWithFactory):
                 ),
                 BugTaskStatus.NEW,
                 "",
-                {"repositories": ["soss-src-stable-local"]},
+                {"repositories": ("soss-src-stable-local",)},
             ),
             (
                 self.soss.getExternalPackage(
@@ -411,7 +411,7 @@ class TestSOSSImporter(TestCaseWithFactory):
                 ),
                 BugTaskStatus.UNKNOWN,
                 "",
-                {"repositories": ["soss-src-stable-local"]},
+                {"repositories": ("soss-src-stable-local",)},
             ),
         ]
 
