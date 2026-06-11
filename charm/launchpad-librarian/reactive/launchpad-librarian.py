@@ -79,6 +79,7 @@ def config_files():
     "config.set.port_upload_base",
     "launchpad.db.configured",
     "session-db.master.available",
+    "launchpad.storage.available",
 )
 @when_not("service.configured")
 def configure():
