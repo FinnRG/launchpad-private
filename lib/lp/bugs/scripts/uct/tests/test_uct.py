@@ -14,7 +14,12 @@ from zope.security.proxy import removeSecurityProxy
 from lp.app.enums import InformationType
 from lp.app.interfaces.launchpad import ILaunchpadCelebrities
 from lp.bugs.enums import VulnerabilityStatus
-from lp.bugs.interfaces.bugtask import BugTaskImportance, BugTaskStatus
+from lp.bugs.interfaces.bug import CreateBugParams, IBugSet
+from lp.bugs.interfaces.bugtask import (
+    BugTaskImportance,
+    BugTaskStatus,
+    IBugTaskSet,
+)
 from lp.bugs.model.bug import Bug
 from lp.bugs.model.bugtask import BugTask
 from lp.bugs.scripts.uct import (
@@ -2295,6 +2300,189 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         self.assertEqual(BugTaskImportance.HIGH, ppa_series_task.importance)
         self.assertEqual(BugTaskStatus.FIXRELEASED, ppa_series_task.status)
         self.assertEqual("1.2.3-4ubuntu5", ppa_series_task.status_explanation)
+
+    def test_create_bug_tasks_with_empty_lists(self):
+        """_create_bug_tasks handles empty package lists gracefully."""
+        # Create a bug with one initial task
+        initial_package = self.cve.distro_packages[0]
+        bug = removeSecurityProxy(
+            getUtility(IBugSet).createBug(
+                CreateBugParams(
+                    comment="test bug",
+                    title="CVE-2022-TEST",
+                    information_type=InformationType.PUBLICSECURITY,
+                    owner=self.bug_importer,
+                    target=initial_package.target,
+                    importance=initial_package.importance,
+                    cve=self.lp_cve,
+                    check_permissions=False,
+                )
+            )
+        )
+
+        initial_count = len(bug.bugtasks)
+
+        # Call _create_bug_tasks with all empty lists
+        self.importer._create_bug_tasks(
+            bug,
+            distro_packages=[],
+            series_packages=[],
+            upstream_packages=[],
+            ppa_packages=[],
+            ppa_series_packages=[],
+        )
+
+        # Should not crash, and no new tasks should be created
+        self.assertEqual(initial_count, len(bug.bugtasks))
+
+    def test_create_bug_tasks_batch_create(self):
+        """_create_bug_tasks calls createManyTasks exactly once with all
+        targets, and all expected bugtasks exist afterwards."""
+        initial_package = self.cve.distro_packages[0]
+        bug = removeSecurityProxy(
+            getUtility(IBugSet).createBug(
+                CreateBugParams(
+                    comment="test bug",
+                    title="CVE-2022-TEST",
+                    information_type=InformationType.PUBLICSECURITY,
+                    owner=self.bug_importer,
+                    target=initial_package.target,
+                    importance=initial_package.importance,
+                    cve=self.lp_cve,
+                    check_permissions=False,
+                )
+            )
+        )
+
+        # Pass all remaining packages from self.cve (the first distro package
+        # is already the bug's initial target, so only pass the rest).
+        remaining_distro = self.cve.distro_packages[1:]
+        series_packages = self.cve.series_packages
+        upstream_packages = self.cve.upstream_packages
+        ppa_packages = self.cve.ppa_packages
+        ppa_series_packages = self.cve.ppa_series_packages
+
+        expected_targets = (
+            [p.target for p in remaining_distro]
+            + [p.target for p in series_packages]
+            + [p.target for p in upstream_packages]
+            + [p.target for p in ppa_packages]
+            + [p.target for p in ppa_series_packages]
+        )
+
+        real_bug_task_set = getUtility(IBugTaskSet)
+        bug_task_set_spy = Mock(wraps=real_bug_task_set)
+        real_get_utility = getUtility
+
+        def patched_get_utility(interface):
+            if interface is IBugTaskSet:
+                return bug_task_set_spy
+            return real_get_utility(interface)
+
+        with patch(
+            "lp.bugs.scripts.uct.uctimport.getUtility",
+            side_effect=patched_get_utility,
+        ):
+            self.importer._create_bug_tasks(
+                bug,
+                distro_packages=remaining_distro,
+                series_packages=series_packages,
+                upstream_packages=upstream_packages,
+                ppa_packages=ppa_packages,
+                ppa_series_packages=ppa_series_packages,
+            )
+
+        # createManyTasks must be called exactly once, not once per target.
+        bug_task_set_spy.createManyTasks.assert_called_once()
+        actual_targets = bug_task_set_spy.createManyTasks.call_args.args[2]
+        self.assertEqual(expected_targets, actual_targets)
+
+        # The real call went through: every expected target now has a bugtask.
+        bug_task_targets = {t.target for t in bug.bugtasks}
+        for target in expected_targets:
+            self.assertIn(target, bug_task_targets)
+
+    def test_create_bug_tasks_raises_on_duplicate_inputs(self):
+        """_create_bug_tasks raises UCTImportError when the same target
+        appears more than once across the input package lists."""
+        shared_target = SourcePackage(
+            sourcepackagename=self.ubuntu_package.sourcepackagename,
+            distroseries=self.ubuntu_supported_series,
+        )
+        unique_target = SourcePackage(
+            sourcepackagename=self.ubuntu_package.sourcepackagename,
+            distroseries=self.ubuntu_current_series,
+        )
+
+        # Same target appears in both series_packages and ppa_series_packages
+        series_packages = [
+            CVE.SeriesPackage(
+                target=shared_target,
+                package_name=self.ubuntu_package.sourcepackagename,
+                importance=BugTaskImportance.HIGH,
+                status=BugTaskStatus.FIXRELEASED,
+                status_explanation="fix",
+            )
+        ]
+        ppa_series_packages = [
+            CVE.PPASeriesPackage(
+                target=shared_target,
+                package_name=self.ubuntu_package.sourcepackagename,
+                importance=BugTaskImportance.HIGH,
+                status=BugTaskStatus.FIXRELEASED,
+                status_explanation="fix",
+            ),
+            CVE.PPASeriesPackage(
+                target=unique_target,
+                package_name=self.ubuntu_package.sourcepackagename,
+                importance=BugTaskImportance.HIGH,
+                status=BugTaskStatus.FIXRELEASED,
+                status_explanation="fix",
+            ),
+        ]
+
+        bug = self.factory.makeBug()
+
+        with self.expectedLog("Duplicate targets detected"):
+            error = self.assertRaises(
+                UCTImportError,
+                self.importer._create_bug_tasks,
+                bug,
+                [],
+                series_packages,
+                [],
+                [],
+                ppa_series_packages,
+            )
+
+        self.assertIn("Duplicate targets", str(error))
+        self.assertIn(shared_target.bugtargetdisplayname, str(error))
+
+    def test_create_bug_tasks_skips_existing_targets(self):
+        """_create_bug_tasks calling the same targets as existing bug tasks is
+        a silent no-op, not an error.
+
+        Targets that already have a bug task are loaded into seen_targets
+        before the loop runs, so they are never classified as duplicates.
+        """
+        bug, _ = self.importer.create_bug(self.cve, self.lp_cve)
+
+        initial_task_ids = {t.id for t in bug.bugtasks}
+        initial_count = len(initial_task_ids)
+
+        # Re-running with the same packages must not raise and must not create
+        # any new tasks.
+        self.importer._create_bug_tasks(
+            bug,
+            distro_packages=self.cve.distro_packages,
+            series_packages=self.cve.series_packages,
+            upstream_packages=self.cve.upstream_packages,
+            ppa_packages=self.cve.ppa_packages,
+            ppa_series_packages=self.cve.ppa_series_packages,
+        )
+
+        self.assertEqual(initial_count, len(bug.bugtasks))
+        self.assertEqual(initial_task_ids, {t.id for t in bug.bugtasks})
 
     def test_import_cve_with_only_ppa_packages_not_aborted(self):
         """import_cve doesn't abort when CVE has only PPA packages.
