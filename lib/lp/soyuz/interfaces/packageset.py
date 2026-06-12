@@ -337,10 +337,13 @@ class IPackagesetEdit(Interface):
 
         This method facilitates the addition of source package names to
         package sets via the LP web services API. It takes string names
-        as opposed to `ISourcePackageName` instances. Non-existing source
-        package names will be ignored.
+        as opposed to `ISourcePackageName` instances. Source package
+        names that have not previously been seen by Launchpad will be
+        created.
 
         :param names: an iterable with string source package names
+        :raises InvalidName: if any name is not a valid source package
+            name and no `SourcePackageName` row already exists for it.
         """
 
     @operation_parameters(

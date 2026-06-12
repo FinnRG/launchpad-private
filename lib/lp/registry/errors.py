@@ -58,6 +58,7 @@ class NameAlreadyTaken(Exception):
     """The name given for a person is already in use by other person."""
 
 
+@error_status(http.client.BAD_REQUEST)
 class InvalidName(Exception):
     """The name given for a person is not valid."""
 

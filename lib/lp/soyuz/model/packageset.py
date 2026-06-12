@@ -311,8 +311,13 @@ class Packageset(StormBase):
         """See `IPackageset`."""
         if isinstance(names, str):
             names = [six.ensure_text(names, "ASCII")]
-        clauses = (SourcePackageName, SourcePackageName.name.is_in(names))
-        self._api_add_or_remove(clauses, self._addSourcePackageNames)
+        sourcepackagenameset = getUtility(ISourcePackageNameSet)
+        source_names = [
+            sourcepackagenameset.getOrCreateByName(name) for name in names
+        ]
+        if source_names:
+            store = IPrimaryStore(Packageset)
+            self._addSourcePackageNames(source_names, store)
 
     def removeSources(self, names):
         """See `IPackageset`."""

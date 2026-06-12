@@ -153,19 +153,22 @@ Populate the 'umbrella' package set with source packages.
     HTTP/1.1 200 Ok
     ...
 
-Note that attempts to add or remove source package names that do not
-exist will not fail. Non-existing source package names are *ignored*.
+Source package names that have not previously been seen by Launchpad are
+created on the fly when added.  However, names that are not valid source
+package names are rejected.
 
     >>> response = webservice.named_post(
     ...     "/package-sets/ubuntu/hoary/umbrella",
     ...     "addSources",
     ...     {},
-    ...     names=["does-not-exist"],
+    ...     names=["Invalid Name"],
     ... )
     >>> print(response)
-    HTTP/1.1 200 Ok
+    HTTP/1.1 400 Bad Request
     ...
-    null
+
+Attempts to remove source package names that do not exist will not fail.
+Non-existing source package names are ignored.
 
     >>> response = webservice.named_post(
     ...     "/package-sets/ubuntu/hoary/umbrella",
