@@ -6,9 +6,10 @@
 from zope.component import getUtility
 from zope.security.interfaces import Unauthorized
 
-from lp.registry.errors import NoSuchSourcePackageName
+from lp.registry.errors import InvalidName, NoSuchSourcePackageName
 from lp.registry.interfaces.distribution import IDistributionSet
 from lp.registry.interfaces.series import SeriesStatus
+from lp.registry.interfaces.sourcepackagename import ISourcePackageNameSet
 from lp.services.database.interfaces import IStore
 from lp.soyuz.enums import ArchivePermissionType
 from lp.soyuz.interfaces.archivepermission import IArchivePermissionSet
@@ -167,6 +168,29 @@ class TestPackagesetSet(TestCaseWithFactory):
         packageset.addSources([package.name])
         self.assertEqual(
             {}, self.ps_set.getForPackages(series, [other_package.id])
+        )
+
+    def test_addSources_creates_missing_sourcepackagename(self):
+        # addSources creates a SourcePackageName row for any name that
+        # Launchpad has not seen before, so callers no longer need to
+        # arrange for the name to exist first.
+        packageset = self.factory.makePackageset()
+        spn_set = getUtility(ISourcePackageNameSet)
+        new_name = self.factory.getUniqueString("new-source")
+        self.assertIsNone(spn_set.queryByName(new_name))
+
+        packageset.addSources([new_name])
+
+        created = spn_set.queryByName(new_name)
+        self.assertIsNotNone(created)
+        self.assertContentEqual([new_name], packageset.getSourcesIncluded())
+
+    def test_addSources_rejects_invalid_new_name(self):
+        # Names that are not valid source package names and that do
+        # not already exist are rejected with InvalidName.
+        packageset = self.factory.makePackageset()
+        self.assertRaises(
+            InvalidName, packageset.addSources, ["Not A Valid Name"]
         )
 
     def test_getByOwner(self):
