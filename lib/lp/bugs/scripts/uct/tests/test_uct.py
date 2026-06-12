@@ -36,6 +36,10 @@ from lp.bugs.scripts.uct.subprojects import PPAReference, SubProjectPPAs
 from lp.registry.interfaces.distribution import IDistributionSet
 from lp.registry.interfaces.distroseries import IDistroSeriesSet
 from lp.registry.interfaces.series import SeriesStatus
+from lp.registry.model.archivesourcepackage import ArchiveSourcePackage
+from lp.registry.model.archivesourcepackageseries import (
+    ArchiveSourcePackageSeries,
+)
 from lp.registry.model.sourcepackage import SourcePackage
 from lp.services.propertycache import clear_property_cache
 from lp.testing import TestCase, TestCaseWithFactory
@@ -2504,6 +2508,72 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         self.assertIsNotNone(vulnerability)
         self.assertTrue(created)
 
+    def test_create_bug_with_unpublished_ppa_packages(self):
+        """UCT import can create bugtasks for unpublished PPA packages.
+
+        This test verifies that the UCT importer passes
+        check_ppa_source_package=False to allow creating bugtasks for PPA
+        packages that haven't been published yet, which is needed for
+        security workflows where tasks are created before packages are ready.
+        """
+        # Create PPA without any publications
+        ppa = self.factory.makeArchive()
+        spn = self.factory.makeSourcePackageName()
+        distroseries = self.factory.makeDistroSeries(
+            distribution=ppa.distribution
+        )
+
+        # Create unpublished archive source packages (no publications)
+        asp = ArchiveSourcePackage(ppa, spn)
+        asps = ArchiveSourcePackageSeries(ppa, distroseries, spn)
+
+        # Create a CVE with unpublished PPA packages
+        # Use the existing CVE setup but add unpublished PPA packages
+        cve = copy.copy(self.cve)
+        # Add a PPA package (not series) to test unpublished package creation
+        cve.ppa_packages = list(cve.ppa_packages) + [
+            CVE.PPAPackage(
+                target=asp,
+                package_name=spn,
+                importance=BugTaskImportance.HIGH,
+                tags=set(),
+            )
+        ]
+        # Also add a series package for the same package name
+        cve.ppa_series_packages = list(cve.ppa_series_packages) + [
+            CVE.PPASeriesPackage(
+                target=asps,
+                package_name=spn,
+                importance=BugTaskImportance.HIGH,
+                status=BugTaskStatus.FIXRELEASED,
+                status_explanation="fixed in unpublished package",
+            )
+        ]
+
+        # This should succeed even though the PPA packages aren't published
+        bug, vulnerability, created = self.importer.import_cve(cve)
+
+        self.assertIsNotNone(bug)
+        self.assertIsNotNone(vulnerability)
+        self.assertTrue(created)
+
+        # Verify the unpublished PPA package tasks were created
+        bug_tasks_by_target = {t.target: t for t in bug.bugtasks}
+        self.assertIn(asp, bug_tasks_by_target)
+        self.assertIn(asps, bug_tasks_by_target)
+
+        # Verify the package task was created
+        asp_task = bug_tasks_by_target[asp]
+        self.assertIsNotNone(asp_task)
+
+        # Verify the series task properties
+        asps_task = bug_tasks_by_target[asps]
+        self.assertEqual(BugTaskImportance.HIGH, asps_task.importance)
+        self.assertEqual(BugTaskStatus.FIXRELEASED, asps_task.status)
+        self.assertEqual(
+            "fixed in unpublished package", asps_task.status_explanation
+        )
+
     def test_make_from_uct_record_with_subprojects(self):
         """make_from_uct_record populates ppa_packages/ppa_series_packages."""
         subprojects = {
@@ -2579,6 +2649,104 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         )
         self.assertEqual(BugTaskStatus.FIXRELEASED, ppa_series_pkg.status)
         self.assertEqual("fixed", ppa_series_pkg.status_explanation)
+
+    def test_full_import_with_unpublished_ppa_package(self):
+        """Test importing packages not yet published in a PPA.
+
+        Verifies the complete flow:
+            - UCT record
+            - make_from_uct_record
+            - import_cve
+            - bug tasks
+        for a package that has no publication in the target archive.
+        """
+        # Create a PPA with no publications for our test package
+        ppa_owner = self.factory.makePerson()
+        ppa = self.factory.makeArchive(
+            distribution=self.ubuntu,
+            owner=ppa_owner,
+            name="test-security",
+        )
+        spn = self.factory.makeSourcePackageName()
+        # Deliberately no publication created for spn in ppa
+
+        subprojects = {
+            "test-security/focal": SubProjectPPAs(
+                ubuntu_series="focal",
+                ppa=PPAReference(
+                    owner=ppa_owner.name,
+                    archive=ppa.name,
+                    pocket="security",
+                ),
+            ),
+        }
+
+        uct_record = UCTRecord(
+            parent_dir="active",
+            assigned_to=None,
+            bugs=[],
+            cvss={},
+            candidate="CVE-2022-23222",
+            crd=None,
+            public_date_at_USN=None,
+            public_date=datetime(2022, 1, 14, 8, 15, tzinfo=timezone.utc),
+            description="description",
+            discovered_by="",
+            mitigation=None,
+            notes="",
+            priority=UCTRecord.Priority.HIGH,
+            priority_explanation="",
+            references=[],
+            ubuntu_description="",
+            packages=[
+                UCTRecord.Package(
+                    name=spn.name,
+                    statuses=[
+                        UCTRecord.SeriesPackageStatus(
+                            series="test-security/focal",
+                            status=UCTRecord.PackageStatus.NEEDED,
+                            reason="not fixed yet",
+                            priority=UCTRecord.Priority.HIGH,
+                        ),
+                    ],
+                    priority=UCTRecord.Priority.HIGH,
+                    tags=set(),
+                    patches=[],
+                ),
+            ],
+            global_tags=set(),
+        )
+
+        # make_from_uct_record includes the unpublished package
+        cve = CVE.make_from_uct_record(uct_record, subprojects=subprojects)
+
+        self.assertEqual(1, len(cve.ppa_packages))
+        self.assertEqual(1, len(cve.ppa_series_packages))
+        self.assertEqual(ppa, cve.ppa_packages[0].target.archive)
+        self.assertEqual(spn, cve.ppa_packages[0].package_name)
+        self.assertEqual(
+            self.ubuntu_supported_series,
+            cve.ppa_series_packages[0].target.distroseries,
+        )
+        self.assertEqual(BugTaskStatus.NEW, cve.ppa_series_packages[0].status)
+
+        # import_cve creates bug tasks for the unpublished package
+        bug, vulnerability, created = self.importer.import_cve(cve)
+
+        self.assertIsNotNone(bug)
+        self.assertIsNotNone(vulnerability)
+        self.assertTrue(created)
+
+        bug_tasks_by_target = {t.target: t for t in bug.bugtasks}
+        ppa_pkg_target = cve.ppa_packages[0].target
+        ppa_series_target = cve.ppa_series_packages[0].target
+
+        self.assertIn(ppa_pkg_target, bug_tasks_by_target)
+        self.assertIn(ppa_series_target, bug_tasks_by_target)
+
+        ppa_series_task = bug_tasks_by_target[ppa_series_target]
+        self.assertEqual(BugTaskStatus.NEW, ppa_series_task.status)
+        self.assertEqual("not fixed yet", ppa_series_task.status_explanation)
 
     def test_per_series_priority_round_trip(self):
         """Test that per-series priorities are preserved in round-trip."""

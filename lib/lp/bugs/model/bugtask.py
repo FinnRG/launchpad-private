@@ -413,7 +413,11 @@ def validate_assignee(self, attr, value):
 
 
 def validate_target(
-    bug, target, retarget_existing=True, check_source_package=True
+    bug,
+    target,
+    retarget_existing=True,
+    check_source_package=True,
+    check_ppa_source_package=True,
 ):
     """Validate a bugtask target against a bug's existing tasks.
 
@@ -424,6 +428,9 @@ def validate_target(
     enforce this. However, when using the UI, this check is done during the
     validation stage of form submission and we don't want to do it again since
     it uses an expensive query. So 'check_source_package' can be set to False.
+
+    Similarly, 'check_ppa_source_package' controls validation for PPA (archive)
+    source packages separately from distribution packages.
     """
     if bug.getBugTask(target):
         raise IllegalTarget(
@@ -450,7 +457,7 @@ def validate_target(
                 "bug tasks."
             )
         # Check that the source package has been published in the archive.
-        if check_source_package and target.sourcepackagename is not None:
+        if check_ppa_source_package and target.sourcepackagename is not None:
             # For archive source packages, verify the package exists in the
             # archive
             archive_package = target.archive.getArchiveSourcePackage(
@@ -521,7 +528,9 @@ def validate_target(
             )
 
 
-def validate_new_target(bug, target, check_source_package=True):
+def validate_new_target(
+    bug, target, check_source_package=True, check_ppa_source_package=True
+):
     """Validate a bugtask target to be added.
 
     Make sure that the isn't already a distribution task without a
@@ -592,6 +601,7 @@ def validate_new_target(bug, target, check_source_package=True):
         target,
         retarget_existing=False,
         check_source_package=check_source_package,
+        check_ppa_source_package=check_ppa_source_package,
     )
 
 
@@ -1476,7 +1486,9 @@ class BugTask(StormBase):
 
         self.assignee = assignee
 
-    def validateTransitionToTarget(self, target, check_source_package=True):
+    def validateTransitionToTarget(
+        self, target, check_source_package=True, check_ppa_source_package=True
+    ):
         """See `IBugTask`."""
         from lp.registry.model.distroseries import DistroSeries
 
@@ -1548,7 +1560,10 @@ class BugTask(StormBase):
                     )
 
         validate_target(
-            self.bug, target, check_source_package=check_source_package
+            self.bug,
+            target,
+            check_source_package=check_source_package,
+            check_ppa_source_package=check_ppa_source_package,
         )
 
     def transitionToTarget(
@@ -2142,6 +2157,7 @@ class BugTaskSet:
         assignee=None,
         milestone=None,
         metadata=None,
+        check_ppa_source_package=True,
     ):
         """See `IBugTaskSet`."""
         if status is None:
@@ -2153,7 +2169,11 @@ class BugTaskSet:
         bug_target_parents = set()
         for target in targets:
             if validate_target:
-                validate_new_target(bug, target)
+                validate_new_target(
+                    bug,
+                    target,
+                    check_ppa_source_package=check_ppa_source_package,
+                )
             bug_target_parents.add(target.bug_target_parent)
             target_keys.append(bug_target_to_key(target))
 
@@ -2225,6 +2245,7 @@ class BugTaskSet:
         assignee=None,
         milestone=None,
         metadata=None,
+        check_ppa_source_package=True,
     ):
         """See `IBugTaskSet`."""
         # Create tasks for accepted nominations if this is a source
@@ -2284,6 +2305,7 @@ class BugTaskSet:
             assignee=assignee,
             milestone=milestone,
             metadata=metadata,
+            check_ppa_source_package=check_ppa_source_package,
         )
         return [task for task in tasks if task.target == target][0]
 
