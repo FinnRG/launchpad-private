@@ -262,6 +262,10 @@ class UCTImporter(SVTImporter):
         )
         self._assign_bug_tasks(bug, cve.assignee)
 
+        # Update CVE metadata (only if not already set)
+        if not lp_cve.discovered_by:
+            lp_cve.discovered_by = cve.discovered_by
+
         # Make a note of the import in the activity log:
         getUtility(IBugActivitySet).new(
             bug=bug.id,
@@ -313,6 +317,10 @@ class UCTImporter(SVTImporter):
         self._update_tags(
             bug, cve.global_tags, cve.distro_packages, cve.ppa_packages
         )
+
+        # Update CVE metadata (only if not already set)
+        if not lp_cve.discovered_by:
+            lp_cve.discovered_by = cve.discovered_by
 
         vulnerability = self._find_existing_vulnerability(lp_cve, self.ubuntu)
         if vulnerability is None:

@@ -9,6 +9,7 @@ from typing import List
 from unittest.mock import Mock, patch
 
 from zope.component import getUtility
+from zope.security.proxy import removeSecurityProxy
 
 from lp.app.enums import InformationType
 from lp.app.interfaces.launchpad import ILaunchpadCelebrities
@@ -2726,3 +2727,233 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         self.assertEqual(2, len(patch_urls))
         self.assertEqual("v1.2.3-beta", patch_urls[0].notes)
         self.assertEqual("fixes: CVE-2024-1234", patch_urls[1].notes)
+
+    def test_discovered_by_comes_from_cve_file_on_create_when_empty(self):
+        """Test that discovered_by is set during bug creation when CVE field
+        is empty."""
+        # Create a CVE with discovered_by set
+        lp_cve = self.factory.makeCVE("2024-99999")
+        # Ensure the CVE's discovered_by is initially empty
+        lp_cve = removeSecurityProxy(lp_cve)
+        lp_cve.discovered_by = None
+
+        # Create importer and a CVE object with discovered_by
+        importer = UCTImporter(self.ubuntu)
+
+        # Create a minimal CVE record with discovered_by
+        uct_record = UCTRecord(
+            parent_dir="active",
+            assigned_to="",
+            bugs=[],
+            cvss={},
+            candidate="CVE-2024-99999",
+            crd=None,
+            public_date_at_USN=None,
+            public_date=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            description="Test vulnerability",
+            discovered_by="John Doe",
+            mitigation=None,
+            notes="",
+            priority=UCTRecord.Priority.MEDIUM,
+            priority_explanation="",
+            references=[],
+            ubuntu_description="Test description",
+            packages=[
+                UCTRecord.Package(
+                    name=self.ubuntu_package.sourcepackagename.name,
+                    statuses=[
+                        UCTRecord.SeriesPackageStatus(
+                            series="focal",
+                            status=UCTRecord.PackageStatus.NEEDED,
+                            reason="",
+                            priority=None,
+                        ),
+                    ],
+                    priority=None,
+                    tags=set(),
+                    patches=[],
+                ),
+            ],
+            global_tags=set(),
+        )
+
+        cve = CVE.make_from_uct_record(uct_record)
+        _, _ = importer.create_bug(cve, lp_cve)
+
+        # Verify discovered_by was set from the CVE record
+        self.assertEqual("John Doe", lp_cve.discovered_by)
+
+    def test_discovered_by_not_overwritten_on_create_when_set(self):
+        """Test that discovered_by is not overwritten during bug creation when
+        already set."""
+        # Create a CVE with discovered_by already set
+        lp_cve = self.factory.makeCVE("2024-99998")
+        lp_cve = removeSecurityProxy(lp_cve)
+        lp_cve.discovered_by = "Original Discoverer"
+
+        # Create importer and a CVE object with different discovered_by
+        importer = UCTImporter(self.ubuntu)
+
+        uct_record = UCTRecord(
+            parent_dir="active",
+            assigned_to="",
+            bugs=[],
+            cvss={},
+            candidate="CVE-2024-99998",
+            crd=None,
+            public_date_at_USN=None,
+            public_date=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            description="Test vulnerability",
+            discovered_by="New Person",  # Different value
+            mitigation=None,
+            notes="",
+            priority=UCTRecord.Priority.MEDIUM,
+            priority_explanation="",
+            references=[],
+            ubuntu_description="Test description",
+            packages=[
+                UCTRecord.Package(
+                    name=self.ubuntu_package.sourcepackagename.name,
+                    statuses=[
+                        UCTRecord.SeriesPackageStatus(
+                            series="focal",
+                            status=UCTRecord.PackageStatus.NEEDED,
+                            reason="",
+                            priority=None,
+                        ),
+                    ],
+                    priority=None,
+                    tags=set(),
+                    patches=[],
+                ),
+            ],
+            global_tags=set(),
+        )
+
+        cve = CVE.make_from_uct_record(uct_record)
+        _, _ = importer.create_bug(cve, lp_cve)
+
+        # Verify discovered_by was NOT overwritten
+        self.assertEqual("Original Discoverer", lp_cve.discovered_by)
+
+    def test_discovered_by_comes_from_cve_file_on_update_when_empty(self):
+        """Test that discovered_by is set during bug update when CVE field is
+        empty."""
+        # Create a CVE and bug first
+        lp_cve = self.factory.makeCVE("2024-99997")
+        lp_cve = removeSecurityProxy(lp_cve)
+        lp_cve.discovered_by = None
+
+        importer = UCTImporter(self.ubuntu)
+
+        # Create initial bug
+        uct_record = UCTRecord(
+            parent_dir="active",
+            assigned_to="",
+            bugs=[],
+            cvss={},
+            candidate="CVE-2024-99997",
+            crd=None,
+            public_date_at_USN=None,
+            public_date=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            description="Test vulnerability",
+            discovered_by="",  # Empty initially
+            mitigation=None,
+            notes="",
+            priority=UCTRecord.Priority.MEDIUM,
+            priority_explanation="",
+            references=[],
+            ubuntu_description="Test description",
+            packages=[
+                UCTRecord.Package(
+                    name=self.ubuntu_package.sourcepackagename.name,
+                    statuses=[
+                        UCTRecord.SeriesPackageStatus(
+                            series="focal",
+                            status=UCTRecord.PackageStatus.NEEDED,
+                            reason="",
+                            priority=None,
+                        ),
+                    ],
+                    priority=None,
+                    tags=set(),
+                    patches=[],
+                ),
+            ],
+            global_tags=set(),
+        )
+
+        cve = CVE.make_from_uct_record(uct_record)
+        bug, _ = importer.create_bug(cve, lp_cve)
+
+        # Verify discovered_by is empty (could be None or empty string)
+        self.assertFalse(lp_cve.discovered_by)
+
+        # Now update with a record that has discovered_by set
+        uct_record_updated = copy.deepcopy(uct_record)
+        uct_record_updated.discovered_by = "Jane Smith"
+        cve_updated = CVE.make_from_uct_record(uct_record_updated)
+
+        _, _ = importer.update_bug(bug, cve_updated, lp_cve)
+
+        # Verify discovered_by was set during update
+        self.assertEqual("Jane Smith", lp_cve.discovered_by)
+
+    def test_discovered_by_not_overwritten_on_update_when_set(self):
+        """Test that discovered_by is not overwritten during bug update when
+        already set."""
+        # Create a CVE and bug with discovered_by set
+        lp_cve = self.factory.makeCVE("2024-99996")
+        lp_cve = removeSecurityProxy(lp_cve)
+        lp_cve.discovered_by = "Original Researcher"
+
+        importer = UCTImporter(self.ubuntu)
+
+        uct_record = UCTRecord(
+            parent_dir="active",
+            assigned_to="",
+            bugs=[],
+            cvss={},
+            candidate="CVE-2024-99996",
+            crd=None,
+            public_date_at_USN=None,
+            public_date=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            description="Test vulnerability",
+            discovered_by="Original Researcher",
+            mitigation=None,
+            notes="",
+            priority=UCTRecord.Priority.MEDIUM,
+            priority_explanation="",
+            references=[],
+            ubuntu_description="Test description",
+            packages=[
+                UCTRecord.Package(
+                    name=self.ubuntu_package.sourcepackagename.name,
+                    statuses=[
+                        UCTRecord.SeriesPackageStatus(
+                            series="focal",
+                            status=UCTRecord.PackageStatus.NEEDED,
+                            reason="",
+                            priority=None,
+                        ),
+                    ],
+                    priority=None,
+                    tags=set(),
+                    patches=[],
+                ),
+            ],
+            global_tags=set(),
+        )
+
+        cve = CVE.make_from_uct_record(uct_record)
+        bug, _ = importer.create_bug(cve, lp_cve)
+
+        # Now try to update with different discovered_by
+        uct_record_updated = copy.deepcopy(uct_record)
+        uct_record_updated.discovered_by = "Different Person"
+        cve_updated = CVE.make_from_uct_record(uct_record_updated)
+
+        _, _ = importer.update_bug(bug, cve_updated, lp_cve)
+
+        # Verify discovered_by was NOT overwritten
+        self.assertEqual("Original Researcher", lp_cve.discovered_by)
