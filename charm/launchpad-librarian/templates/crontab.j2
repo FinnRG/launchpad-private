@@ -19,6 +19,8 @@ LPCONFIG=launchpad-librarian1
 {% for i in range(swift_feed_workers) -%}
 */10 * * * * run-one {{ code_dir }}/cronscripts/librarian-feed-swift.py --remove -q --log-file=INFO:{{ logs_dir }}/librarian-feed-swift-{{ i }}.log --num-instances={{ swift_feed_workers }} --instance-id={{ i }}
 {% endfor %}
+# Verify that files referenced in the database are present in Swift.
+*/30 * * * * run-one {{ code_dir }}/cronscripts/librarian-verify-swift.py -q --log-file=INFO:{{ logs_dir }}/librarian-verify-swift.log --checkpoint-file={{ var_dir }}/librarian-verify-swift.checkpoint
 {% endif -%}
 # Delete old logs
 15 0 * * * find {{ logs_dir }} -maxdepth 1 -type f -mtime +90 -name 'librarian.log.*' -delete

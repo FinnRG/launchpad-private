@@ -17,6 +17,7 @@ options:
           - librarianfeedswift
           - librariangc
           - librarianbackfill
+          - librarianverifyswift
       session-db:
         name: session_dev
         roles: session
