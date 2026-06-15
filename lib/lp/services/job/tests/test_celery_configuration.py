@@ -72,7 +72,7 @@ class TestCeleryWorkerConfiguration(TestCase):
         self.assertEqual(expected["concurrency"], config["worker_concurrency"])
         self.assertEqual(expected["timeout"], config["task_soft_time_limit"])
         self.assertEqual(
-            expected["fallback"], config.get("FALLBACK_QUEUE", None)
+            expected["fallback"], config.get("fallback_queue", None)
         )
 
     def test_default_celery_worker_configuration_fast_lanes(self):

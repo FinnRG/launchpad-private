@@ -3,7 +3,7 @@
 
 __all__ = ["noop", "pop_notifications"]
 
-from celery.task import task
+from celery import shared_task as task
 
 # Force the correct celeryconfig to be used.
 import lp.services.job.celeryjob

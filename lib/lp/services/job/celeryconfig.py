@@ -52,7 +52,7 @@ def configure(argv):
     # A queue must be specified as a command line parameter for each
     # "celery worker" instance, but this is not required for a Launchpad app
     # server.
-    if "celery" in argv[0] and argv[1] == "worker":
+    if "celery" in argv[0] and "worker" in argv:
         if queues is None or queues == "":
             raise ConfigurationError("A queue must be specified.")
         queues = queues.split(",")
@@ -72,7 +72,7 @@ def configure(argv):
         # now that we're on Celery 3.1.
         result["task_soft_time_limit"] = config[queue].timeout
         if config[queue].fallback_queue != "":
-            result["FALLBACK_QUEUE"] = config[queue].fallback_queue
+            result["fallback_queue"] = config[queue].fallback_queue
         # XXX wgrant 2015-08-03: This is mostly per-queue because we
         # can't run *_job and *_job_slow in the same worker, which will be
         # fixed once the CELERYD_TASK_SOFT_TIME_LIMIT override is gone.

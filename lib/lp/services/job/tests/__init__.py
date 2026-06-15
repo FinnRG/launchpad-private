@@ -32,11 +32,13 @@ def celery_worker(queue, cwd=None):
     with celery_app.broker_connection() as connection:
         broker_uri = connection.as_uri(include_password=True)
     cmd_args = (
-        "worker",
+        "-A",
+        "lp.services.job.celeryjob:celery_app",
         "--config",
         "lp.services.job.celeryconfig",
         "--broker",
         broker_uri,
+        "worker",
         "--concurrency",
         "1",
         "--loglevel",
