@@ -20,5 +20,8 @@ LC_ALL=C.UTF-8 \
 # Fix up a few things that virtualenv-tools doesn't handle.
 top="$(readlink -f "$(dirname "$0")/..")"
 for path in "$1"/lib/*/site-packages/lp.egg-link; do
-    printf '%s/lib\n../' "$top" >"$path"
+    # Check if the file actually exists before trying to write to it
+    if [ -e "$path" ]; then
+        printf '%s/lib\n../' "$top" >"$path"
+    fi
 done
