@@ -14,7 +14,7 @@ class TestVersionInfo(unittest.TestCase):
         # Our cronscripts are executed with cwd != LP root.
         # Getting version info should still work in them.
         args = [
-            os.path.join(TREE_ROOT, "bin/py"),
+            os.path.join(TREE_ROOT, "env/bin/python"),
             "-c",
             "from lp.app.versioninfo import revision;" "print(revision)",
         ]

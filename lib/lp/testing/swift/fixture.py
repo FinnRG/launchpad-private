@@ -57,7 +57,7 @@ class SwiftFixture(TacTestFixture):
         super().setUp(
             spew,
             umask,
-            os.path.join(config.root, "bin", "py"),
+            os.path.join(config.root, "env", "bin", "python"),
             os.path.join(config.root, "bin", "twistd"),
         )
 
