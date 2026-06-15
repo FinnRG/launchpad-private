@@ -128,6 +128,8 @@ class ConfigFixture(Fixture):
         self.addCleanup(shutil.rmtree, self.absroot)
         source = os.path.join(config.root, "configs", self.copy_from_instance)
         for entry in os.scandir(source):
+            if not entry.is_file():
+                continue
             if entry.name == "launchpad-lazr.conf":
                 self.add_section(self._extend_str % self.copy_from_instance)
                 continue
