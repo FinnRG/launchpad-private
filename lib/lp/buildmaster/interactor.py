@@ -43,7 +43,7 @@ from lp.services.twistedsupport.processmonitor import ProcessWithTimeout
 from lp.services.webapp import urlappend
 
 
-class QuietQueryFactory(xmlrpc._QueryFactory):
+class QuietQueryFactory(xmlrpc.QueryFactory):
     """XMLRPC client factory that doesn't splatter the log with junk."""
 
     noisy = False

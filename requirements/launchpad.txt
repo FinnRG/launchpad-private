@@ -12,7 +12,7 @@ anyjson==0.3.3
 appdirs==1.4.3
 asn1crypto==0.23.0
 asttokens==3.0.0
-attrs==19.3.0
+attrs==25.3.0
 Automat==20.2.0
 backcall==0.2.0
 backports.functools-lru-cache==1.5
@@ -34,7 +34,7 @@ Chameleon==3.6.2
 charset-normalizer==3.4.0
 configobj==5.0.6
 contextvars==2.4
-constantly==15.1.0
+constantly==23.10.4
 coverage==7.6.1
 craft-platforms==0.8.0
 cryptography==42.0.8
@@ -69,10 +69,10 @@ hatch-fancy-pypi-readme==25.1.0
 hatch-vcs==0.4.0
 hatchling==1.27.0
 httplib2==0.22.0
-hyperlink==18.0.0
+hyperlink==21.0.0
 immutables==0.14
 importlib-metadata==8.5.0
-incremental==21.3.0
+incremental==22.10.0
 ipython==8.12.3
 ipython-genutils==0.2.0
 isal==1.7.2
@@ -199,9 +199,9 @@ timeline==0.0.7
 toml==0.10.2
 traitlets==5.14.3
 transaction==3.0.1
-treq==18.6.0
+treq==24.9.1
 # lp:~launchpad/twisted:lp-backport
-Twisted==20.3.0+lp11
+Twisted==24.3.0
 # Python 3.8 and twisted 20.3.0+lp9
 txfixtures==0.4.3; python_version < "3.10"
 # Python 3.10+ and twisted 24.11

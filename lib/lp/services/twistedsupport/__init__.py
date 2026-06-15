@@ -42,7 +42,7 @@ def gatherResults(deferredList):
         return failure.value.subFailure
 
     d = defer.DeferredList(deferredList, fireOnOneErrback=1, consumeErrors=1)
-    d.addCallback(defer._parseDListResult)
+    d.addCallback(defer._parseDeferredListResult)
     d.addErrback(convert_first_error_to_real)
     return d
 

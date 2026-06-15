@@ -141,7 +141,7 @@ class LaunchpadLogFile(DailyLogFile):
         return sorted(glob.glob("%s.*" % self.path), reverse=True)
 
 
-class _QuietQueryFactory(xmlrpc._QueryFactory):
+class _QuietQueryFactory(xmlrpc.QueryFactory):
     """Override noisy to false to avoid useless log spam."""
 
     noisy = False
