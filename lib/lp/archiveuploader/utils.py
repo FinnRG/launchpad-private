@@ -168,28 +168,28 @@ def _verify_tar_member(member, dest_path):
 def safe_extract_tar(tar, dest_path):
     """Extract a tar file to dest_path with path-traversal and link safety.
 
-    Uses the stdlib filter when available (Python 3.12+ / backports);
-    otherwise verifies and extracts one member at a time with realpath
-    checks so symlinks already on disk cannot cause later members to
-    escape (TOCTOU). Applies PEP 706 mode/ownership sanitization.
+    Verifies and extracts one member at a time with realpath checks so
+    symlinks already on disk cannot cause later members to escape (TOCTOU).
+    Applies PEP 706 mode/ownership sanitization via _verify_tar_member.
+
+    Note: we do not use tar.extractall(filter="data") even on Python 3.12+
+    because the stdlib data filter silently strips leading slashes from
+    absolute paths instead of rejecting them, and raises tarfile.FilterError
+    subclasses (not SafeTarExtractError) for other violations.
     """
     dest_path = os.path.realpath(dest_path)
     os.makedirs(dest_path, mode=0o700, exist_ok=True)
-    if _tarfile_supports_filter():
-        # Python 3.12+ "data" filter already rejects symlinks and device
-        # files and applies PEP 706 semantics. We still rely on the kernel
-        # to enforce permissions, but there is no additional application-
-        # level TOCTOU here.
-        tar.extractall(path=dest_path, filter="data")
-        return
-
-    # Older Pythons: verify and extract one member at a time, recalculating
-    # realpaths so that previously-extracted symlinks cannot later be used
-    # to escape dest_path.
+    # Always verify and extract one member at a time, recalculating realpaths
+    # so that previously-extracted symlinks cannot later be used to escape
+    # dest_path.  On Python 3.12+ use filter='fully_trusted' to suppress the
+    # deprecation warning; safety is enforced by _verify_tar_member above.
     tar.ignore_zeros = True
     for member in tar:
         _verify_tar_member(member, dest_path)
-        tar.extract(member, dest_path)
+        if _tarfile_supports_filter():
+            tar.extract(member, dest_path, filter="fully_trusted")
+        else:
+            tar.extract(member, dest_path)
 
 
 # Maximum bytes to extract from a single zip member.
