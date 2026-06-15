@@ -70,6 +70,7 @@ from twisted.internet import defer, error
 from twisted.python import failure, log
 from zope.component import getUtility
 from zope.interface import Interface, implementer
+from zope.security.proxy import removeSecurityProxy
 
 from lp.code.interfaces.branchlookup import IBranchLookup
 from lp.code.interfaces.codehosting import (
@@ -453,8 +454,10 @@ class DirectDatabaseLaunchpadServer(AsyncVirtualServer):
         This implementation connects to the database directly.
         """
         deferred = defer.succeed(
-            getUtility(IBranchLookup).getByHostingPath(
-                virtual_url_fragment.lstrip("/")
+            removeSecurityProxy(
+                getUtility(IBranchLookup).getByHostingPath(
+                    virtual_url_fragment.lstrip("/")
+                )
             )
         )
 
