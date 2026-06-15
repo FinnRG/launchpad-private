@@ -654,6 +654,18 @@ class RabbitMQLayer(BaseLayer):
         cls.appserver_config_fixture.add_section(
             cls.rabbit.config.service_config
         )
+        # The celeryconfig module reads broker_url from LP config at import
+        # time. If it was imported before RabbitMQ was started (e.g. during
+        # test collection, when broker_urls is 'none'), the stale value is
+        # stuck in the module globals. Celery reads broker_url dynamically
+        # via DictAttribute, so refreshing the module globals here is enough
+        # to make celery_app.conf.broker_url reflect the real broker URL.
+        import sys as _sys
+
+        if "lp.services.job.celeryconfig" in _sys.modules:
+            import lp.services.job.celeryconfig as _celeryconfig
+
+            _celeryconfig.__dict__.update(_celeryconfig.configure(_sys.argv))
         cls._is_setup = True
 
     @classmethod
