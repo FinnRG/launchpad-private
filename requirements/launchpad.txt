@@ -63,7 +63,7 @@ fixtures==4.2.4.post1
 flit-core==3.12.0
 FormEncode==2.1.1
 geoip2==2.9.0
-grokcore.component==3.1
+grokcore.component==5.1
 gunicorn==20.1.0
 hatch-fancy-pypi-readme==25.1.0
 hatch-vcs==0.4.0
@@ -227,11 +227,11 @@ WSGIProxy2==0.4.6
 z3c.pt==3.2.0
 z3c.ptcompat==2.2.0
 zipp==3.20.2
-zope.app.http==4.0.1
-zope.app.publication==4.3.1
-zope.app.publisher==4.2.0
+zope.app.http==6.0
+zope.app.publication==6.0
+zope.app.publisher==6.0
 zope.publisher==6.1.0
-zope.testbrowser==5.5.1
+zope.testbrowser==5.6.0
 zope.testrunner==6.6.1
 zope.vocabularyregistry==1.1.1
 zstandard==0.15.2
