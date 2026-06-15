@@ -22,7 +22,6 @@ from breezy import urlutils
 from breezy.errors import (
     BzrError,
     InProcessTransport,
-    NoSuchFile,
     TransportNotPossible,
 )
 from breezy.transport import (
@@ -32,6 +31,7 @@ from breezy.transport import (
     get_transport,
     register_transport,
     unregister_transport,
+    NoSuchFile,
 )
 from twisted.internet import defer
 from twisted.python.failure import Failure

@@ -36,12 +36,12 @@ from breezy.errors import (
     GhostRevisionsHaveNoRevno,
     NotStacked,
     UnstackableRepositoryFormat,
-    UnsupportedProtocol,
 )
 from breezy.transport import (
     get_transport,
     register_transport,
     unregister_transport,
+    UnsupportedProtocol,
 )
 from breezy.transport.local import LocalTransport
 from lazr.uri import URI

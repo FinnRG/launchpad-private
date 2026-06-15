@@ -8,7 +8,7 @@ import stat
 from breezy import errors
 from breezy.bzr.bzrdir import BzrDir
 from breezy.tests import TestCaseWithTransport
-from breezy.transport import get_transport
+from breezy.transport import get_transport, FileExists
 from breezy.transport.memory import MemoryTransport
 from breezy.urlutils import escape
 
@@ -303,7 +303,7 @@ class TestFilesystem(TestCaseWithTransport):
         transport.mkdir("dir1/foo")
         transport.mkdir("dir2")
         transport.mkdir("dir2/bar")
-        self.assertRaises(errors.FileExists, transport.rename, "dir1", "dir2")
+        self.assertRaises(FileExists, transport.rename, "dir1", "dir2")
 
     def test_rename_directory_succeeds(self):
         # 'rename dir1 dir2' succeeds if 'dir2' doesn't exist.
@@ -318,7 +318,7 @@ class TestFilesystem(TestCaseWithTransport):
         # directory that already exists.
         transport = self._getBzrDirTransport()
         transport.mkdir("dir1")
-        self.assertRaises(errors.FileExists, transport.mkdir, "dir1")
+        self.assertRaises(FileExists, transport.mkdir, "dir1")
 
     def test_url_escaping(self):
         # Transports accept and return escaped URL segments. The literal path

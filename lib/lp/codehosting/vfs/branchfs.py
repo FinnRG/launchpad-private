@@ -62,8 +62,8 @@ from breezy.bzr.bzrdir import BzrDir
 from breezy.bzr.smart.request import jail_info
 from breezy.config import TransportConfig
 from breezy.controldir import ControlDirFormat
-from breezy.errors import NoSuchFile, PermissionDenied, TransportNotPossible
-from breezy.transport import get_transport
+from breezy.errors import PermissionDenied, TransportNotPossible
+from breezy.transport import get_transport, NoSuchFile
 from breezy.transport.memory import MemoryServer
 from lazr.uri import URI
 from twisted.internet import defer, error

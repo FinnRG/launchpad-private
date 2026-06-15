@@ -9,7 +9,7 @@ from contextlib import closing
 from breezy import errors as bzr_errors
 from breezy import urlutils
 from breezy.tests import TestCaseInTempDir
-from breezy.transport import get_transport
+from breezy.transport import get_transport, NoSuchFile as BzrNoSuchFile, FileExists
 from breezy.transport.memory import MemoryTransport
 from lazr.sshserver.sftp import FileIsADirectory
 from testtools.matchers import MatchesStructure
@@ -674,11 +674,11 @@ class TestSFTPServer(TestCaseInTempDir, SFTPTestMixin):
         self.do_translation_test(exception, filetransfer.FX_PERMISSION_DENIED)
 
     def test_translateNoSuchFile(self):
-        exception = bzr_errors.NoSuchFile(self.getPathSegment())
+        exception = BzrNoSuchFile(self.getPathSegment())
         self.do_translation_test(exception, filetransfer.FX_NO_SUCH_FILE)
 
     def test_translateFileExists(self):
-        exception = bzr_errors.FileExists(self.getPathSegment())
+        exception = FileExists(self.getPathSegment())
         self.do_translation_test(
             exception, filetransfer.FX_FILE_ALREADY_EXISTS
         )

@@ -14,7 +14,7 @@ __all__ = [
 import os
 
 from breezy.controldir import ControlDir
-from breezy.errors import FileExists
+from breezy.transport import FileExists
 from breezy.plugins.loom import branch as loom_branch
 from breezy.tests import TestNotApplicable, TestSkipped
 from testtools.twistedsupport import AsynchronousDeferredRunTest

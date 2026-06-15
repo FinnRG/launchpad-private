@@ -20,6 +20,7 @@ from breezy.transport import (
     get_transport,
     register_transport,
     unregister_transport,
+    NoSuchFile
 )
 from breezy.transport.chroot import ChrootTransport
 from breezy.transport.memory import MemoryServer, MemoryTransport
@@ -365,7 +366,7 @@ class LaunchpadInternalServerTests:
         branch.product.development_focus.branch = branch
         transport = get_transport(self.server.get_url())
         self.assertRaises(
-            errors.NoSuchFile,
+            NoSuchFile,
             transport.list_dir,
             "~%s/%s/.bzr/" % (branch.owner.name, branch.product.name),
         )
@@ -728,7 +729,7 @@ class LaunchpadTransportTests:
         # an error. Which kind of error is not particularly important.
         transport = self.getTransport()
         return self.assertFiresFailure(
-            errors.NoSuchFile, transport.get, "~testuser"
+            NoSuchFile, transport.get, "~testuser"
         )
 
     def test_complete_non_existent_path_not_found(self):
@@ -737,7 +738,7 @@ class LaunchpadTransportTests:
         # for are not found. i.e. we raise NoSuchFile
         transport = self.getTransport()
         return self.assertFiresFailure(
-            errors.NoSuchFile,
+            NoSuchFile,
             transport.get,
             "~testuser/firefox/new-branch/.bzr/branch-format",
         )

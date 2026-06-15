@@ -24,6 +24,7 @@ from copy import copy
 
 from breezy import errors as bzr_errors
 from breezy import osutils, urlutils
+from breezy.transport import NoSuchFile, FileExists
 from breezy.transport.local import LocalTransport
 from lazr.sshserver.sftp import FileIsADirectory
 from twisted.conch.interfaces import ISFTPFile, ISFTPServer
@@ -411,8 +412,8 @@ class TransportSFTPServer:
         types_to_codes = {
             bzr_errors.PermissionDenied: filetransfer.FX_PERMISSION_DENIED,
             bzr_errors.TransportNotPossible: filetransfer.FX_PERMISSION_DENIED,
-            bzr_errors.NoSuchFile: filetransfer.FX_NO_SUCH_FILE,
-            bzr_errors.FileExists: filetransfer.FX_FILE_ALREADY_EXISTS,
+            NoSuchFile: filetransfer.FX_NO_SUCH_FILE,
+            FileExists: filetransfer.FX_FILE_ALREADY_EXISTS,
             bzr_errors.DirectoryNotEmpty: filetransfer.FX_FAILURE,
             bzr_errors.TransportError: filetransfer.FX_FAILURE,
             FileIsADirectory: filetransfer.FX_FILE_IS_A_DIRECTORY,

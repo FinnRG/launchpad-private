@@ -23,11 +23,11 @@ from typing import Optional
 import transaction
 from breezy.branch import Branch as BzrBranch
 from breezy.diff import show_diff_trees
-from breezy.errors import NoSuchFile, NotBranchError
+from breezy.errors import NotBranchError
 from breezy.log import log_formatter, show_log
 from breezy.revision import NULL_REVISION
 from breezy.revisionspec import RevisionInfo
-from breezy.transport import get_transport
+from breezy.transport import get_transport, NoSuchFile
 from breezy.upgrade import upgrade
 from lazr.delegates import delegate_to
 from lazr.enum import DBEnumeratedType, DBItem
