@@ -195,6 +195,14 @@ def main():
     # we can safely import the rest.
     from lp.services.testing import profiled
     from lp.services.testing.customresult import filter_tests, patch_find_tests
+    from lp.services.testing.testrunner_patches import (
+        apply_patches as apply_testrunner_patches,
+    )
+
+    # Apply Launchpad's customisations to zope.testrunner (previously carried
+    # as a fork).  This must happen before the options are parsed (which
+    # instantiates the output formatter) and before test discovery runs.
+    apply_testrunner_patches()
 
     # Extract arguments so we can see them too. We need to strip
     # --resume-layer and --default stuff if found as get_options can't
