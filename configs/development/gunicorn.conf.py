@@ -33,3 +33,16 @@ reload = True
 reload_extra_files = find_files(CONFIG_DIR, "*")
 for pattern in ["*.zcml", "*.conf"]:
     reload_extra_files += find_files(os.path.join(BASE_DIR, "lib"), pattern)
+
+
+def post_fork(server, worker):
+    """Re-configure the OpenID fetcher after gunicorn module reloads.
+
+    gunicorn's reload=True uses a module reloader that resets openid.fetchers'
+    _default_fetcher global to None, losing the custom SSL context configured
+    by lp_sitecustomize.  Calling set_default_openid_fetcher() here runs after
+    each worker fork/reload, ensuring the fetcher is always correctly set.
+    """
+    from lp.services.openid.fetcher import set_default_openid_fetcher
+
+    set_default_openid_fetcher()
