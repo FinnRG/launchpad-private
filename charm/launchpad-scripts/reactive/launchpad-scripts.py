@@ -195,6 +195,14 @@ def configure():
     host.mkdir(
         f"{base.logs_dir()}/checkwatches", group=base.user(), perms=0o775
     )
+    # The debbugs-mirror directory is a mounted volume used by the
+    # debbugs-sync and checkwatches scripts.
+    host.mkdir(
+        f"{config['var_dir']}/debbugs-mirror",
+        owner=base.user(),
+        group=base.user(),
+        perms=0o775,
+    )
     configure_cron(config, "crontab.j2")
     configure_celery(config)
     configure_number_cruncher(config)

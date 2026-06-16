@@ -37,12 +37,9 @@ Below are the instructions for doing so.
 * Create a filesystem on the new volume using `sudo mkfs.ext4 /dev/vdb`. Do
   check and verify that this device node matches the new volume.
 
-* Create the `/srv/launchpad/var/debbugs-mirror` directory, if it does not
-  exist already. Here, `/srv/launchpad/var` corresponds to the `var_dir`
-  template context variable.
-
 * Add `/dev/vdb /srv/launchpad/var/debbugs-mirror ext4 defaults 0 2` to
-  `/etc/fstab`.
+  `/etc/fstab`. Here, `/srv/launchpad/var` corresponds to the `var_dir`
+  template context variable.
 
 * Mount the new volume using `sudo mount /srv/launchpad/var/debbugs-mirror`.
 
