@@ -214,8 +214,8 @@ class PublishDistro(PublisherScript):
             metavar="SUFFIX",
             default=None,
             help=(
-                "Override the dists path for generation of the PRIMARY and "
-                "PARTNER archives only."
+                "Override the dists path for generation of the PRIMARY "
+                "archive only."
             ),
         )
 
@@ -233,14 +233,6 @@ class PublishDistro(PublisherScript):
             dest="private_ppa",
             default=False,
             help="Only run over private PPA archives.",
-        )
-
-        self.parser.add_option(
-            "--partner",
-            action="store_true",
-            dest="partner",
-            default=False,
-            help="Only run over the partner archive.",
         )
 
         self.parser.add_option(
@@ -288,7 +280,6 @@ class PublishDistro(PublisherScript):
         In valid use, at most one of them should be set.
         """
         exclusive_options = [
-            self.options.partner,
             self.options.ppa,
             self.options.private_ppa,
             self.options.copy_archive,
@@ -330,7 +321,7 @@ class PublishDistro(PublisherScript):
             )
         if self.countExclusiveOptions() > 1:
             raise OptionValueError(
-                "Can only specify one of partner, ppa, private-ppa, "
+                "Can only specify one of ppa, private-ppa, "
                 "copy-archive, archive."
             )
 
@@ -419,8 +410,6 @@ class PublishDistro(PublisherScript):
         """Find the archive(s) selected by the script's options."""
         if self.options.archives:
             return self.getArchives(self.options.archives, distribution)
-        elif self.options.partner:
-            return [distribution.getArchiveByComponent("partner")]
         elif self.options.ppa:
             archives = set(filter(is_ppa_public, self.getPPAs(distribution)))
             excluded_archives = set(
@@ -442,7 +431,7 @@ class PublishDistro(PublisherScript):
         """Get a publisher for the given options."""
         if archive.purpose in MAIN_ARCHIVE_PURPOSES:
             description = "%s %s" % (distribution.name, archive.displayname)
-            # Only let the primary/partner archives override the distsroot.
+            # Only let the primary archive override the distsroot.
             distsroot = self.options.distsroot
         else:
             description = archive.archive_url

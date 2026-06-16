@@ -46,7 +46,6 @@ def get_publishable_archives(distribution):
     # enough to return list(distribution.all_distro_archives) directly.
     ARCHIVES_TO_PUBLISH = [
         ArchivePurpose.PRIMARY,
-        ArchivePurpose.PARTNER,
     ]
     return [
         archive
@@ -405,8 +404,6 @@ class PublishFTPMaster(LaunchpadCronScript):
         temporary_dists = get_working_dists(archive_config)
 
         arguments = ["-R", temporary_dists]
-        if archive.purpose == ArchivePurpose.PARTNER:
-            arguments.append("--partner")
 
         os.rename(get_backup_dists(archive_config), temporary_dists)
         try:

@@ -521,20 +521,15 @@ class Publisher:
 
     @property
     def subcomponents(self):
-        subcomps = []
-        if self.archive.purpose != ArchivePurpose.PARTNER:
-            subcomps.append("debian-installer")
+        subcomps = ["debian-installer"]
         if self.archive.publish_debug_symbols:
             subcomps.append("debug")
         return subcomps
 
     @property
     def consider_series(self):
-        if self.archive.purpose in (
-            ArchivePurpose.PRIMARY,
-            ArchivePurpose.PARTNER,
-        ):
-            # For PRIMARY and PARTNER archives, skip OBSOLETE and FUTURE
+        if self.archive.purpose == ArchivePurpose.PRIMARY:
+            # For PRIMARY archives, skip OBSOLETE and FUTURE
             # series.  We will never want to publish anything in them, so it
             # isn't worth thinking about whether they have pending
             # publications.
@@ -1571,15 +1566,13 @@ class Publisher:
         """
         if self.archive.is_ppa:
             return self.archive.displayname
-        elif self.archive.purpose == ArchivePurpose.PARTNER:
-            return "Partner archive"
         else:
             return self.distro.displayname
 
     def _getOrigin(self):
         """Return the contents of the Release file Origin field.
 
-        Primary, Partner and Copy archives use the distribution displayname.
+        Primary and Copy archives use the distribution displayname.
         For PPAs we use a more specific value that follows
         `get_ppa_reference`.
 
@@ -1588,8 +1581,6 @@ class Publisher:
         """
         # XXX al-maisan, 2008-11-19, bug=299981. If this file is released
         # from a copy archive then modify the origin to indicate so.
-        if self.archive.purpose == ArchivePurpose.PARTNER:
-            return "Canonical"
         if not self.archive.is_ppa:
             return self.distro.displayname
         return "LP-PPA-%s" % get_ppa_reference(self.archive)

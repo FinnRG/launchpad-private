@@ -1043,86 +1043,6 @@ class TestPublisher(TestPublisherBase):
         getPublisher(a2, None, self.logger).deleteArchive()
         self.assertEqual("test-deletedppa1", a2.name)
 
-    def testPublishPartner(self):
-        """Test that a partner package is published to the right place."""
-        archive = self.ubuntutest.getArchiveByComponent("partner")
-        pub_config = getPubConfig(archive)
-        pub_config.setupArchiveDirs()
-        disk_pool = DiskPool(
-            archive, pub_config.poolroot, pub_config.temproot, self.logger
-        )
-        publisher = Publisher(self.logger, pub_config, disk_pool, archive)
-        self.getPubSource(archive=archive, filecontent=b"I am partner")
-
-        publisher.A_publish(False)
-
-        # Did the file get published in the right place?
-        self.assertEqual(
-            "/var/tmp/archive/ubuntutest-partner/pool", pub_config.poolroot
-        )
-        foo_path = "%s/main/f/foo/foo_666.dsc" % pub_config.poolroot
-        with open(foo_path) as foo_file:
-            self.assertEqual("I am partner", foo_file.read().strip())
-
-        # Check that the index is in the right place.
-        publisher.C_writeIndexes(False)
-        self.assertEqual(
-            "/var/tmp/archive/ubuntutest-partner/dists", pub_config.distsroot
-        )
-        index_path = os.path.join(
-            pub_config.distsroot,
-            "breezy-autotest",
-            "partner",
-            "source",
-            "Sources.gz",
-        )
-        with open(index_path) as index_file:
-            self.assertTrue(index_file)
-
-        # Check the release file is in the right place.
-        publisher.D_writeReleaseFiles(False)
-        release_path = os.path.join(
-            pub_config.distsroot, "breezy-autotest", "Release"
-        )
-        with open(release_path) as release_file:
-            self.assertTrue(release_file)
-
-    def testPartnerReleasePocketPublishing(self):
-        """Test partner package RELEASE pocket publishing.
-
-        Publishing partner packages to the RELEASE pocket in a stable
-        distroseries is always allowed, so check for that here.
-        """
-        archive = self.ubuntutest.getArchiveByComponent("partner")
-        self.ubuntutest["breezy-autotest"].status = SeriesStatus.CURRENT
-        pub_config = getPubConfig(archive)
-        pub_config.setupArchiveDirs()
-        disk_pool = DiskPool(
-            archive, pub_config.poolroot, pub_config.temproot, self.logger
-        )
-        publisher = Publisher(self.logger, pub_config, disk_pool, archive)
-        self.getPubSource(
-            archive=archive,
-            filecontent=b"I am partner",
-            status=PackagePublishingStatus.PENDING,
-        )
-
-        publisher.A_publish(force_publishing=False)
-
-        # The pocket was dirtied:
-        self.assertEqual({"breezy-autotest"}, publisher.dirty_suites)
-        # The file was published:
-        foo_path = "%s/main/f/foo/foo_666.dsc" % pub_config.poolroot
-        with open(foo_path) as foo_file:
-            self.assertEqual("I am partner", foo_file.read().strip())
-
-        # Nothing to test from these two calls other than that they don't blow
-        # up as there is an assertion in the code to make sure it's not
-        # publishing out of a release pocket in a stable distroseries,
-        # excepting PPA and partner which are allowed to do that.
-        publisher.C_writeIndexes(is_careful=False)
-        publisher.D_writeReleaseFiles(is_careful=False)
-
     def testPublishingSpecificDistroSeries(self):
         """Test the publishing procedure with the suite argument.
 
@@ -1415,24 +1335,6 @@ class TestPublisher(TestPublisherBase):
             distro_publisher._config.distsroot,
         )
         self.assertEqual({"breezy-autotest"}, distro_publisher.allowed_suites)
-
-        # Check that the partner archive is built in a different directory
-        # to the primary archive.
-        partner_archive = getUtility(IArchiveSet).getByDistroPurpose(
-            self.ubuntutest, ArchivePurpose.PARTNER
-        )
-        distro_publisher = getPublisher(
-            partner_archive, allowed_suites, self.logger
-        )
-        self.assertEqual(partner_archive, distro_publisher.archive)
-        self.assertEqual(
-            "/var/tmp/archive/ubuntutest-partner/dists",
-            distro_publisher._config.distsroot,
-        )
-        self.assertEqual(
-            "/var/tmp/archive/ubuntutest-partner/pool",
-            distro_publisher._config.poolroot,
-        )
 
         # lets setup an Archive Publisher
         cprov = getUtility(IPersonSet).getByName("cprov")
@@ -2280,76 +2182,6 @@ class TestPublisher(TestPublisherBase):
         )
         self.assertEqual("LP-PPA-cprov-testing", arch_release["origin"])
 
-    def testReleaseFileForPartner(self):
-        """Test Release file writing for Partner archives.
-
-        Signed Release files must reference an uncompressed Sources and
-        Packages file.
-        """
-        archive = self.ubuntutest.getArchiveByComponent("partner")
-        allowed_suites = []
-        publisher = getPublisher(archive, allowed_suites, self.logger)
-
-        self.getPubSource(filecontent=b"Hello world", archive=archive)
-
-        publisher.A_publish(False)
-        publisher.C_writeIndexes(False)
-        publisher.D_writeReleaseFiles(False)
-
-        # Open the release file that was just published inside the
-        # 'breezy-autotest' distroseries.
-        release = self.parseRelease(
-            os.path.join(
-                publisher._config.distsroot, "breezy-autotest", "Release"
-            )
-        )
-
-        # The Release file must contain lines ending in "Packages",
-        # "Packages.gz", "Sources" and "Sources.gz".
-        self.assertTrue("md5sum" in release)
-        self.assertTrue(
-            [
-                entry
-                for entry in release["md5sum"]
-                if entry["name"].endswith("Packages.gz")
-            ]
-        )
-        self.assertTrue(
-            [
-                entry
-                for entry in release["md5sum"]
-                if entry["name"].endswith("Packages")
-            ]
-        )
-        self.assertTrue(
-            [
-                entry
-                for entry in release["md5sum"]
-                if entry["name"].endswith("Sources.gz")
-            ]
-        )
-        self.assertTrue(
-            [
-                entry
-                for entry in release["md5sum"]
-                if entry["name"].endswith("Sources")
-            ]
-        )
-
-        # Partner archive architecture Release files 'Origin' contain
-        # a string
-        arch_release = self.parseRelease(
-            os.path.join(
-                publisher._config.distsroot,
-                "breezy-autotest",
-                "partner/source/Release",
-            )
-        )
-        self.assertEqual("Canonical", arch_release["origin"])
-
-        # The Label: field should be set to the archive displayname
-        self.assertEqual("Partner archive", release["label"])
-
     def testReleaseFileForNotAutomaticBackports(self):
         # Test Release file writing for series with NotAutomatic backports.
         publisher = Publisher(
@@ -2867,56 +2699,6 @@ class TestPublisher(TestPublisherBase):
             self.ubuntutest.main_archive,
         )
         self.ubuntutest.main_archive.setMetadataOverrides(
-            {
-                "Origin": "test_origin",
-            }
-        )
-        metadata_overrides = publisher._getMetadataOverrides()
-        self.assertEqual({}, metadata_overrides)
-
-    def testReleaseFilePatnerArchiveMetadataOverridesNotApplied(self):
-        partner_archive = self.ubuntutest.getArchiveByComponent("partner")
-        publisher = getPublisher(partner_archive, [], self.logger)
-
-        partner_archive.setMetadataOverrides(
-            {
-                "Origin": "test_origin",
-                "Label": "test_label",
-            }
-        )
-
-        self.getPubSource(filecontent=b"Hello world", archive=partner_archive)
-
-        publisher.A_publish(False)
-        publisher.C_writeIndexes(False)
-        publisher.D_writeReleaseFiles(False)
-
-        release = self.parseRelease(
-            os.path.join(
-                publisher._config.distsroot, "breezy-autotest", "Release"
-            )
-        )
-        self.assertEqual("Canonical", release["origin"])
-        self.assertNotEqual("test_origin", release["origin"])
-        self.assertEqual("Partner archive", release["label"])
-        self.assertNotEqual("test_label", release["label"])
-
-        arch_release = self.parseRelease(
-            os.path.join(
-                publisher._config.distsroot,
-                "breezy-autotest",
-                "partner/source/Release",
-            )
-        )
-        self.assertEqual("Canonical", arch_release["origin"])
-        self.assertNotEqual("test_origin", arch_release["origin"])
-        self.assertEqual("Partner archive", release["label"])
-        self.assertNotEqual("test_label", release["label"])
-
-    def testPartnerArchiveGetMetadataOverridesEmpty(self):
-        partner_archive = self.ubuntutest.getArchiveByComponent("partner")
-        publisher = getPublisher(partner_archive, [], self.logger)
-        partner_archive.setMetadataOverrides(
             {
                 "Origin": "test_origin",
             }
@@ -3661,37 +3443,6 @@ class TestValidUntil(TestPublisherBase):
 
         # remove PPA root
         shutil.rmtree(config.personalpackagearchive.root)
-
-    def testValidUntilNotInPartnerArchives(self):
-        """
-        Test that Valid-Until is not added to partner archives.
-        """
-        partner_archive = getUtility(IArchiveSet).getByDistroPurpose(
-            self.ubuntutest, ArchivePurpose.PARTNER
-        )
-        archive_publisher = getPublisher(partner_archive, [], self.logger)
-
-        self.hoary_test.valid_until_config = {
-            UPDATES: {
-                "refresh_threshold": 7,
-                "validity_period": 14,
-            }
-        }
-
-        self.getPubSource(
-            filecontent=b"Hello world",
-            pocket=UPDATES,
-            archive=partner_archive,
-            distroseries=self.hoary_test,
-        )
-
-        archive_publisher.A_publish(True)
-        archive_publisher.C_writeIndexes(False)
-        archive_publisher.D_writeReleaseFiles(False)
-
-        self.assertValidUntil(
-            archive_publisher, self.hoary_test, UPDATES, is_present=False
-        )
 
     # direct tests for "checkValidUntilNeedsRefresh"
     def testCheckValidUntilNeedsRefreshWhenDisabled(self):
@@ -5210,9 +4961,6 @@ class TestPublisherLite(TestCaseWithFactory):
             ["debian-installer", "debug"],
             self.makePublisher(primary).subcomponents,
         )
-
-        partner = self.factory.makeArchive(purpose=ArchivePurpose.PARTNER)
-        self.assertEqual([], self.makePublisher(partner).subcomponents)
 
 
 class TestDirectoryHashHelpers(TestCaseWithFactory):
