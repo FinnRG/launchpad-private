@@ -226,7 +226,6 @@ zope.app.publication==4.3.1
 zope.app.publisher==4.2.0
 zope.publisher==6.0.2+lp1
 zope.testbrowser==5.5.1
-# lp:~launchpad-committers/zope.testrunner:launchpad-6.6.1+lp1
-zope.testrunner==6.6.1+lp1
+zope.testrunner==6.6.1
 zope.vocabularyregistry==1.1.1
 zstandard==0.15.2
