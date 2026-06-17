@@ -277,17 +277,23 @@ archive_hashes = [
     SHA512ArchiveHash(),
 ]
 
+# Hashes published when a distroseries has no allowed_hashes configured.
+# This matches the historical behaviour (MD5Sum/SHA1/SHA256, with SHA256 as
+# the strongest, used for by-hash), so that not setting the config does not
+# introduce a regression.
+DEFAULT_ALLOWED_HASHES = ["md5", "sha1", "sha256"]
+
 
 def get_allowed_archive_hashes(allowed_hash_names):
     """Filter archive_hashes to only those in the allowed list.
 
     :param allowed_hash_names: A list of lowercase hash name strings
-        (e.g. ["sha256", "sha512"]), or None to allow all hashes.
+        (e.g. ["sha256", "sha512"]), or None to use `DEFAULT_ALLOWED_HASHES`.
     :return: A list of IArchiveHash instances.
     """
     if allowed_hash_names is None:
-        return list(archive_hashes)
-    return [h for h in archive_hashes if h.deb822_name in allowed_hash_names]
+        allowed_hash_names = DEFAULT_ALLOWED_HASHES
+    return [h for h in archive_hashes if h.lfc_name in allowed_hash_names]
 
 
 class ByHash:
@@ -301,11 +307,12 @@ class ByHash:
         self._allowed_hashes = get_allowed_archive_hashes(allowed_hashes)
 
     @property
-    def _usable_archive_hashes(self):
-        # Use only the single strongest (last) hash from the allowed set.
+    def _preferred_archive_hash(self):
+        # Use only the single strongest (last) hash from the allowed set,
+        # or None if no hashes are allowed.
         if not self._allowed_hashes:
-            return []
-        return [self._allowed_hashes[-1]]
+            return None
+        return self._allowed_hashes[-1]
 
     def add(self, name, lfa, copy_from_path=None):
         """Ensure that by-hash entries for a single file exist.
@@ -317,37 +324,24 @@ class ByHash:
             for newly-added files to avoid needing to commit the transaction
             before calling this method.
         """
-        best_hash = self._usable_archive_hashes[-1]
-        best_digest = getattr(lfa.content, best_hash.lfc_name)
-        for archive_hash in reversed(self._usable_archive_hashes):
-            digest = getattr(lfa.content, archive_hash.lfc_name)
-            digest_path = os.path.join(
-                self.path, archive_hash.apt_name, digest
-            )
-            self.known_digests[archive_hash.apt_name][digest].add(name)
-            if not os.path.lexists(digest_path):
-                self.log.debug(
-                    "by-hash: Creating %s for %s" % (digest_path, name)
-                )
-                ensure_directory_exists(os.path.dirname(digest_path))
-                if archive_hash != best_hash:
-                    os.symlink(
-                        os.path.join(
-                            os.pardir, best_hash.apt_name, best_digest
-                        ),
-                        digest_path,
-                    )
-                elif copy_from_path is not None:
-                    os.link(
-                        os.path.join(self.root, copy_from_path), digest_path
-                    )
-                else:
-                    with open(digest_path, "wb") as outfile:
-                        lfa.open()
-                        try:
-                            shutil.copyfileobj(lfa, outfile, 4 * 1024 * 1024)
-                        finally:
-                            lfa.close()
+        archive_hash = self._preferred_archive_hash
+        if archive_hash is None:
+            return
+        digest = getattr(lfa.content, archive_hash.lfc_name)
+        digest_path = os.path.join(self.path, archive_hash.apt_name, digest)
+        self.known_digests[archive_hash.apt_name][digest].add(name)
+        if not os.path.lexists(digest_path):
+            self.log.debug("by-hash: Creating %s for %s" % (digest_path, name))
+            ensure_directory_exists(os.path.dirname(digest_path))
+            if copy_from_path is not None:
+                os.link(os.path.join(self.root, copy_from_path), digest_path)
+            else:
+                with open(digest_path, "wb") as outfile:
+                    lfa.open()
+                    try:
+                        shutil.copyfileobj(lfa, outfile, 4 * 1024 * 1024)
+                    finally:
+                        lfa.close()
 
     def known(self, name, hashname, digest):
         """Do we know about a file with this name and digest?"""
@@ -1670,9 +1664,10 @@ class Publisher:
             os.path.join(self._config.distsroot, suite), self._config.distsroot
         )
         current_files = {}
-        for current_entry in release_data["SHA256"] + extra_data.get(
-            "SHA256", []
-        ):
+        content_hash = filtered_hashes[-1]
+        for current_entry in release_data[
+            content_hash.apt_name
+        ] + extra_data.get(content_hash.apt_name, []):
             path = os.path.join(suite_dir, current_entry["name"])
             real_name = current_entry.get("real_name", current_entry["name"])
             real_path = os.path.join(suite_dir, real_name)
@@ -1686,7 +1681,7 @@ class Publisher:
             if os.path.exists(full_path):
                 current_files[path] = (
                     int(current_entry["size"]),
-                    current_entry["sha256"],
+                    current_entry[content_hash.deb822_name],
                     real_path,
                 )
         return current_files
@@ -1710,6 +1705,11 @@ class Publisher:
         existing_nonlive_files = {}
         reapable_files = set()
 
+        # Identify file content by the strongest allowed hash, matching the
+        # digest read from the Release file in `_getCurrentFiles`.  This must
+        # not assume sha256, which may not be among the allowed hashes.
+        content_hash = get_allowed_archive_hashes(allowed_hashes)[-1]
+
         def strip_dists(path):
             assert path.startswith("dists/")
             return path[len("dists/") :]
@@ -1724,7 +1724,7 @@ class Publisher:
         ):
             file_key = (
                 strip_dists(db_file.path),
-                db_file.library_file.content.sha256,
+                getattr(db_file.library_file.content, content_hash.lfc_name),
             )
             # Ensure any subdirectories are registered early on, in case we're
             # about to delete the only file and need to know to prune it.
@@ -1758,7 +1758,7 @@ class Publisher:
             suite, release_file_name, extra_files, allowed_hashes
         )
         new_live_files = {
-            (path, sha256) for path, (_, sha256, _) in current_files.items()
+            (path, digest) for path, (_, digest, _) in current_files.items()
         }
 
         # Schedule the deletion of any ArchiveFiles which are current in the
@@ -1787,8 +1787,8 @@ class Publisher:
         # XXX cjwatson 2016-03-15: This should possibly use bulk creation,
         # although we can only avoid about a third of the queries since the
         # librarian client has no bulk upload methods.
-        for path, (size, sha256, real_path) in current_files.items():
-            file_key = (path, sha256)
+        for path, (size, digest, real_path) in current_files.items():
+            file_key = (path, digest)
             full_path = os.path.join(self._config.distsroot, real_path)
             assert os.path.exists(full_path)  # guaranteed by _getCurrentFiles
             # If there isn't a matching live ArchiveFile row, create one.
