@@ -153,10 +153,11 @@ class VerifyLibrarianSwift(LaunchpadCronScript):
         Used to distinguish a genuinely missing file from one that
         ``librarian-gc`` pruned after we read the batch.
         """
-        # Use a fresh transaction so we see the latest committed state.
-        transaction.abort()
+        # Use a fresh connection so we see the latest committed state.
         store = IPrimaryStore(LibraryFileContent)
-        return store.get(LibraryFileContent, content_id) is not None
+        return not store.find(
+            LibraryFileContent, LibraryFileContent.id == content_id
+        ).is_empty()
 
     def main(self):
         if not (getFeatureFlag("librarian.swift.enabled") or False):
