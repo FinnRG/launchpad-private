@@ -123,29 +123,47 @@ class SOSSImporter(SVTImporter):
         lp_cve = self._get_launchpad_cve(cve_sequence)
         created = False
 
-        vulnerability = self._find_existing_vulnerability(lp_cve, self.soss)
-        if not vulnerability:
-            vulnerability = self._create_vulnerability(
-                soss_record, lp_cve, self.soss
+        # try-except block to ensure transaction is aborted on any exception,
+        # preventing partial commits
+        try:
+            vulnerability = self._find_existing_vulnerability(
+                lp_cve, self.soss
             )
-            created = True
-        else:
-            vulnerability = self._update_vulnerability(
-                vulnerability, soss_record
+            if not vulnerability:
+                vulnerability = self._create_vulnerability(
+                    soss_record, lp_cve, self.soss
+                )
+                created = True
+            else:
+                vulnerability = self._update_vulnerability(
+                    vulnerability, soss_record
+                )
+
+            bug = self._find_existing_bug(soss_record, lp_cve, self.soss)
+            if not bug:
+                bug = self._create_bug(soss_record, lp_cve)
+            else:
+                bug = self._update_bug(bug, soss_record, lp_cve)
+
+            vulnerability.linkBug(bug, check_permissions=False)
+
+            # Creating a bug only creates the first bugtask
+            self._create_or_update_bugtasks(bug, soss_record)
+        except Exception:
+            # This is needed here to prevent partial commits because even
+            # though after this we are checking if vulnerability and bug are
+            # created to commit, the ImportVulnerabilityJob's run method has
+            # a finally block that commits regardless.
+            transaction.abort()
+            raise
+
+        if self.dry_run:
+            transaction.abort()
+            logger.info(
+                f"{cve_sequence}: dry-run mode enabled, all changes are "
+                f"reverted."
             )
-
-        bug = self._find_existing_bug(soss_record, lp_cve, self.soss)
-        if not bug:
-            bug = self._create_bug(soss_record, lp_cve)
         else:
-            bug = self._update_bug(bug, soss_record, lp_cve)
-
-        vulnerability.linkBug(bug, check_permissions=False)
-
-        # Creating a bug only creates the first bugtask
-        self._create_or_update_bugtasks(bug, soss_record)
-
-        if not self.dry_run and vulnerability and bug:
             transaction.commit()
             logger.info(
                 "[SOSSImporter] Successfully committed changes for "
