@@ -153,7 +153,11 @@ class UCTRecord(SVTRecord):
         applying some data transformations along the way.
         """
 
-        cve_data: Dict[str, Any] = load_cve(str(cve_path))
+        # normalize_dates=False is needed to preserve the original dates
+        # from the UCT CVE file
+        cve_data: Dict[str, Any] = load_cve(
+            str(cve_path), normalize_dates=False
+        )
 
         packages = []
         tags: Dict[str, Set[str]] = cls._pop_cve_property(cve_data, "tags")

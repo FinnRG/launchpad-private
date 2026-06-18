@@ -2,12 +2,15 @@
 #  GNU Affero General Public License version 3 (see the file LICENSE).
 
 import copy
+import tempfile
+import textwrap
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 from unittest.mock import Mock, patch
 
+from contrib.cve_lib import load_cve
 from zope.component import getUtility
 from zope.security.proxy import removeSecurityProxy
 
@@ -3145,3 +3148,159 @@ class TestUCTImporterExporter(TestCaseWithFactory):
 
         # Verify discovered_by was NOT overwritten
         self.assertEqual("Original Researcher", lp_cve.discovered_by)
+
+
+class TestCVELibDateNormalization(TestCase):
+    """Test date normalization behavior in load_cve function."""
+
+    def _create_test_cve_file(self, content):
+        """Helper to create a temporary CVE file with given content."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix="", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(textwrap.dedent(content))
+            return Path(f.name)
+
+    def test_load_cve_preserves_date_with_crd_when_normalize_dates_false(self):
+        """Test that PublicDate and CRD are preserved when
+        normalize_dates=False (default)."""
+        cve_content = """\
+            Candidate: CVE-2024-TEST1
+            PublicDate: 2024-03-25 10:00:00 UTC
+            CRD: 2024-03-11 08:00:00 UTC
+            References:
+             https://example.com/cve-2024-test1
+            Description:
+             Test vulnerability
+            Ubuntu-Description:
+             Test description
+            Notes:
+            Bugs:
+            Priority: medium
+            Discovered-by: Test User
+            Assigned-to:
+            CVSS:
+
+            upstream_testpkg: needed
+            """
+        cve_file = self._create_test_cve_file(cve_content)
+
+        try:
+            # Load without normalize_dates (should default to False)
+            data = load_cve(str(cve_file))
+
+            # Verify dates are preserved as-is
+            self.assertEqual("2024-03-25 10:00:00 UTC", data["PublicDate"])
+            self.assertEqual("2024-03-11 08:00:00 UTC", data["CRD"])
+        finally:
+            cve_file.unlink()
+
+    def test_load_cve_replaces_publicdate_with_crd_when_normalize_dates_true(
+        self,
+    ):
+        """Test that PublicDate is replaced with CRD when
+        normalize_dates=True."""
+        cve_content = """\
+            Candidate: CVE-2024-TEST3
+            PublicDate: 2024-03-25 10:00:00 UTC
+            CRD: 2024-03-11 08:00:00 UTC
+            References:
+             https://example.com/cve-2024-test3
+            Description:
+             Test vulnerability
+            Ubuntu-Description:
+             Test description
+            Notes:
+            Bugs:
+            Priority: medium
+            Discovered-by: Test User
+            Assigned-to:
+            CVSS:
+
+            upstream_testpkg: needed
+            """
+        cve_file = self._create_test_cve_file(cve_content)
+
+        try:
+            # Load with normalize_dates=True
+            data = load_cve(str(cve_file), normalize_dates=True)
+
+            # Verify PublicDate was replaced with CRD
+            self.assertEqual("2024-03-11 08:00:00 UTC", data["PublicDate"])
+            self.assertEqual("2024-03-11 08:00:00 UTC", data["CRD"])
+        finally:
+            cve_file.unlink()
+
+    def test_load_cve_preserves_date_with_usn_when_normalize_dates_false(self):
+        """Test that PublicDateAtUSN is not used to replace PublicDate when
+        normalize_dates=False (default)."""
+        cve_content = """\
+            Candidate: CVE-2024-TEST4
+            PublicDate: 2024-03-25 10:00:00 UTC
+            PublicDateAtUSN: 2024-03-20 09:00:00 UTC
+            References:
+             https://example.com/cve-2024-test4
+            Description:
+             Test vulnerability
+            Ubuntu-Description:
+             Test description
+            Notes:
+            Bugs:
+            Priority: medium
+            Discovered-by: Test User
+            Assigned-to:
+            CVSS:
+
+            upstream_testpkg: needed
+            """
+        cve_file = self._create_test_cve_file(cve_content)
+
+        try:
+            # Load without normalize_dates
+            data = load_cve(str(cve_file))
+
+            # Verify PublicDate is preserved
+            self.assertEqual("2024-03-25 10:00:00 UTC", data["PublicDate"])
+            self.assertEqual(
+                "2024-03-20 09:00:00 UTC", data["PublicDateAtUSN"]
+            )
+        finally:
+            cve_file.unlink()
+
+    def test_load_cve_replaces_date_with_usn_when_normalize_dates_true(
+        self,
+    ):
+        """Test that PublicDate is replaced with PublicDateAtUSN when
+        normalize_dates=True."""
+        cve_content = """\
+            Candidate: CVE-2024-TEST5
+            PublicDate: 2024-03-25 10:00:00 UTC
+            PublicDateAtUSN: 2024-03-20 09:00:00 UTC
+            References:
+             https://example.com/cve-2024-test5
+            Description:
+             Test vulnerability
+            Ubuntu-Description:
+             Test description
+            Notes:
+            Bugs:
+            Priority: medium
+            Discovered-by: Test User
+            Assigned-to:
+            CVSS:
+
+            upstream_testpkg: needed
+            """
+        cve_file = self._create_test_cve_file(cve_content)
+
+        try:
+            # Load with normalize_dates=True
+            data = load_cve(str(cve_file), normalize_dates=True)
+
+            # Verify PublicDate was replaced with PublicDateAtUSN
+            self.assertEqual("2024-03-20 09:00:00 UTC", data["PublicDate"])
+            self.assertEqual(
+                "2024-03-20 09:00:00 UTC", data["PublicDateAtUSN"]
+            )
+        finally:
+            cve_file.unlink()
