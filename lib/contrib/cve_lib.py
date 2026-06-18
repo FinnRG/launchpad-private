@@ -614,7 +614,7 @@ class NotesParser(object):
         self.notes = None
         return notes
 
-def load_cve(cvefile, strict=False, srcentries=None):
+def load_cve(cvefile, strict=False, srcentries=None, normalize_dates=False):
     '''Loads a given CVE into:
        dict( fields...
              'pkgs' -> dict(  pkg -> dict(  release ->  (state, details)   ) )
@@ -829,15 +829,17 @@ def load_cve(cvefile, strict=False, srcentries=None):
     if 'Priority' not in data:
         data.setdefault('Priority', ['untriaged'])
         srcentries.setdefault('Priority', (cvefile, 1))
-    # Perform override fields
-    if 'PublicDateAtUSN' in data:
-        data['PublicDate'] = data['PublicDateAtUSN']
-        srcentries['PublicDate'] = srcentries['PublicDateAtUSN']
-    if 'CRD' in data and data['CRD'].strip() != '' and data['PublicDate'] != data['CRD']:
-        if cvefile.startswith("embargoed"):
-            print("%s: %d: adjusting PublicDate to use CRD: %s" % (cvefile, linenum, data['CRD']), file=sys.stderr)
-        data['PublicDate'] = data['CRD']
-        srcentries['PublicDate'] = srcentries['CRD']
+
+    if normalize_dates:
+        # Perform override fields
+        if 'PublicDateAtUSN' in data:
+            data['PublicDate'] = data['PublicDateAtUSN']
+            srcentries['PublicDate'] = srcentries['PublicDateAtUSN']
+        if 'CRD' in data and data['CRD'].strip() != '' and data['PublicDate'] != data['CRD']:
+            if cvefile.startswith("embargoed"):
+                print("%s: %d: adjusting PublicDate to use CRD: %s" % (cvefile, linenum, data['CRD']), file=sys.stderr)
+            data['PublicDate'] = data['CRD']
+            srcentries['PublicDate'] = srcentries['CRD']
 
     if data["PublicDate"] > PRIORITY_REASON_DATE_START and \
             data["Priority"][0] in PRIORITY_REASON_REQUIRED and not priority_reason:
