@@ -15,8 +15,10 @@ from lp.archivepublisher.interfaces.archivepublishinghistory import (
     IArchivePublishingHistory,
     IArchivePublishingHistorySet,
 )
+from lp.archivepublisher.model.archivepublisherrun import ArchivePublisherRun
 from lp.services.database.interfaces import IStore
 from lp.services.database.stormbase import StormBase
+from lp.soyuz.model.archive import Archive
 
 
 @implementer(IArchivePublishingHistory)
@@ -74,3 +76,20 @@ class ArchivePublishingHistorySet:
             ArchivePublishingHistory,
             ArchivePublishingHistory.publisher_run == publisher_run,
         )
+
+    def getArchivesPublishedSince(
+        self, since, status=None, publishing_method=None
+    ):
+        """See `IArchivePublishingHistorySet`."""
+        store = IStore(ArchivePublishingHistory)
+        conditions = [
+            Archive.id == ArchivePublishingHistory.archive_id,
+            ArchivePublishingHistory.publisher_run_id
+            == ArchivePublisherRun.id,
+            ArchivePublisherRun.date_started >= since,
+        ]
+        if status is not None:
+            conditions.append(ArchivePublisherRun.status == status)
+        if publishing_method is not None:
+            conditions.append(Archive._publishing_method == publishing_method)
+        return store.find(Archive, *conditions).config(distinct=True)

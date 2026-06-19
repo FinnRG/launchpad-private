@@ -104,6 +104,24 @@ class TestModifiedGitRepositoriesLastModifiedEpoch(TestCase):
             script.get_last_modified_epoch(),
         )
 
+    def test_modified_last_hours_zero_raises(self):
+        """Passing in 0 for --last-hours raises an error."""
+        script = ModifiedGitRepositoriesScript(
+            "modified-git-repositories", test_args=["--last-hours=0"]
+        )
+        self.assertRaises(
+            LaunchpadScriptFailure, script.get_last_modified_epoch
+        )
+
+    def test_modified_last_hours_negative_raises(self):
+        """Passing in a negative value for --last-hours raises an error."""
+        script = ModifiedGitRepositoriesScript(
+            "modified-git-repositories", test_args=["--last-hours=-1"]
+        )
+        self.assertRaises(
+            LaunchpadScriptFailure, script.get_last_modified_epoch
+        )
+
 
 class TestModifiedGitRepositoriesStripPrefix(TestCase):
     """Test the prefix stripping."""
@@ -125,6 +143,17 @@ class TestModifiedGitRepositoriesStripPrefix(TestCase):
         script.options.append_suffix = None
         location = script.process_location("/srv/testing")
         self.assertEqual("testing", location)
+
+    def test_prefix_boundary_is_respected(self):
+        """A path that starts with a string matching the prefix but at a
+        different path boundary is left unchanged."""
+        script = ModifiedGitRepositoriesScript(
+            "modified-git-repositories",
+            test_args=["--last-hours=12", "--strip-prefix=/srv/ppa"],
+        )
+        script.options.append_suffix = None
+        location = script.process_location("/srv/ppadev/testing")
+        self.assertEqual("/srv/ppadev/testing", location)
 
     def test_non_matching_location_unchanged(self):
         """If the location doesn't start with the prefix, it is left
