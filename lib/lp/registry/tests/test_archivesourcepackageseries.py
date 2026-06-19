@@ -3,6 +3,10 @@
 
 """Tests for ArchiveSourcePackageSeries."""
 
+from lp.registry.model.archivesourcepackage import ArchiveSourcePackage
+from lp.registry.model.archivesourcepackageseries import (
+    ArchiveSourcePackageSeries,
+)
 from lp.soyuz.enums import PackagePublishingStatus
 from lp.testing import TestCaseWithFactory
 from lp.testing.layers import DatabaseFunctionalLayer
@@ -254,10 +258,6 @@ class TestArchiveSourcePackageSeries(TestCaseWithFactory):
     def test_init_raises_assertion_for_different_distributions(self):
         """Creating ArchiveSourcePackageSeries with mismatched distributions
         raises AssertionError."""
-        from lp.registry.model.archivesourcepackageseries import (
-            ArchiveSourcePackageSeries,
-        )
-
         # Create a distroseries from a different distribution
         other_distribution = self.factory.makeDistribution()
         other_distroseries = self.factory.makeDistroSeries(
@@ -297,3 +297,46 @@ class TestArchiveSourcePackageSeries(TestCaseWithFactory):
         spn = self.factory.makeSourcePackageName("unpublished")
         result = archive.getArchiveSourcePackageSeries(self.distroseries, spn)
         self.assertIsNone(result)
+
+    def test_archive_sourcepackage_unpublished(self):
+        """archive_sourcepackage returns an ArchiveSourcePackage even when
+        the package has no publications in the archive.
+
+        Without check_publication=False in archive_sourcepackage, calling
+        getArchiveSourcePackage with the default check_publication=True would
+        return None for a package that was never published or was removed,
+        breaking access to bugtarget_parent on historical bugtasks or
+        deliberately empty bugtasks such as some of the ones imported in UCT.
+
+        Also, if we created an ArchiveSourcePackageSeries for a package, we are
+        assuming that it passed every check for being a valid bug target, so we
+        should be able to get an ArchiveSourcePackage for it even if it has no
+        publications in the archive. (Especially because we are allowing
+        deleted package bugtasks to remain in the system, and they need to be
+        able to access their bugtarget_parent)
+        """
+        # Create a fresh archive with no publications for the package.
+        empty_archive = self.factory.makeArchive(
+            distribution=self.distribution
+        )
+        spn = self.factory.makeSourcePackageName("never-published")
+
+        # Construct directly, bypassing the factory which would create a
+        # publication as a side effect.
+        asps = ArchiveSourcePackageSeries(
+            empty_archive, self.distroseries, spn
+        )
+
+        # Confirm that the default (check_publication=True) path returns None,
+        # i.e. the package truly has no publication in this archive.
+        self.assertIsNone(
+            empty_archive.getArchiveSourcePackage(spn, check_publication=True)
+        )
+
+        # archive_sourcepackage must still return a valid object despite the
+        # missing publication, because it uses check_publication=False.
+        result = asps.archive_sourcepackage
+        self.assertIsNotNone(result)
+        self.assertIsInstance(result, ArchiveSourcePackage)
+        self.assertEqual(empty_archive, result.archive)
+        self.assertEqual(spn, result.sourcepackagename)
