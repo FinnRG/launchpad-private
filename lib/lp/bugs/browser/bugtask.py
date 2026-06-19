@@ -1526,7 +1526,9 @@ class BugTaskEditView(
                 # The validity of the source package has already been checked
                 # by the bug target widget.
                 self.context.validateTransitionToTarget(
-                    new_target, check_source_package=False
+                    new_target,
+                    check_source_package=False,
+                    check_ppa_source_package=False,
                 )
             except IllegalTarget as e:
                 self.setFieldError(error_field, e.args[0])

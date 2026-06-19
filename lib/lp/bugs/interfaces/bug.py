@@ -119,6 +119,7 @@ class CreateBugParams:
         cve=None,
         metadata=None,
         check_permissions=True,
+        check_ppa_source_package=True,
     ):
         self.owner = owner
         self.title = title
@@ -141,6 +142,7 @@ class CreateBugParams:
         self.cve = cve
         self.metadata = metadata
         self.check_permissions = check_permissions
+        self.check_ppa_source_package = check_ppa_source_package
 
 
 class BugNameField(ContentNameField):

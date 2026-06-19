@@ -4140,6 +4140,65 @@ class TestValidateTarget(TestCaseWithFactory, ValidateTargetMixin):
         # This should not raise an exception
         validate_target(bug, asps)
 
+    def test_ppa_source_package_without_publication_allowed_when_false(
+        self,
+    ):
+        # An unpublished source package in a PPA is allowed when
+        # check_ppa_source_package=False.
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        spn = self.factory.makeSourcePackageName()
+        asp = ArchiveSourcePackage(ppa, spn)
+        bug = self.factory.makeBug()
+        # This should not raise an exception
+        validate_target(bug, asp, check_ppa_source_package=False)
+
+    def test_ppa_source_package_series_without_publication_allowed_when_false(
+        self,
+    ):
+        # An unpublished source package series in a PPA is allowed when
+        # check_ppa_source_package=False.
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        distroseries = ppa.distribution.currentseries
+        spn = self.factory.makeSourcePackageName()
+        asps = ArchiveSourcePackageSeries(ppa, distroseries, spn)
+        bug = self.factory.makeBug()
+        # This should not raise an exception
+        validate_target(bug, asps, check_ppa_source_package=False)
+
+    def test_createTask_creates_when_check_ppa_source_package_false(self):
+        # createTask allows unpublished PPA packages when
+        # check_ppa_source_package=False.
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        spn = self.factory.makeSourcePackageName()
+        asp = ArchiveSourcePackage(ppa, spn)
+        bug = self.factory.makeBug()
+        owner = self.factory.makePerson()
+        bug_task_set = getUtility(IBugTaskSet)
+        # This should not raise an exception
+        task = bug_task_set.createTask(
+            bug, owner, asp, check_ppa_source_package=False
+        )
+        self.assertEqual(asp, task.target)
+
+    def test_createManyTasks_creates_when_check_ppa_source_package_false(self):
+        # createManyTasks allows unpublished PPA packages when
+        # check_ppa_source_package=False.
+        ppa = self.factory.makeArchive(purpose=ArchivePurpose.PPA)
+        spn1 = self.factory.makeSourcePackageName()
+        spn2 = self.factory.makeSourcePackageName()
+        asp1 = ArchiveSourcePackage(ppa, spn1)
+        asp2 = ArchiveSourcePackage(ppa, spn2)
+        bug = self.factory.makeBug()
+        owner = self.factory.makePerson()
+        bug_task_set = getUtility(IBugTaskSet)
+        # This should not raise an exception
+        tasks = bug_task_set.createManyTasks(
+            bug, owner, [asp1, asp2], check_ppa_source_package=False
+        )
+        self.assertEqual(2, len(tasks))
+        self.assertEqual(asp1, tasks[0].target)
+        self.assertEqual(asp2, tasks[1].target)
+
 
 class TestValidateNewTarget(TestCaseWithFactory, ValidateTargetMixin):
     layer = DatabaseFunctionalLayer

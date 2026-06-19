@@ -232,6 +232,7 @@ class UCTImporter(SVTImporter):
                     importance=initial_package.importance,
                     cve=lp_cve,
                     check_permissions=False,
+                    check_ppa_source_package=False,
                 )
             )
         )
@@ -451,7 +452,10 @@ class UCTImporter(SVTImporter):
         # Create all tasks in a single batch operation
         if targets_to_create:
             bug_task_set.createManyTasks(
-                bug, self.bug_importer, targets_to_create
+                bug,
+                self.bug_importer,
+                targets_to_create,
+                check_ppa_source_package=False,
             )
 
     def _create_vulnerability(
