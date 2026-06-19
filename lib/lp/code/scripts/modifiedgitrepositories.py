@@ -33,7 +33,7 @@ class ModifiedGitRepositoriesScript(LaunchpadScript):
     def __init__(self, name, dbuser=None, test_args=None):
         LaunchpadScript.__init__(self, name, dbuser, test_args)
         # Cache this on object creation so it can be used in tests.
-        self.now_timestamp = datetime.utcnow()
+        self.now_timestamp = datetime.now(timezone.utc)
         self.locations = set()
 
     def add_my_options(self):
@@ -80,6 +80,13 @@ class ModifiedGitRepositoriesScript(LaunchpadScript):
             raise LaunchpadScriptFailure(
                 "Only one of --since or --last-hours can be specified."
             )
+        if (
+            self.options.last_hours is not None
+            and self.options.last_hours <= 0
+        ):
+            raise LaunchpadScriptFailure(
+                "--last-hours must be a positive integer."
+            )
         last_modified = None
         if self.options.last_hours is not None:
             last_modified = self.now_timestamp - timedelta(
@@ -111,10 +118,10 @@ class ModifiedGitRepositoriesScript(LaunchpadScript):
 
     def process_location(self, location):
         """Strip the defined prefix, and append the suffix as configured."""
-        if self.options.strip_prefix is not None and location.startswith(
-            self.options.strip_prefix
-        ):
-            location = location[len(self.options.strip_prefix) :]
+        if self.options.strip_prefix is not None:
+            prefix = self.options.strip_prefix.rstrip("/") + "/"
+            if location.startswith(prefix):
+                location = location[len(prefix) :]
         if self.options.append_suffix is not None:
             location = location + self.options.append_suffix
         return location
