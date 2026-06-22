@@ -1021,9 +1021,7 @@ class DistroSeries(
 
     @allowed_hashes.setter
     def allowed_hashes(self, value):
-        if value is not None:
-            assert isinstance(value, list)
-            assert len(value) > 0, "allowed_hashes must not be empty"
+        if value is not None and isinstance(value, list) and len(value) > 0:
             value = [h.lower() for h in value]
         self.publishing_options["allowed_hashes"] = value
 

@@ -332,6 +332,7 @@
                 include_long_descriptions
                 index_compressors
                 publish_by_hash
+                allowed_hashes
                 publish_i18n_index
                 valid_until_config
                 advertise_by_hash
