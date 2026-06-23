@@ -33,6 +33,9 @@ class TestRabbitServer(TestCase):
             "broker_urls": (
                 "amqp://guest:guest@localhost:%d//" % fixture.config.port
             ),
+            "oops_broker_urls": (
+                "amqp://guest:guest@localhost:%d//" % fixture.config.port
+            ),
         }
         observed = dict(service_config.items("rabbitmq"))
         self.assertEqual(expected, observed)
