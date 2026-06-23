@@ -27,14 +27,18 @@ def is_configured():
     )
 
 
-def connect():
+def connect(broker_urls=None):
     """Connect to AMQP if possible.
 
+    :param broker_urls: An optional space-separated string of broker URLs to
+        connect to instead of the default ``config.rabbitmq.broker_urls``.
     :raises MessagingUnavailable: If the configuration is incomplete.
     """
     if not is_configured():
         raise MessagingUnavailable("Incomplete configuration")
-    if config.rabbitmq.broker_urls is not None:
+    if broker_urls is not None:
+        connection = kombu.Connection(broker_urls.split())
+    elif config.rabbitmq.broker_urls is not None:
         connection = kombu.Connection(config.rabbitmq.broker_urls.split())
     else:
         hostname, port = as_host_port(config.rabbitmq.host, default_port=5672)

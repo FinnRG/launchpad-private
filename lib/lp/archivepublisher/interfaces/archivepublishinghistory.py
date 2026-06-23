@@ -73,3 +73,19 @@ class IArchivePublishingHistorySet(Interface):
         :param publisher_run: An `IArchivePublisherRun`.
         :return: A result set of `IArchivePublishingHistory` objects.
         """
+
+    def getArchivesPublishedSince(since, status=None, publishing_method=None):
+        """Get distinct archives published since the given datetime.
+
+        Returns archives that were included in a publisher run whose
+        `date_started` is greater than or equal to `since`.
+
+        :param since: A timezone-aware `datetime` cutoff.
+        :param status: An optional `ArchivePublisherRunStatus` to filter by.
+            When `None` (the default), archives from runs of any status are
+            returned.
+        :param publishing_method: An optional `ArchivePublishingMethod` to
+            filter by. When `None` (the default), archives with any publishing
+            method are returned.
+        :return: A result set of distinct `IArchive` objects.
+        """

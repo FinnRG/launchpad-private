@@ -6,6 +6,7 @@
 import contextlib
 import operator
 import re
+from functools import partial
 from itertools import repeat
 from urllib.parse import urlparse
 
@@ -326,13 +327,29 @@ class ErrorReportingUtility:
         # to be useful.
         self._main_publishers = []
         self._all_publishers = []
-        # If amqp is configured we want to publish over amqp.
-        if config.error_reports.error_exchange and rabbit.is_configured():
+        # OOPS reports are published over AMQP to a dedicated RabbitMQ
+        # cluster, configured via oops_broker_urls, to avoid OOPS traffic
+        # exerting back-pressure on the cluster used for background jobs.
+        # This must be configured explicitly: there is deliberately no
+        # fallback to the default broker_urls here, so if oops_broker_urls is
+        # unset we do not publish OOPS reports over AMQP at all (they are
+        # still written to disk below).  In charm deployments the charm always
+        # provides oops_broker_urls, falling back to the main cluster itself
+        # when no separate OOPS cluster is related, so existing behaviour is
+        # preserved there.
+        if (
+            config.error_reports.error_exchange
+            and rabbit.is_configured()
+            and config.rabbitmq.oops_broker_urls is not None
+        ):
             exchange = config.error_reports.error_exchange
             routing_key = config.error_reports.error_queue_key
+            connect = partial(
+                rabbit.connect, broker_urls=config.rabbitmq.oops_broker_urls
+            )
             self._main_publishers.append(
                 adapted_publisher(
-                    oops_amqp.Publisher(rabbit.connect, exchange, routing_key)
+                    oops_amqp.Publisher(connect, exchange, routing_key)
                 )
             )
         # We want to publish reports to disk for gathering to the central

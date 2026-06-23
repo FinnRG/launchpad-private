@@ -153,7 +153,11 @@ class UCTRecord(SVTRecord):
         applying some data transformations along the way.
         """
 
-        cve_data: Dict[str, Any] = load_cve(str(cve_path))
+        # normalize_dates=False is needed to preserve the original dates
+        # from the UCT CVE file
+        cve_data: Dict[str, Any] = load_cve(
+            str(cve_path), normalize_dates=False
+        )
 
         packages = []
         tags: Dict[str, Set[str]] = cls._pop_cve_property(cve_data, "tags")
@@ -816,24 +820,9 @@ class CVE:
                     if not archive:
                         continue
 
-                    # Check if the source package is actually published in this
-                    # archive. We can only create bug tasks if the package
-                    # exists
                     archive_source_package = archive.getArchiveSourcePackage(
-                        source_package_name, check_publication=True
+                        source_package_name, check_publication=False
                     )
-
-                    if archive_source_package is None:
-                        # Skip creating PPA tasks for packages not in the
-                        # archive
-                        logger.info(
-                            "Package %s not published in archive %s/%s, "
-                            "skipping PPA tasks",
-                            source_package_name.name,
-                            ppa_ref.owner,
-                            ppa_ref.archive,
-                        )
-                        continue
 
                     # Check if we already have a PPAPackage for this
                     # (package_name, archive) combination. Create one

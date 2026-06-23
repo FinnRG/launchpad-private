@@ -483,7 +483,10 @@ class DistroBugTaskCreationStep(BugTaskCreationStep):
                 # The validity of the source package has already been checked
                 # by the bug target widget.
                 validate_new_target(
-                    self.context.bug, target, check_source_package=False
+                    self.context.bug,
+                    target,
+                    check_source_package=False,
+                    check_ppa_source_package=False,
                 )
                 if sourcepackagename:
                     data["sourcepackagename"] = target
@@ -593,7 +596,10 @@ class PPABugTaskCreationStep(BugTaskCreationStep):
                 else:
                     target = archive
                 validate_new_target(
-                    self.context.bug, target, check_source_package=False
+                    self.context.bug,
+                    target,
+                    check_source_package=False,
+                    check_ppa_source_package=False,
                 )
                 if sourcepackagename:
                     data["sourcepackagename"] = target

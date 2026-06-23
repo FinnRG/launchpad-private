@@ -253,6 +253,7 @@ def snapshot_bug_params(bug_params):
             "cve",
             "metadata",
             "check_permissions",
+            "check_ppa_source_package",
         ],
     )
 
@@ -3357,6 +3358,7 @@ class BugSet:
             params.target,
             status=params.status,
             metadata=params.metadata,
+            check_ppa_source_package=params.check_ppa_source_package,
         )
 
         if params.subscribe_owner:

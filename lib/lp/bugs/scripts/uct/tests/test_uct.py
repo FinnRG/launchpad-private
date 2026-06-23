@@ -2,18 +2,27 @@
 #  GNU Affero General Public License version 3 (see the file LICENSE).
 
 import copy
+import tempfile
+import textwrap
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 from unittest.mock import Mock, patch
 
+from contrib.cve_lib import load_cve
 from zope.component import getUtility
+from zope.security.proxy import removeSecurityProxy
 
 from lp.app.enums import InformationType
 from lp.app.interfaces.launchpad import ILaunchpadCelebrities
 from lp.bugs.enums import VulnerabilityStatus
-from lp.bugs.interfaces.bugtask import BugTaskImportance, BugTaskStatus
+from lp.bugs.interfaces.bug import CreateBugParams, IBugSet
+from lp.bugs.interfaces.bugtask import (
+    BugTaskImportance,
+    BugTaskStatus,
+    IBugTaskSet,
+)
 from lp.bugs.model.bug import Bug
 from lp.bugs.model.bugtask import BugTask
 from lp.bugs.scripts.uct import (
@@ -27,6 +36,10 @@ from lp.bugs.scripts.uct.subprojects import PPAReference, SubProjectPPAs
 from lp.registry.interfaces.distribution import IDistributionSet
 from lp.registry.interfaces.distroseries import IDistroSeriesSet
 from lp.registry.interfaces.series import SeriesStatus
+from lp.registry.model.archivesourcepackage import ArchiveSourcePackage
+from lp.registry.model.archivesourcepackageseries import (
+    ArchiveSourcePackageSeries,
+)
 from lp.registry.model.sourcepackage import SourcePackage
 from lp.services.propertycache import clear_property_cache
 from lp.testing import TestCase, TestCaseWithFactory
@@ -2295,6 +2308,189 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         self.assertEqual(BugTaskStatus.FIXRELEASED, ppa_series_task.status)
         self.assertEqual("1.2.3-4ubuntu5", ppa_series_task.status_explanation)
 
+    def test_create_bug_tasks_with_empty_lists(self):
+        """_create_bug_tasks handles empty package lists gracefully."""
+        # Create a bug with one initial task
+        initial_package = self.cve.distro_packages[0]
+        bug = removeSecurityProxy(
+            getUtility(IBugSet).createBug(
+                CreateBugParams(
+                    comment="test bug",
+                    title="CVE-2022-TEST",
+                    information_type=InformationType.PUBLICSECURITY,
+                    owner=self.bug_importer,
+                    target=initial_package.target,
+                    importance=initial_package.importance,
+                    cve=self.lp_cve,
+                    check_permissions=False,
+                )
+            )
+        )
+
+        initial_count = len(bug.bugtasks)
+
+        # Call _create_bug_tasks with all empty lists
+        self.importer._create_bug_tasks(
+            bug,
+            distro_packages=[],
+            series_packages=[],
+            upstream_packages=[],
+            ppa_packages=[],
+            ppa_series_packages=[],
+        )
+
+        # Should not crash, and no new tasks should be created
+        self.assertEqual(initial_count, len(bug.bugtasks))
+
+    def test_create_bug_tasks_batch_create(self):
+        """_create_bug_tasks calls createManyTasks exactly once with all
+        targets, and all expected bugtasks exist afterwards."""
+        initial_package = self.cve.distro_packages[0]
+        bug = removeSecurityProxy(
+            getUtility(IBugSet).createBug(
+                CreateBugParams(
+                    comment="test bug",
+                    title="CVE-2022-TEST",
+                    information_type=InformationType.PUBLICSECURITY,
+                    owner=self.bug_importer,
+                    target=initial_package.target,
+                    importance=initial_package.importance,
+                    cve=self.lp_cve,
+                    check_permissions=False,
+                )
+            )
+        )
+
+        # Pass all remaining packages from self.cve (the first distro package
+        # is already the bug's initial target, so only pass the rest).
+        remaining_distro = self.cve.distro_packages[1:]
+        series_packages = self.cve.series_packages
+        upstream_packages = self.cve.upstream_packages
+        ppa_packages = self.cve.ppa_packages
+        ppa_series_packages = self.cve.ppa_series_packages
+
+        expected_targets = (
+            [p.target for p in remaining_distro]
+            + [p.target for p in series_packages]
+            + [p.target for p in upstream_packages]
+            + [p.target for p in ppa_packages]
+            + [p.target for p in ppa_series_packages]
+        )
+
+        real_bug_task_set = getUtility(IBugTaskSet)
+        bug_task_set_spy = Mock(wraps=real_bug_task_set)
+        real_get_utility = getUtility
+
+        def patched_get_utility(interface):
+            if interface is IBugTaskSet:
+                return bug_task_set_spy
+            return real_get_utility(interface)
+
+        with patch(
+            "lp.bugs.scripts.uct.uctimport.getUtility",
+            side_effect=patched_get_utility,
+        ):
+            self.importer._create_bug_tasks(
+                bug,
+                distro_packages=remaining_distro,
+                series_packages=series_packages,
+                upstream_packages=upstream_packages,
+                ppa_packages=ppa_packages,
+                ppa_series_packages=ppa_series_packages,
+            )
+
+        # createManyTasks must be called exactly once, not once per target.
+        bug_task_set_spy.createManyTasks.assert_called_once()
+        actual_targets = bug_task_set_spy.createManyTasks.call_args.args[2]
+        self.assertEqual(expected_targets, actual_targets)
+
+        # The real call went through: every expected target now has a bugtask.
+        bug_task_targets = {t.target for t in bug.bugtasks}
+        for target in expected_targets:
+            self.assertIn(target, bug_task_targets)
+
+    def test_create_bug_tasks_raises_on_duplicate_inputs(self):
+        """_create_bug_tasks raises UCTImportError when the same target
+        appears more than once across the input package lists."""
+        shared_target = SourcePackage(
+            sourcepackagename=self.ubuntu_package.sourcepackagename,
+            distroseries=self.ubuntu_supported_series,
+        )
+        unique_target = SourcePackage(
+            sourcepackagename=self.ubuntu_package.sourcepackagename,
+            distroseries=self.ubuntu_current_series,
+        )
+
+        # Same target appears in both series_packages and ppa_series_packages
+        series_packages = [
+            CVE.SeriesPackage(
+                target=shared_target,
+                package_name=self.ubuntu_package.sourcepackagename,
+                importance=BugTaskImportance.HIGH,
+                status=BugTaskStatus.FIXRELEASED,
+                status_explanation="fix",
+            )
+        ]
+        ppa_series_packages = [
+            CVE.PPASeriesPackage(
+                target=shared_target,
+                package_name=self.ubuntu_package.sourcepackagename,
+                importance=BugTaskImportance.HIGH,
+                status=BugTaskStatus.FIXRELEASED,
+                status_explanation="fix",
+            ),
+            CVE.PPASeriesPackage(
+                target=unique_target,
+                package_name=self.ubuntu_package.sourcepackagename,
+                importance=BugTaskImportance.HIGH,
+                status=BugTaskStatus.FIXRELEASED,
+                status_explanation="fix",
+            ),
+        ]
+
+        bug = self.factory.makeBug()
+
+        with self.expectedLog("Duplicate targets detected"):
+            error = self.assertRaises(
+                UCTImportError,
+                self.importer._create_bug_tasks,
+                bug,
+                [],
+                series_packages,
+                [],
+                [],
+                ppa_series_packages,
+            )
+
+        self.assertIn("Duplicate targets", str(error))
+        self.assertIn(shared_target.bugtargetdisplayname, str(error))
+
+    def test_create_bug_tasks_skips_existing_targets(self):
+        """_create_bug_tasks calling the same targets as existing bug tasks is
+        a silent no-op, not an error.
+
+        Targets that already have a bug task are loaded into seen_targets
+        before the loop runs, so they are never classified as duplicates.
+        """
+        bug, _ = self.importer.create_bug(self.cve, self.lp_cve)
+
+        initial_task_ids = {t.id for t in bug.bugtasks}
+        initial_count = len(initial_task_ids)
+
+        # Re-running with the same packages must not raise and must not create
+        # any new tasks.
+        self.importer._create_bug_tasks(
+            bug,
+            distro_packages=self.cve.distro_packages,
+            series_packages=self.cve.series_packages,
+            upstream_packages=self.cve.upstream_packages,
+            ppa_packages=self.cve.ppa_packages,
+            ppa_series_packages=self.cve.ppa_series_packages,
+        )
+
+        self.assertEqual(initial_count, len(bug.bugtasks))
+        self.assertEqual(initial_task_ids, {t.id for t in bug.bugtasks})
+
     def test_import_cve_with_only_ppa_packages_not_aborted(self):
         """import_cve doesn't abort when CVE has only PPA packages.
 
@@ -2311,6 +2507,72 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         self.assertIsNotNone(bug)
         self.assertIsNotNone(vulnerability)
         self.assertTrue(created)
+
+    def test_create_bug_with_unpublished_ppa_packages(self):
+        """UCT import can create bugtasks for unpublished PPA packages.
+
+        This test verifies that the UCT importer passes
+        check_ppa_source_package=False to allow creating bugtasks for PPA
+        packages that haven't been published yet, which is needed for
+        security workflows where tasks are created before packages are ready.
+        """
+        # Create PPA without any publications
+        ppa = self.factory.makeArchive()
+        spn = self.factory.makeSourcePackageName()
+        distroseries = self.factory.makeDistroSeries(
+            distribution=ppa.distribution
+        )
+
+        # Create unpublished archive source packages (no publications)
+        asp = ArchiveSourcePackage(ppa, spn)
+        asps = ArchiveSourcePackageSeries(ppa, distroseries, spn)
+
+        # Create a CVE with unpublished PPA packages
+        # Use the existing CVE setup but add unpublished PPA packages
+        cve = copy.copy(self.cve)
+        # Add a PPA package (not series) to test unpublished package creation
+        cve.ppa_packages = list(cve.ppa_packages) + [
+            CVE.PPAPackage(
+                target=asp,
+                package_name=spn,
+                importance=BugTaskImportance.HIGH,
+                tags=set(),
+            )
+        ]
+        # Also add a series package for the same package name
+        cve.ppa_series_packages = list(cve.ppa_series_packages) + [
+            CVE.PPASeriesPackage(
+                target=asps,
+                package_name=spn,
+                importance=BugTaskImportance.HIGH,
+                status=BugTaskStatus.FIXRELEASED,
+                status_explanation="fixed in unpublished package",
+            )
+        ]
+
+        # This should succeed even though the PPA packages aren't published
+        bug, vulnerability, created = self.importer.import_cve(cve)
+
+        self.assertIsNotNone(bug)
+        self.assertIsNotNone(vulnerability)
+        self.assertTrue(created)
+
+        # Verify the unpublished PPA package tasks were created
+        bug_tasks_by_target = {t.target: t for t in bug.bugtasks}
+        self.assertIn(asp, bug_tasks_by_target)
+        self.assertIn(asps, bug_tasks_by_target)
+
+        # Verify the package task was created
+        asp_task = bug_tasks_by_target[asp]
+        self.assertIsNotNone(asp_task)
+
+        # Verify the series task properties
+        asps_task = bug_tasks_by_target[asps]
+        self.assertEqual(BugTaskImportance.HIGH, asps_task.importance)
+        self.assertEqual(BugTaskStatus.FIXRELEASED, asps_task.status)
+        self.assertEqual(
+            "fixed in unpublished package", asps_task.status_explanation
+        )
 
     def test_make_from_uct_record_with_subprojects(self):
         """make_from_uct_record populates ppa_packages/ppa_series_packages."""
@@ -2387,6 +2649,104 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         )
         self.assertEqual(BugTaskStatus.FIXRELEASED, ppa_series_pkg.status)
         self.assertEqual("fixed", ppa_series_pkg.status_explanation)
+
+    def test_full_import_with_unpublished_ppa_package(self):
+        """Test importing packages not yet published in a PPA.
+
+        Verifies the complete flow:
+            - UCT record
+            - make_from_uct_record
+            - import_cve
+            - bug tasks
+        for a package that has no publication in the target archive.
+        """
+        # Create a PPA with no publications for our test package
+        ppa_owner = self.factory.makePerson()
+        ppa = self.factory.makeArchive(
+            distribution=self.ubuntu,
+            owner=ppa_owner,
+            name="test-security",
+        )
+        spn = self.factory.makeSourcePackageName()
+        # Deliberately no publication created for spn in ppa
+
+        subprojects = {
+            "test-security/focal": SubProjectPPAs(
+                ubuntu_series="focal",
+                ppa=PPAReference(
+                    owner=ppa_owner.name,
+                    archive=ppa.name,
+                    pocket="security",
+                ),
+            ),
+        }
+
+        uct_record = UCTRecord(
+            parent_dir="active",
+            assigned_to=None,
+            bugs=[],
+            cvss={},
+            candidate="CVE-2022-23222",
+            crd=None,
+            public_date_at_USN=None,
+            public_date=datetime(2022, 1, 14, 8, 15, tzinfo=timezone.utc),
+            description="description",
+            discovered_by="",
+            mitigation=None,
+            notes="",
+            priority=UCTRecord.Priority.HIGH,
+            priority_explanation="",
+            references=[],
+            ubuntu_description="",
+            packages=[
+                UCTRecord.Package(
+                    name=spn.name,
+                    statuses=[
+                        UCTRecord.SeriesPackageStatus(
+                            series="test-security/focal",
+                            status=UCTRecord.PackageStatus.NEEDED,
+                            reason="not fixed yet",
+                            priority=UCTRecord.Priority.HIGH,
+                        ),
+                    ],
+                    priority=UCTRecord.Priority.HIGH,
+                    tags=set(),
+                    patches=[],
+                ),
+            ],
+            global_tags=set(),
+        )
+
+        # make_from_uct_record includes the unpublished package
+        cve = CVE.make_from_uct_record(uct_record, subprojects=subprojects)
+
+        self.assertEqual(1, len(cve.ppa_packages))
+        self.assertEqual(1, len(cve.ppa_series_packages))
+        self.assertEqual(ppa, cve.ppa_packages[0].target.archive)
+        self.assertEqual(spn, cve.ppa_packages[0].package_name)
+        self.assertEqual(
+            self.ubuntu_supported_series,
+            cve.ppa_series_packages[0].target.distroseries,
+        )
+        self.assertEqual(BugTaskStatus.NEW, cve.ppa_series_packages[0].status)
+
+        # import_cve creates bug tasks for the unpublished package
+        bug, vulnerability, created = self.importer.import_cve(cve)
+
+        self.assertIsNotNone(bug)
+        self.assertIsNotNone(vulnerability)
+        self.assertTrue(created)
+
+        bug_tasks_by_target = {t.target: t for t in bug.bugtasks}
+        ppa_pkg_target = cve.ppa_packages[0].target
+        ppa_series_target = cve.ppa_series_packages[0].target
+
+        self.assertIn(ppa_pkg_target, bug_tasks_by_target)
+        self.assertIn(ppa_series_target, bug_tasks_by_target)
+
+        ppa_series_task = bug_tasks_by_target[ppa_series_target]
+        self.assertEqual(BugTaskStatus.NEW, ppa_series_task.status)
+        self.assertEqual("not fixed yet", ppa_series_task.status_explanation)
 
     def test_per_series_priority_round_trip(self):
         """Test that per-series priorities are preserved in round-trip."""
@@ -2726,3 +3086,389 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         self.assertEqual(2, len(patch_urls))
         self.assertEqual("v1.2.3-beta", patch_urls[0].notes)
         self.assertEqual("fixes: CVE-2024-1234", patch_urls[1].notes)
+
+    def test_discovered_by_comes_from_cve_file_on_create_when_empty(self):
+        """Test that discovered_by is set during bug creation when CVE field
+        is empty."""
+        # Create a CVE with discovered_by set
+        lp_cve = self.factory.makeCVE("2024-99999")
+        # Ensure the CVE's discovered_by is initially empty
+        lp_cve = removeSecurityProxy(lp_cve)
+        lp_cve.discovered_by = None
+
+        # Create importer and a CVE object with discovered_by
+        importer = UCTImporter(self.ubuntu)
+
+        # Create a minimal CVE record with discovered_by
+        uct_record = UCTRecord(
+            parent_dir="active",
+            assigned_to="",
+            bugs=[],
+            cvss={},
+            candidate="CVE-2024-99999",
+            crd=None,
+            public_date_at_USN=None,
+            public_date=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            description="Test vulnerability",
+            discovered_by="John Doe",
+            mitigation=None,
+            notes="",
+            priority=UCTRecord.Priority.MEDIUM,
+            priority_explanation="",
+            references=[],
+            ubuntu_description="Test description",
+            packages=[
+                UCTRecord.Package(
+                    name=self.ubuntu_package.sourcepackagename.name,
+                    statuses=[
+                        UCTRecord.SeriesPackageStatus(
+                            series="focal",
+                            status=UCTRecord.PackageStatus.NEEDED,
+                            reason="",
+                            priority=None,
+                        ),
+                    ],
+                    priority=None,
+                    tags=set(),
+                    patches=[],
+                ),
+            ],
+            global_tags=set(),
+        )
+
+        cve = CVE.make_from_uct_record(uct_record)
+        _, _ = importer.create_bug(cve, lp_cve)
+
+        # Verify discovered_by was set from the CVE record
+        self.assertEqual("John Doe", lp_cve.discovered_by)
+
+    def test_discovered_by_not_overwritten_on_create_when_set(self):
+        """Test that discovered_by is not overwritten during bug creation when
+        already set."""
+        # Create a CVE with discovered_by already set
+        lp_cve = self.factory.makeCVE("2024-99998")
+        lp_cve = removeSecurityProxy(lp_cve)
+        lp_cve.discovered_by = "Original Discoverer"
+
+        # Create importer and a CVE object with different discovered_by
+        importer = UCTImporter(self.ubuntu)
+
+        uct_record = UCTRecord(
+            parent_dir="active",
+            assigned_to="",
+            bugs=[],
+            cvss={},
+            candidate="CVE-2024-99998",
+            crd=None,
+            public_date_at_USN=None,
+            public_date=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            description="Test vulnerability",
+            discovered_by="New Person",  # Different value
+            mitigation=None,
+            notes="",
+            priority=UCTRecord.Priority.MEDIUM,
+            priority_explanation="",
+            references=[],
+            ubuntu_description="Test description",
+            packages=[
+                UCTRecord.Package(
+                    name=self.ubuntu_package.sourcepackagename.name,
+                    statuses=[
+                        UCTRecord.SeriesPackageStatus(
+                            series="focal",
+                            status=UCTRecord.PackageStatus.NEEDED,
+                            reason="",
+                            priority=None,
+                        ),
+                    ],
+                    priority=None,
+                    tags=set(),
+                    patches=[],
+                ),
+            ],
+            global_tags=set(),
+        )
+
+        cve = CVE.make_from_uct_record(uct_record)
+        _, _ = importer.create_bug(cve, lp_cve)
+
+        # Verify discovered_by was NOT overwritten
+        self.assertEqual("Original Discoverer", lp_cve.discovered_by)
+
+    def test_discovered_by_comes_from_cve_file_on_update_when_empty(self):
+        """Test that discovered_by is set during bug update when CVE field is
+        empty."""
+        # Create a CVE and bug first
+        lp_cve = self.factory.makeCVE("2024-99997")
+        lp_cve = removeSecurityProxy(lp_cve)
+        lp_cve.discovered_by = None
+
+        importer = UCTImporter(self.ubuntu)
+
+        # Create initial bug
+        uct_record = UCTRecord(
+            parent_dir="active",
+            assigned_to="",
+            bugs=[],
+            cvss={},
+            candidate="CVE-2024-99997",
+            crd=None,
+            public_date_at_USN=None,
+            public_date=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            description="Test vulnerability",
+            discovered_by="",  # Empty initially
+            mitigation=None,
+            notes="",
+            priority=UCTRecord.Priority.MEDIUM,
+            priority_explanation="",
+            references=[],
+            ubuntu_description="Test description",
+            packages=[
+                UCTRecord.Package(
+                    name=self.ubuntu_package.sourcepackagename.name,
+                    statuses=[
+                        UCTRecord.SeriesPackageStatus(
+                            series="focal",
+                            status=UCTRecord.PackageStatus.NEEDED,
+                            reason="",
+                            priority=None,
+                        ),
+                    ],
+                    priority=None,
+                    tags=set(),
+                    patches=[],
+                ),
+            ],
+            global_tags=set(),
+        )
+
+        cve = CVE.make_from_uct_record(uct_record)
+        bug, _ = importer.create_bug(cve, lp_cve)
+
+        # Verify discovered_by is empty (could be None or empty string)
+        self.assertFalse(lp_cve.discovered_by)
+
+        # Now update with a record that has discovered_by set
+        uct_record_updated = copy.deepcopy(uct_record)
+        uct_record_updated.discovered_by = "Jane Smith"
+        cve_updated = CVE.make_from_uct_record(uct_record_updated)
+
+        _, _ = importer.update_bug(bug, cve_updated, lp_cve)
+
+        # Verify discovered_by was set during update
+        self.assertEqual("Jane Smith", lp_cve.discovered_by)
+
+    def test_discovered_by_not_overwritten_on_update_when_set(self):
+        """Test that discovered_by is not overwritten during bug update when
+        already set."""
+        # Create a CVE and bug with discovered_by set
+        lp_cve = self.factory.makeCVE("2024-99996")
+        lp_cve = removeSecurityProxy(lp_cve)
+        lp_cve.discovered_by = "Original Researcher"
+
+        importer = UCTImporter(self.ubuntu)
+
+        uct_record = UCTRecord(
+            parent_dir="active",
+            assigned_to="",
+            bugs=[],
+            cvss={},
+            candidate="CVE-2024-99996",
+            crd=None,
+            public_date_at_USN=None,
+            public_date=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            description="Test vulnerability",
+            discovered_by="Original Researcher",
+            mitigation=None,
+            notes="",
+            priority=UCTRecord.Priority.MEDIUM,
+            priority_explanation="",
+            references=[],
+            ubuntu_description="Test description",
+            packages=[
+                UCTRecord.Package(
+                    name=self.ubuntu_package.sourcepackagename.name,
+                    statuses=[
+                        UCTRecord.SeriesPackageStatus(
+                            series="focal",
+                            status=UCTRecord.PackageStatus.NEEDED,
+                            reason="",
+                            priority=None,
+                        ),
+                    ],
+                    priority=None,
+                    tags=set(),
+                    patches=[],
+                ),
+            ],
+            global_tags=set(),
+        )
+
+        cve = CVE.make_from_uct_record(uct_record)
+        bug, _ = importer.create_bug(cve, lp_cve)
+
+        # Now try to update with different discovered_by
+        uct_record_updated = copy.deepcopy(uct_record)
+        uct_record_updated.discovered_by = "Different Person"
+        cve_updated = CVE.make_from_uct_record(uct_record_updated)
+
+        _, _ = importer.update_bug(bug, cve_updated, lp_cve)
+
+        # Verify discovered_by was NOT overwritten
+        self.assertEqual("Original Researcher", lp_cve.discovered_by)
+
+
+class TestCVELibDateNormalization(TestCase):
+    """Test date normalization behavior in load_cve function."""
+
+    def _create_test_cve_file(self, content):
+        """Helper to create a temporary CVE file with given content."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix="", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(textwrap.dedent(content))
+            return Path(f.name)
+
+    def test_load_cve_preserves_date_with_crd_when_normalize_dates_false(self):
+        """Test that PublicDate and CRD are preserved when
+        normalize_dates=False (default)."""
+        cve_content = """\
+            Candidate: CVE-2024-TEST1
+            PublicDate: 2024-03-25 10:00:00 UTC
+            CRD: 2024-03-11 08:00:00 UTC
+            References:
+             https://example.com/cve-2024-test1
+            Description:
+             Test vulnerability
+            Ubuntu-Description:
+             Test description
+            Notes:
+            Bugs:
+            Priority: medium
+            Discovered-by: Test User
+            Assigned-to:
+            CVSS:
+
+            upstream_testpkg: needed
+            """
+        cve_file = self._create_test_cve_file(cve_content)
+
+        try:
+            # Load without normalize_dates (should default to False)
+            data = load_cve(str(cve_file))
+
+            # Verify dates are preserved as-is
+            self.assertEqual("2024-03-25 10:00:00 UTC", data["PublicDate"])
+            self.assertEqual("2024-03-11 08:00:00 UTC", data["CRD"])
+        finally:
+            cve_file.unlink()
+
+    def test_load_cve_replaces_publicdate_with_crd_when_normalize_dates_true(
+        self,
+    ):
+        """Test that PublicDate is replaced with CRD when
+        normalize_dates=True."""
+        cve_content = """\
+            Candidate: CVE-2024-TEST3
+            PublicDate: 2024-03-25 10:00:00 UTC
+            CRD: 2024-03-11 08:00:00 UTC
+            References:
+             https://example.com/cve-2024-test3
+            Description:
+             Test vulnerability
+            Ubuntu-Description:
+             Test description
+            Notes:
+            Bugs:
+            Priority: medium
+            Discovered-by: Test User
+            Assigned-to:
+            CVSS:
+
+            upstream_testpkg: needed
+            """
+        cve_file = self._create_test_cve_file(cve_content)
+
+        try:
+            # Load with normalize_dates=True
+            data = load_cve(str(cve_file), normalize_dates=True)
+
+            # Verify PublicDate was replaced with CRD
+            self.assertEqual("2024-03-11 08:00:00 UTC", data["PublicDate"])
+            self.assertEqual("2024-03-11 08:00:00 UTC", data["CRD"])
+        finally:
+            cve_file.unlink()
+
+    def test_load_cve_preserves_date_with_usn_when_normalize_dates_false(self):
+        """Test that PublicDateAtUSN is not used to replace PublicDate when
+        normalize_dates=False (default)."""
+        cve_content = """\
+            Candidate: CVE-2024-TEST4
+            PublicDate: 2024-03-25 10:00:00 UTC
+            PublicDateAtUSN: 2024-03-20 09:00:00 UTC
+            References:
+             https://example.com/cve-2024-test4
+            Description:
+             Test vulnerability
+            Ubuntu-Description:
+             Test description
+            Notes:
+            Bugs:
+            Priority: medium
+            Discovered-by: Test User
+            Assigned-to:
+            CVSS:
+
+            upstream_testpkg: needed
+            """
+        cve_file = self._create_test_cve_file(cve_content)
+
+        try:
+            # Load without normalize_dates
+            data = load_cve(str(cve_file))
+
+            # Verify PublicDate is preserved
+            self.assertEqual("2024-03-25 10:00:00 UTC", data["PublicDate"])
+            self.assertEqual(
+                "2024-03-20 09:00:00 UTC", data["PublicDateAtUSN"]
+            )
+        finally:
+            cve_file.unlink()
+
+    def test_load_cve_replaces_date_with_usn_when_normalize_dates_true(
+        self,
+    ):
+        """Test that PublicDate is replaced with PublicDateAtUSN when
+        normalize_dates=True."""
+        cve_content = """\
+            Candidate: CVE-2024-TEST5
+            PublicDate: 2024-03-25 10:00:00 UTC
+            PublicDateAtUSN: 2024-03-20 09:00:00 UTC
+            References:
+             https://example.com/cve-2024-test5
+            Description:
+             Test vulnerability
+            Ubuntu-Description:
+             Test description
+            Notes:
+            Bugs:
+            Priority: medium
+            Discovered-by: Test User
+            Assigned-to:
+            CVSS:
+
+            upstream_testpkg: needed
+            """
+        cve_file = self._create_test_cve_file(cve_content)
+
+        try:
+            # Load with normalize_dates=True
+            data = load_cve(str(cve_file), normalize_dates=True)
+
+            # Verify PublicDate was replaced with PublicDateAtUSN
+            self.assertEqual("2024-03-20 09:00:00 UTC", data["PublicDate"])
+            self.assertEqual(
+                "2024-03-20 09:00:00 UTC", data["PublicDateAtUSN"]
+            )
+        finally:
+            cve_file.unlink()

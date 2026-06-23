@@ -87,6 +87,24 @@ class TestModifiedBranchesLastModifiedEpoch(TestCase):
             script.get_last_modified_epoch(),
         )
 
+    def test_modified_last_hours_zero_raises(self):
+        # Passing in 0 for --last-hours raises an error.
+        script = ModifiedBranchesScript(
+            "modified-branches", test_args=["--last-hours=0"]
+        )
+        self.assertRaises(
+            LaunchpadScriptFailure, script.get_last_modified_epoch
+        )
+
+    def test_modified_last_hours_negative_raises(self):
+        # Passing in a negative value for --last-hours raises an error.
+        script = ModifiedBranchesScript(
+            "modified-branches", test_args=["--last-hours=-1"]
+        )
+        self.assertRaises(
+            LaunchpadScriptFailure, script.get_last_modified_epoch
+        )
+
 
 class TestModifiedBranchesStripPrefix(TestCase):
     """Test the prefix stripping."""
@@ -117,6 +135,17 @@ class TestModifiedBranchesStripPrefix(TestCase):
         script.options.append_suffix = ""
         location = script.process_location("/srv/testing")
         self.assertEqual("testing", location)
+
+    def test_prefix_boundary_is_respected(self):
+        # A path that starts with a string matching the prefix but at a
+        # different path boundary is left unchanged.
+        script = ModifiedBranchesScript(
+            "modified-branches",
+            test_args=["--last-hours=12", "--strip-prefix=/srv/ppa"],
+        )
+        script.options.append_suffix = ""
+        location = script.process_location("/srv/ppadev/testing")
+        self.assertEqual("/srv/ppadev/testing", location)
 
     def test_non_matching_location_unchanged(self):
         # If the location doesn't match, it is left unchanged.

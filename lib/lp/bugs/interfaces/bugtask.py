@@ -948,7 +948,9 @@ class IBugTask(IHasBug, IBugTaskDelete):
         value is set to None, date_assigned is also set to None.
         """
 
-    def validateTransitionToTarget(target):
+    def validateTransitionToTarget(
+        target, check_source_package=True, check_ppa_source_package=True
+    ):
         """Check whether a transition to this target is legal.
 
         :raises IllegalTarget: if the new target is not allowed.
@@ -1197,10 +1199,13 @@ class IBugTaskSet(Interface):
         bug,
         owner,
         targets,
+        validate_target=True,
         status=None,
         importance=None,
         assignee=None,
         milestone=None,
+        metadata=None,
+        check_ppa_source_package=True,
     ):
         """Create a series of bug tasks and return them."""
 
@@ -1208,11 +1213,13 @@ class IBugTaskSet(Interface):
         bug,
         owner,
         target,
+        validate_target=True,
         status=None,
         importance=None,
         assignee=None,
         milestone=None,
         metadata=None,
+        check_ppa_source_package=True,
     ):
         """Create a bug task on a bug and return it.
 

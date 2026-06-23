@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import transaction
 from zope.component import getUtility
@@ -12,7 +13,7 @@ from lp.bugs.scripts.soss import SOSSRecord
 from lp.bugs.scripts.soss.sossimport import SOSSImporter
 from lp.registry.interfaces.externalpackage import ExternalPackageType
 from lp.registry.interfaces.sourcepackagename import ISourcePackageNameSet
-from lp.testing import TestCaseWithFactory
+from lp.testing import TestCaseWithFactory, person_logged_in
 from lp.testing.layers import LaunchpadZopelessLayer
 
 
@@ -594,3 +595,35 @@ class TestSOSSImporter(TestCaseWithFactory):
         self.metadata = None
 
         self._check_vulnerability_fields(vulnerability, bug)
+
+    def test_from_record_no_partial_write_on_bug_creation_failure(self):
+        """from_record() must not leave an orphaned vulnerability if bug
+        creation fails.
+
+        SOSS creates the vulnerability before the bug, so a bug creation
+        failure would leave an orphaned vulnerability. ImportVulnerabilityJob
+        always calls transaction.commit() in its finally block, so without
+        the transaction.abort() in from_record()'s except block the orphan
+        would be committed. This test verifies the abort prevents that.
+        """
+        soss_importer = SOSSImporter(
+            self.soss, information_type=InformationType.PROPRIETARY
+        )
+
+        with patch.object(
+            SOSSImporter, "_create_bug", side_effect=RuntimeError("boom")
+        ):
+            self.assertRaises(
+                RuntimeError,
+                soss_importer.from_record,
+                self.soss_record,
+                "CVE-2025-1979",
+            )
+
+        # The vulnerability created before _create_bug was called must have
+        # been rolled back by the transaction.abort() in the except block.
+
+        admin = getUtility(ILaunchpadCelebrities).admin
+        with person_logged_in(admin):
+            self.assertEqual(len(list(self.cve.vulnerabilities)), 0)
+        self.assertEqual(len(self.cve.bugs), 0)

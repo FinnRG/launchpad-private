@@ -232,6 +232,7 @@ class UCTImporter(SVTImporter):
                     importance=initial_package.importance,
                     cve=lp_cve,
                     check_permissions=False,
+                    check_ppa_source_package=False,
                 )
             )
         )
@@ -261,6 +262,10 @@ class UCTImporter(SVTImporter):
             ppa_series_packages=cve.ppa_series_packages,
         )
         self._assign_bug_tasks(bug, cve.assignee)
+
+        # Update CVE metadata (only if not already set)
+        if not lp_cve.discovered_by:
+            lp_cve.discovered_by = cve.discovered_by
 
         # Make a note of the import in the activity log:
         getUtility(IBugActivitySet).new(
@@ -313,6 +318,10 @@ class UCTImporter(SVTImporter):
         self._update_tags(
             bug, cve.global_tags, cve.distro_packages, cve.ppa_packages
         )
+
+        # Update CVE metadata (only if not already set)
+        if not lp_cve.discovered_by:
+            lp_cve.discovered_by = cve.discovered_by
 
         vulnerability = self._find_existing_vulnerability(lp_cve, self.ubuntu)
         if vulnerability is None:
@@ -396,10 +405,18 @@ class UCTImporter(SVTImporter):
         :param bug: `Bug` model to be updated
         :param distro_packages: list of `DistroPackage`s from a `CVE`
         :param series_packages: list of `SeriesPackage`s from a `CVE`
+        :param upstream_packages: list of `UpstreamPackage`s from a `CVE`
+        :param ppa_packages: list of `PPAPackage`s from a `CVE`
+        :param ppa_series_packages: list of `PPASeriesPackage`s from a `CVE`
         """
         bug_tasks: List[BugTask] = bug.bugtasks
-        bug_task_by_target = {t.target: t for t in bug_tasks}
         bug_task_set = getUtility(IBugTaskSet)
+        existing_targets = {t.target for t in bug_tasks}
+
+        # Collect all targets that need to be created and check for duplicates.
+        seen_targets = set(existing_targets)
+        targets_to_create = []
+        duplicate_targets = []
         for package in chain(
             distro_packages,
             series_packages,
@@ -407,8 +424,39 @@ class UCTImporter(SVTImporter):
             ppa_packages or [],
             ppa_series_packages or [],
         ):
-            if package.target not in bug_task_by_target:
-                bug_task_set.createTask(bug, self.bug_importer, package.target)
+            target = package.target
+            if target not in seen_targets:
+                seen_targets.add(target)
+                targets_to_create.append(target)
+
+            # If the target is in seen_targets but not in existing_targets
+            # which are bugtasks that already exist in the bug, it means that
+            # this import tries to create bugtasks for the same target multiple
+            # times, which means something is wrong with the CVE package lists.
+            # We should raise an error in this case.
+            elif target not in existing_targets:
+                duplicate_targets.append(target)
+
+        if duplicate_targets:
+            target_names = ", ".join(
+                t.bugtargetdisplayname for t in duplicate_targets
+            )
+            logger.error(
+                "Duplicate targets detected in CVE package lists: %s",
+                target_names,
+            )
+            raise UCTImportError(
+                f"Duplicate targets in CVE package lists: {target_names}"
+            )
+
+        # Create all tasks in a single batch operation
+        if targets_to_create:
+            bug_task_set.createManyTasks(
+                bug,
+                self.bug_importer,
+                targets_to_create,
+                check_ppa_source_package=False,
+            )
 
     def _create_vulnerability(
         self,
