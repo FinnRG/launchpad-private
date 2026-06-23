@@ -87,7 +87,9 @@ class ArchiveSourcePackageSeries(
     @property
     def archive_sourcepackage(self):
         """See `IArchiveSourcePackageSeries`."""
-        return self.archive.getArchiveSourcePackage(self.sourcepackagename)
+        return self.archive.getArchiveSourcePackage(
+            self.sourcepackagename, check_publication=False
+        )
 
     @property
     def series(self):
