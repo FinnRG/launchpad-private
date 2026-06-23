@@ -1056,6 +1056,39 @@ class TestDirectPackagesIndex(TestNativePublishingBase):
         packages_bytes, _ = self._generate(pubs[0])
         self.assertIn(b"SHA512:", packages_bytes)
 
+    def test_phased_update_percentage(self):
+        """Phased-Update-Percentage is emitted for a partial rollout."""
+        pubs = self.getPubBinaries(
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        pubs[0].phased_update_percentage = 50
+        self.layer.commit()
+
+        packages_bytes, _ = self._generate(pubs[0])
+        self.assertIn(b"Phased-Update-Percentage: 50", packages_bytes)
+
+    def test_phased_update_percentage_zero(self):
+        """A phased update percentage of 0 is emitted rather than dropped."""
+        pubs = self.getPubBinaries(
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        pubs[0].phased_update_percentage = 0
+        self.layer.commit()
+
+        packages_bytes, _ = self._generate(pubs[0])
+        self.assertIn(b"Phased-Update-Percentage: 0", packages_bytes)
+
+    def test_phased_update_percentage_none_omitted(self):
+        """No Phased-Update-Percentage field when the value is NULL."""
+        pubs = self.getPubBinaries(
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        pubs[0].phased_update_percentage = None
+        self.layer.commit()
+
+        packages_bytes, _ = self._generate(pubs[0])
+        self.assertNotIn(b"Phased-Update-Percentage", packages_bytes)
+
     def test_extra_overrides_applied(self):
         """Extra override fields are appended to the matching stanza."""
         pubs = self.getPubBinaries(

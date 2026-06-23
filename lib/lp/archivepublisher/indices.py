@@ -774,7 +774,13 @@ def generate_packages_index(
         fields.append("SHA256", sha256)
         if sha512 is not None:
             fields.append("SHA512", sha512)
-        fields.append("Phased-Update-Percentage", phased_update_percentage)
+        # A percentage of 0 is meaningful and must be
+        # emitted. Only a NULL/None value can be skipped. Stringify so that
+        # IndexStanzaFields.makeOutput does not treat 0 as an empty field.
+        if phased_update_percentage is not None:
+            fields.append(
+                "Phased-Update-Percentage", str(phased_update_percentage)
+            )
         fields.append("Homepage", homepage)
         fields.append("Description", display_description)
         if separate_long_descriptions:
