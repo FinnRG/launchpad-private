@@ -248,7 +248,6 @@ class UCTImporter(SVTImporter):
             bug,
             remaining_distro_packages,
             cve.series_packages,
-            cve.upstream_packages,
             ppa_packages=remaining_ppa_packages,
             ppa_series_packages=cve.ppa_series_packages,
         )
@@ -257,7 +256,6 @@ class UCTImporter(SVTImporter):
             cve.importance,
             cve.distro_packages,
             cve.series_packages,
-            cve.upstream_packages,
             ppa_packages=cve.ppa_packages,
             ppa_series_packages=cve.ppa_series_packages,
         )
@@ -298,7 +296,6 @@ class UCTImporter(SVTImporter):
             bug,
             cve.distro_packages,
             cve.series_packages,
-            cve.upstream_packages,
             ppa_packages=cve.ppa_packages,
             ppa_series_packages=cve.ppa_series_packages,
         )
@@ -307,7 +304,6 @@ class UCTImporter(SVTImporter):
             cve.importance,
             cve.distro_packages,
             cve.series_packages,
-            cve.upstream_packages,
             ppa_packages=cve.ppa_packages,
             ppa_series_packages=cve.ppa_series_packages,
         )
@@ -389,7 +385,6 @@ class UCTImporter(SVTImporter):
         bug: BugModel,
         distro_packages: List[CVE.DistroPackage],
         series_packages: List[CVE.SeriesPackage],
-        upstream_packages: List[CVE.UpstreamPackage],
         ppa_packages: Optional[List[CVE.PPAPackage]] = None,
         ppa_series_packages: Optional[List[CVE.PPASeriesPackage]] = None,
     ) -> None:
@@ -405,7 +400,6 @@ class UCTImporter(SVTImporter):
         :param bug: `Bug` model to be updated
         :param distro_packages: list of `DistroPackage`s from a `CVE`
         :param series_packages: list of `SeriesPackage`s from a `CVE`
-        :param upstream_packages: list of `UpstreamPackage`s from a `CVE`
         :param ppa_packages: list of `PPAPackage`s from a `CVE`
         :param ppa_series_packages: list of `PPASeriesPackage`s from a `CVE`
         """
@@ -420,7 +414,6 @@ class UCTImporter(SVTImporter):
         for package in chain(
             distro_packages,
             series_packages,
-            upstream_packages,
             ppa_packages or [],
             ppa_series_packages or [],
         ):
@@ -538,6 +531,43 @@ class UCTImporter(SVTImporter):
         vulnerability.date_notice_issued = date_notice_issued
         vulnerability.date_coordinated_release = date_coordinated_release
 
+        # Store upstream packages in metadata instead of bug tasks.
+        seen_upstream_names: set = set()
+        duplicate_upstream_names = []
+        for up in cve.upstream_packages:
+            if up.package_name.name in seen_upstream_names:
+                duplicate_upstream_names.append(up.package_name.name)
+            else:
+                seen_upstream_names.add(up.package_name.name)
+        if duplicate_upstream_names:
+            names = ", ".join(duplicate_upstream_names)
+            logger.error(
+                "Duplicate package names in upstream_packages: %s", names
+            )
+            raise UCTImportError(
+                f"Duplicate package names in upstream_packages: {names}"
+            )
+
+        upstream_packages_data = []
+        for up in cve.upstream_packages:
+            importance_str = (
+                CVE.PRIORITY_MAP_REVERSE[up.importance].value
+                if up.importance
+                else None
+            )
+            status_str = CVE.BUG_TASK_STATUS_MAP_REVERSE[up.status].value
+            upstream_packages_data.append(
+                {
+                    "package_name": up.package_name.name,
+                    "importance": importance_str,
+                    "status": status_str,
+                    "status_explanation": up.status_explanation,
+                }
+            )
+        metadata = dict(vulnerability.metadata or {})
+        metadata["upstream_packages"] = upstream_packages_data
+        vulnerability.metadata = metadata
+
     def _assign_bug_tasks(
         self, bug: BugModel, assignee: Optional[Person]
     ) -> None:
@@ -556,7 +586,6 @@ class UCTImporter(SVTImporter):
         cve_importance: BugTaskImportance,
         distro_packages: List[CVE.DistroPackage],
         series_packages: List[CVE.SeriesPackage],
-        upstream_packages: List[CVE.UpstreamPackage],
         ppa_packages: Optional[List[CVE.PPAPackage]] = None,
         ppa_series_packages: Optional[List[CVE.PPASeriesPackage]] = None,
     ) -> None:
@@ -592,7 +621,7 @@ class UCTImporter(SVTImporter):
             package_importances[pp.package_name.name] = pp_importance
             task.transitionToImportance(pp_importance)
 
-        for sp in chain(series_packages, upstream_packages):
+        for sp in series_packages:
             task = bug_task_by_target[sp.target]
             package_name = sp.package_name.name
             package_importance = package_importances[package_name]

@@ -416,14 +416,6 @@ class TestCVE(TestCaseWithFactory):
         )
         dsp1 = self.factory.makeDistributionSourcePackage(distribution=ubuntu)
         dsp2 = self.factory.makeDistributionSourcePackage(distribution=ubuntu)
-        product_1 = self.factory.makePackagingLink(
-            sourcepackagename=dsp1.sourcepackagename,
-            distroseries=current_series,
-        ).productseries.product
-        product_2 = self.factory.makePackagingLink(
-            sourcepackagename=dsp2.sourcepackagename,
-            distroseries=current_series,
-        ).productseries.product
 
         assignee = self.factory.makePerson()
 
@@ -630,14 +622,12 @@ class TestCVE(TestCaseWithFactory):
             ],
             upstream_packages=[
                 CVE.UpstreamPackage(
-                    target=product_1,
                     package_name=dsp1.sourcepackagename,
                     importance=None,
                     status=BugTaskStatus.FIXRELEASED,
                     status_explanation="reason 4",
                 ),
                 CVE.UpstreamPackage(
-                    target=product_2,
                     package_name=dsp2.sourcepackagename,
                     importance=None,
                     status=BugTaskStatus.FIXRELEASED,
@@ -693,6 +683,57 @@ class TestCVE(TestCaseWithFactory):
     def test_make_from_uct_record(self):
         cve = CVE.make_from_uct_record(self.uct_record)
         self.assertDictEqual(self.cve.__dict__, cve.__dict__)
+
+    def test_make_from_uct_record_upstream_only_package(self):
+        """make_from_uct_record correctly parses a package with only an
+        upstream status into an UpstreamPackage with the right fields."""
+        uct_record = UCTRecord(
+            parent_dir="active",
+            assigned_to="",
+            bugs=[""],
+            cvss={},
+            candidate="CVE-2022-23222",
+            crd=None,
+            public_date=None,
+            public_date_at_USN=None,
+            description="desc",
+            discovered_by="",
+            mitigation=None,
+            notes="",
+            priority=UCTRecord.Priority.MEDIUM,
+            priority_explanation="",
+            references=[""],
+            ubuntu_description="",
+            global_tags=set(),
+            packages=[
+                UCTRecord.Package(
+                    name="external-lib",
+                    statuses=[
+                        UCTRecord.SeriesPackageStatus(
+                            series="upstream",
+                            status=UCTRecord.PackageStatus.RELEASED,
+                            reason="fixed in 2.0",
+                            priority=UCTRecord.Priority.HIGH,
+                        ),
+                    ],
+                    priority=None,
+                    tags=set(),
+                    patches=[],
+                ),
+            ],
+        )
+
+        cve = CVE.make_from_uct_record(uct_record)
+
+        self.assertEqual(1, len(cve.upstream_packages))
+        up = cve.upstream_packages[0]
+        self.assertEqual("external-lib", up.package_name.name)
+        self.assertEqual(BugTaskImportance.HIGH, up.importance)
+        self.assertEqual(BugTaskStatus.FIXRELEASED, up.status)
+        self.assertEqual("fixed in 2.0", up.status_explanation)
+        # No distro or series packages are created for upstream-only entries.
+        self.assertEqual(0, len(cve.distro_packages))
+        self.assertEqual(0, len(cve.series_packages))
 
     def test_to_uct_record(self):
         uct_record = self.cve.to_uct_record()
@@ -805,34 +846,6 @@ class TestCVE(TestCaseWithFactory):
             cache_entities["distribution"]["ubuntu"],
         )
         self.assertEqual(2, distro_series_set.queryByName.call_count)
-
-    def test_make_from_uct_record_caches_products(self):
-        cache_entities = CVE.new_cache()
-
-        CVE.make_from_uct_record(
-            self.uct_record, cache_entities=cache_entities
-        )
-
-        product_cache = cache_entities["product"]
-        self.assertEqual(2, len(product_cache))
-        package_names = {package.name for package in self.uct_record.packages}
-        self.assertEqual(
-            {("ubuntu", package_name) for package_name in package_names},
-            set(product_cache.keys()),
-        )
-        for product in product_cache.values():
-            self.assertIsNotNone(product)
-
-    def test_get_product_cache_key_includes_distribution(self):
-        spn = self.factory.makeSourcePackageName(name="openssl")
-        self.assertEqual(
-            ("ubuntu", "openssl"),
-            CVE._get_product_cache_key(spn, "ubuntu"),
-        )
-        self.assertEqual(
-            ("ubuntu-esm", "openssl"),
-            CVE._get_product_cache_key(spn, "ubuntu-esm"),
-        )
 
     def test_get_patches(self):
         spn = self.factory.makeSourcePackageName()
@@ -1107,21 +1120,18 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             ],
             upstream_packages=[
                 CVE.UpstreamPackage(
-                    target=self.product_1,
                     package_name=self.ubuntu_package.sourcepackagename,
                     importance=BugTaskImportance.HIGH,
                     status=BugTaskStatus.FIXRELEASED,
                     status_explanation="fix released",
                 ),
                 CVE.UpstreamPackage(
-                    target=self.product_2,
                     package_name=self.esm_package.sourcepackagename,
                     importance=BugTaskImportance.LOW,
                     status=BugTaskStatus.WONTFIX,
                     status_explanation="ignored",
                 ),
                 CVE.UpstreamPackage(
-                    target=self.product_3,
                     package_name=self._ppa_asp.sourcepackagename,
                     importance=None,
                     status=BugTaskStatus.FIXRELEASED,
@@ -1402,7 +1412,6 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         self.assertEqual(
             len(cve.distro_packages)
             + len(cve.series_packages)
-            + len(cve.upstream_packages)
             + len(cve.ppa_packages)
             + len(cve.ppa_series_packages),
             len(bug_tasks),
@@ -1456,8 +1465,7 @@ class TestUCTImporterExporter(TestCaseWithFactory):
                 series_package.status_explanation, t.status_explanation
             )
 
-        # Process PPA packages before upstream packages so package_importances
-        # is populated for packages that only exist in PPAs
+        # Process PPA packages to populate package_importances for all PPAs.
         for ppa_package in cve.ppa_packages:
             self.assertIn(ppa_package.target, bug_tasks_by_target)
             t = bug_tasks_by_target[ppa_package.target]
@@ -1478,19 +1486,6 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             self.assertEqual(ppa_series_package.status, t.status)
             self.assertEqual(
                 ppa_series_package.status_explanation, t.status_explanation
-            )
-
-        for upstream_package in cve.upstream_packages:
-            self.assertIn(upstream_package.target, bug_tasks_by_target)
-            t = bug_tasks_by_target[upstream_package.target]
-            package_importance = package_importances[
-                upstream_package.package_name.name
-            ]
-            sp_importance = upstream_package.importance or package_importance
-            self.assertEqual(sp_importance, t.importance)
-            self.assertEqual(upstream_package.status, t.status)
-            self.assertEqual(
-                upstream_package.status_explanation, t.status_explanation
             )
 
         for t in bug_tasks:
@@ -1623,6 +1618,29 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         )
         self.assertEqual([bug], vulnerability.bugs)
         self.assertEqual(vulnerability.cvss, cve.cvss)
+
+        # Upstream packages are stored in vulnerability metadata.
+        expected_upstream = sorted(
+            [
+                {
+                    "package_name": up.package_name.name,
+                    "importance": (
+                        CVE.PRIORITY_MAP_REVERSE[up.importance].value
+                        if up.importance
+                        else None
+                    ),
+                    "status": CVE.BUG_TASK_STATUS_MAP_REVERSE[up.status].value,
+                    "status_explanation": up.status_explanation,
+                }
+                for up in cve.upstream_packages
+            ],
+            key=lambda x: x["package_name"],
+        )
+        actual_upstream = sorted(
+            (vulnerability.metadata or {}).get("upstream_packages", []),
+            key=lambda x: x["package_name"],
+        )
+        self.assertEqual(expected_upstream, actual_upstream)
 
     def checkCVE(self, expected: CVE, actual: CVE):
         self.assertEqual(expected.sequence, actual.sequence)
@@ -2035,6 +2053,88 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         self.importer.update_bug(bug, cve, self.lp_cve)
         self.checkBug(bug, cve)
 
+    def test_update_bug_upstream_packages_changed(self):
+        """update_bug overwrites upstream metadata when upstream packages
+        are added, removed, or modified."""
+        bug, _ = self.importer.create_bug(self.cve, self.lp_cve)
+        cve = self.cve
+
+        # Replace with a single modified entry.
+        cve.upstream_packages = [
+            CVE.UpstreamPackage(
+                package_name=self.factory.makeSourcePackageName(
+                    "brand-new-upstream"
+                ),
+                importance=BugTaskImportance.CRITICAL,
+                status=BugTaskStatus.NEW,
+                status_explanation="not yet fixed",
+            ),
+        ]
+        self.importer.update_bug(bug, cve, self.lp_cve)
+        self.checkVulnerabilities(bug, cve)
+
+    def test_update_bug_upstream_packages_cleared(self):
+        """update_bug sets upstream metadata to an empty list when
+        upstream_packages is empty."""
+        bug, _ = self.importer.create_bug(self.cve, self.lp_cve)
+        cve = self.cve
+
+        cve.upstream_packages = []
+        self.importer.update_bug(bug, cve, self.lp_cve)
+
+        vulnerability = bug.vulnerabilities[0]
+        upstream_meta = (vulnerability.metadata or {}).get(
+            "upstream_packages", None
+        )
+        self.assertEqual([], upstream_meta)
+
+    def test_to_uct_record_upstream_merges_into_distro_package(self):
+        """to_uct_record appends the upstream status to an existing distro
+        package entry rather than creating a separate UCTRecord.Package."""
+        cve = self.cve
+        # The fixture already has ubuntu_package in distro_packages and also
+        # in upstream_packages. Verify they share a single Package entry.
+        uct_record = cve.to_uct_record(subprojects=self.subprojects)
+        ubuntu_pkg_name = self.ubuntu_package.sourcepackagename.name
+        matching = [
+            p for p in uct_record.packages if p.name == ubuntu_pkg_name
+        ]
+        self.assertEqual(1, len(matching))
+        series_names = [s.series for s in matching[0].statuses]
+        self.assertIn("upstream", series_names)
+        # Ensure no duplicate entry was created for the same package.
+        all_names = [p.name for p in uct_record.packages]
+        self.assertEqual(
+            len(all_names),
+            len(set(all_names)),
+            "Duplicate package entries found in UCTRecord",
+        )
+
+    def test_to_uct_record_duplicate_upstream_package_names(self):
+        """Importing a CVE with duplicate upstream package names raises
+        UCTImportError, matching the behaviour of duplicate bug task targets.
+        """
+        cve = self.cve
+        pkg_name = self.ubuntu_package.sourcepackagename.name
+        # Add a second upstream entry for the same package name.
+        cve.upstream_packages = list(cve.upstream_packages) + [
+            CVE.UpstreamPackage(
+                package_name=self.ubuntu_package.sourcepackagename,
+                importance=BugTaskImportance.LOW,
+                status=BugTaskStatus.WONTFIX,
+                status_explanation="also ignored upstream",
+            ),
+        ]
+
+        with self.expectedLog("Duplicate package names in upstream_packages"):
+            error = self.assertRaises(
+                UCTImportError,
+                self.importer.create_bug,
+                cve,
+                self.lp_cve,
+            )
+        self.assertIn(pkg_name, str(error))
+
     def test_update_patch_urls(self):
         bug, _ = self.importer.create_bug(self.cve, self.lp_cve)
         cve = self.cve
@@ -2288,6 +2388,60 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         self.assertListEqual(self.uct_record.packages, uct_record.packages)
         self.assertDictEqual(self.uct_record.__dict__, uct_record.__dict__)
 
+    def test_upstream_packages_external_only(self):
+        """Upstream packages with no Ubuntu counterpart round-trip correctly.
+
+        A package name that exists only upstream (not in any Ubuntu series or
+        PPA) should survive import-export as a standalone UCT package entry
+        with only an 'upstream' status line.
+        """
+        cve = self.cve
+        # Replace the existing upstream packages with purely external ones
+        # that have no corresponding distro/series/ppa packages.
+        cve.upstream_packages = [
+            CVE.UpstreamPackage(
+                package_name=self.factory.makeSourcePackageName(
+                    "external-upstream-only"
+                ),
+                importance=BugTaskImportance.HIGH,
+                status=BugTaskStatus.FIXRELEASED,
+                status_explanation="fixed in 1.2.3",
+            ),
+        ]
+
+        bug, vulnerability, _ = self.importer.import_cve(cve)
+
+        # The upstream package should be stored in vulnerability metadata.
+        upstream_meta = (vulnerability.metadata or {}).get(
+            "upstream_packages", []
+        )
+        self.assertEqual(1, len(upstream_meta))
+        self.assertEqual(
+            "external-upstream-only", upstream_meta[0]["package_name"]
+        )
+        self.assertEqual("released", upstream_meta[0]["status"])
+        self.assertEqual(
+            "fixed in 1.2.3", upstream_meta[0]["status_explanation"]
+        )
+
+        # Export and re-import the package should survive the round-trip as
+        # a standalone UCT package with only the 'upstream' status line.
+        uct_record = self.exporter.to_record(bug, vulnerability)
+        pkg_names = [p.name for p in uct_record.packages]
+        self.assertIn("external-upstream-only", pkg_names)
+
+        ext_pkg = next(
+            p
+            for p in uct_record.packages
+            if p.name == "external-upstream-only"
+        )
+        self.assertEqual(1, len(ext_pkg.statuses))
+        self.assertEqual("upstream", ext_pkg.statuses[0].series)
+        self.assertEqual(
+            UCTRecord.PackageStatus.RELEASED, ext_pkg.statuses[0].status
+        )
+        self.assertEqual("fixed in 1.2.3", ext_pkg.statuses[0].reason)
+
     def test_create_bug_with_ppa_packages(self):
         """create_bug creates bug tasks for PPA package targets."""
         bug, _ = self.importer.create_bug(self.cve, self.lp_cve)
@@ -2334,7 +2488,6 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             bug,
             distro_packages=[],
             series_packages=[],
-            upstream_packages=[],
             ppa_packages=[],
             ppa_series_packages=[],
         )
@@ -2365,14 +2518,12 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         # is already the bug's initial target, so only pass the rest).
         remaining_distro = self.cve.distro_packages[1:]
         series_packages = self.cve.series_packages
-        upstream_packages = self.cve.upstream_packages
         ppa_packages = self.cve.ppa_packages
         ppa_series_packages = self.cve.ppa_series_packages
 
         expected_targets = (
             [p.target for p in remaining_distro]
             + [p.target for p in series_packages]
-            + [p.target for p in upstream_packages]
             + [p.target for p in ppa_packages]
             + [p.target for p in ppa_series_packages]
         )
@@ -2394,7 +2545,6 @@ class TestUCTImporterExporter(TestCaseWithFactory):
                 bug,
                 distro_packages=remaining_distro,
                 series_packages=series_packages,
-                upstream_packages=upstream_packages,
                 ppa_packages=ppa_packages,
                 ppa_series_packages=ppa_series_packages,
             )
@@ -2458,7 +2608,6 @@ class TestUCTImporterExporter(TestCaseWithFactory):
                 [],
                 series_packages,
                 [],
-                [],
                 ppa_series_packages,
             )
 
@@ -2483,7 +2632,6 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             bug,
             distro_packages=self.cve.distro_packages,
             series_packages=self.cve.series_packages,
-            upstream_packages=self.cve.upstream_packages,
             ppa_packages=self.cve.ppa_packages,
             ppa_series_packages=self.cve.ppa_series_packages,
         )
@@ -2977,27 +3125,6 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             cve = CVE.make_from_uct_record(uct_record)
 
         self.assertIsNone(cve.assignee)
-
-    def test_find_upstream_product_for_ppa_package(self):
-        """Test upstream product lookup works for PPA packages."""
-        cache_entities = CVE.new_cache()
-
-        # The DSP has an upstream product linked
-        ppa_packages = [
-            CVE.PPAPackage(
-                target=self.esm_package,
-                package_name=self.esm_package.sourcepackagename,
-                importance=BugTaskImportance.HIGH,
-                tags=set(),
-            )
-        ]
-
-        product = CVE._find_upstream_product(
-            self.esm_package.sourcepackagename, ppa_packages, cache_entities
-        )
-
-        # Should find product_2 which is linked to esm_package
-        self.assertEqual(self.product_2, product)
 
     def test_multiple_break_fix_patches(self):
         """Test handling of multiple break-fix patches for a package."""
