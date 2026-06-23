@@ -503,18 +503,6 @@ class TestCVE(TestCaseWithFactory):
                     name=dsp2.sourcepackagename.name,
                     statuses=[
                         UCTRecord.SeriesPackageStatus(
-                            series=supported_series.name,
-                            status=UCTRecord.PackageStatus.DOES_NOT_EXIST,
-                            reason="",
-                            priority=None,
-                        ),
-                        UCTRecord.SeriesPackageStatus(
-                            series=current_series.name,
-                            status=UCTRecord.PackageStatus.DOES_NOT_EXIST,
-                            reason="",
-                            priority=None,
-                        ),
-                        UCTRecord.SeriesPackageStatus(
                             series="devel",
                             status=UCTRecord.PackageStatus.RELEASED,
                             reason="",
@@ -588,26 +576,6 @@ class TestCVE(TestCaseWithFactory):
                     importance=None,
                     status=BugTaskStatus.FIXRELEASED,
                     status_explanation="reason 3",
-                ),
-                CVE.SeriesPackage(
-                    target=SourcePackage(
-                        sourcepackagename=dsp2.sourcepackagename,
-                        distroseries=supported_series,
-                    ),
-                    package_name=dsp2.sourcepackagename,
-                    importance=None,
-                    status=BugTaskStatus.DOESNOTEXIST,
-                    status_explanation="",
-                ),
-                CVE.SeriesPackage(
-                    target=SourcePackage(
-                        sourcepackagename=dsp2.sourcepackagename,
-                        distroseries=current_series,
-                    ),
-                    package_name=dsp2.sourcepackagename,
-                    importance=None,
-                    status=BugTaskStatus.DOESNOTEXIST,
-                    status_explanation="",
                 ),
                 CVE.SeriesPackage(
                     target=SourcePackage(
@@ -1100,16 +1068,6 @@ class TestUCTImporterExporter(TestCaseWithFactory):
                 CVE.SeriesPackage(
                     target=SourcePackage(
                         sourcepackagename=self.ubuntu_package.sourcepackagename,  # noqa: E501
-                        distroseries=self.ubuntu_current_series,
-                    ),
-                    package_name=self.ubuntu_package.sourcepackagename,
-                    importance=None,
-                    status=BugTaskStatus.DOESNOTEXIST,
-                    status_explanation="does not exist",
-                ),
-                CVE.SeriesPackage(
-                    target=SourcePackage(
-                        sourcepackagename=self.ubuntu_package.sourcepackagename,  # noqa: E501
                         distroseries=self.ubuntu_devel_series,
                     ),
                     package_name=self.ubuntu_package.sourcepackagename,
@@ -1257,12 +1215,6 @@ class TestUCTImporterExporter(TestCaseWithFactory):
                             status=UCTRecord.PackageStatus.RELEASED,
                             reason="2.56+dfsg-1",
                             priority=UCTRecord.Priority.HIGH,
-                        ),
-                        UCTRecord.SeriesPackageStatus(
-                            series="jammy",
-                            status=UCTRecord.PackageStatus.DOES_NOT_EXIST,
-                            reason="does not exist",
-                            priority=None,
                         ),
                         UCTRecord.SeriesPackageStatus(
                             series="devel",
@@ -3443,6 +3395,261 @@ class TestUCTImporterExporter(TestCaseWithFactory):
 
         # Verify discovered_by was NOT overwritten
         self.assertEqual("Original Researcher", lp_cve.discovered_by)
+
+    def _make_all_dne_cve(self, sequence="CVE-2022-23222"):
+        """Return a CVE where every main-archive series status is DNE.
+
+        Both distro_packages and series_packages are empty.
+        """
+        return CVE(
+            sequence=sequence,
+            date_made_public=datetime(2022, 1, 14, 8, 15, tzinfo=timezone.utc),
+            date_notice_issued=None,
+            date_coordinated_release=None,
+            distro_packages=[],
+            series_packages=[],
+            upstream_packages=[],
+            ppa_packages=[],
+            ppa_series_packages=[],
+            importance=BugTaskImportance.CRITICAL,
+            importance_explanation="",
+            status=VulnerabilityStatus.ACTIVE,
+            assignee=None,
+            discovered_by="",
+            description="all-DNE description",
+            ubuntu_description="",
+            bug_urls=[],
+            references=[],
+            notes="",
+            mitigation=None,
+            cvss={},
+            patch_urls=[],
+            break_fix_data=[],
+            global_tags=set(),
+        )
+
+    def test_make_from_uct_record_skips_dne_series_statuses(self):
+        """make_from_uct_record excludes DNE series lines from
+        series_packages and distro_packages."""
+        uct_record = UCTRecord(
+            parent_dir="active",
+            assigned_to="",
+            bugs=[],
+            cvss={},
+            candidate="CVE-2022-23222",
+            crd=None,
+            public_date_at_USN=None,
+            public_date=datetime(2022, 1, 14, 8, 15, tzinfo=timezone.utc),
+            description="desc",
+            discovered_by="",
+            mitigation=None,
+            notes="",
+            priority=UCTRecord.Priority.HIGH,
+            priority_explanation="",
+            references=[],
+            ubuntu_description="",
+            packages=[
+                UCTRecord.Package(
+                    name=self.ubuntu_package.sourcepackagename.name,
+                    statuses=[
+                        UCTRecord.SeriesPackageStatus(
+                            series="focal",
+                            status=UCTRecord.PackageStatus.DOES_NOT_EXIST,
+                            reason="",
+                            priority=None,
+                        ),
+                        UCTRecord.SeriesPackageStatus(
+                            series="jammy",
+                            status=UCTRecord.PackageStatus.DOES_NOT_EXIST,
+                            reason="",
+                            priority=None,
+                        ),
+                    ],
+                    priority=None,
+                    tags=set(),
+                    patches=[],
+                ),
+            ],
+            global_tags=set(),
+        )
+
+        cve = CVE.make_from_uct_record(uct_record)
+
+        # DNE lines are skipped i.e. no series or distro packages.
+        self.assertEqual([], cve.series_packages)
+        self.assertEqual([], cve.distro_packages)
+
+    def test_make_from_uct_record_non_dne_series_included(self):
+        """make_from_uct_record still includes non-DNE series lines."""
+        uct_record = UCTRecord(
+            parent_dir="active",
+            assigned_to="",
+            bugs=[],
+            cvss={},
+            candidate="CVE-2022-23222",
+            crd=None,
+            public_date_at_USN=None,
+            public_date=datetime(2022, 1, 14, 8, 15, tzinfo=timezone.utc),
+            description="desc",
+            discovered_by="",
+            mitigation=None,
+            notes="",
+            priority=UCTRecord.Priority.HIGH,
+            priority_explanation="",
+            references=[],
+            ubuntu_description="",
+            packages=[
+                UCTRecord.Package(
+                    name=self.ubuntu_package.sourcepackagename.name,
+                    statuses=[
+                        UCTRecord.SeriesPackageStatus(
+                            series="focal",
+                            status=UCTRecord.PackageStatus.DOES_NOT_EXIST,
+                            reason="",
+                            priority=None,
+                        ),
+                        UCTRecord.SeriesPackageStatus(
+                            series="jammy",
+                            status=UCTRecord.PackageStatus.NEEDED,
+                            reason="not fixed",
+                            priority=None,
+                        ),
+                    ],
+                    priority=None,
+                    tags=set(),
+                    patches=[],
+                ),
+            ],
+            global_tags=set(),
+        )
+
+        cve = CVE.make_from_uct_record(uct_record)
+
+        # focal (DNE) is skipped; jammy (NEEDED) is kept.
+        series_names = [
+            sp.target.distroseries.name for sp in cve.series_packages
+        ]
+        self.assertNotIn("focal", series_names)
+        self.assertIn("jammy", series_names)
+
+    def test_create_bug_all_dne_targets_ubuntu_with_doesnotexist(self):
+        """create_bug targets Ubuntu directly and sets DoesNotExist when all
+        main-archive statuses are DNE."""
+        cve = self._make_all_dne_cve()
+        bug, _ = self.importer.create_bug(cve, self.lp_cve)
+
+        bug_tasks_by_target = {t.target: t for t in bug.bugtasks}
+
+        # The only bugtask should target Ubuntu itself.
+        self.assertEqual(1, len(bug.bugtasks))
+        self.assertIn(self.ubuntu, bug_tasks_by_target)
+        ubuntu_task = bug_tasks_by_target[self.ubuntu]
+        self.assertEqual(BugTaskStatus.DOESNOTEXIST, ubuntu_task.status)
+        self.assertEqual(BugTaskImportance.CRITICAL, ubuntu_task.importance)
+
+    def test_create_bug_all_dne_with_ppa_packages_creates_both(self):
+        """When all main-archive statuses are DNE but PPA packages exist,
+        create_bug creates the Ubuntu fallback task AND the PPA tasks."""
+        cve = self._make_all_dne_cve()
+        cve.ppa_packages = [
+            CVE.PPAPackage(
+                target=self.esm_package,
+                package_name=self.esm_package.sourcepackagename,
+                importance=BugTaskImportance.LOW,
+                tags=set(),
+            ),
+        ]
+        cve.ppa_series_packages = [
+            CVE.PPASeriesPackage(
+                target=self.esm_ppa_asps_supported,
+                package_name=self.esm_package.sourcepackagename,
+                importance=None,
+                status=BugTaskStatus.FIXRELEASED,
+                status_explanation="fixed in ppa",
+            ),
+        ]
+
+        bug, _ = self.importer.create_bug(cve, self.lp_cve)
+
+        bug_tasks_by_target = {t.target: t for t in bug.bugtasks}
+
+        # Ubuntu fallback, PPA package and PPA series package should be the
+        # only bugtasks present.
+        self.assertEqual(3, len(bug.bugtasks))
+        # Ubuntu fallback is present and DoesNotExist.
+        self.assertIn(self.ubuntu, bug_tasks_by_target)
+        self.assertEqual(
+            BugTaskStatus.DOESNOTEXIST,
+            bug_tasks_by_target[self.ubuntu].status,
+        )
+        # PPA tasks are also created.
+        self.assertIn(self.esm_package, bug_tasks_by_target)
+        self.assertIn(self.esm_ppa_asps_supported, bug_tasks_by_target)
+
+    def test_update_bug_dne_to_packages_removes_ubuntu_fallback(self):
+        """Updating a CVE from all-DNE to having real packages retargets the
+        Ubuntu fallback bugtask to the first real package, with status reset
+        to NEW as if created from scratch."""
+        cve = self._make_all_dne_cve()
+        bug, _ = self.importer.create_bug(cve, self.lp_cve)
+
+        # Confirm the Ubuntu fallback task exists and is in DNE status
+        targets_before = {t.target for t in bug.bugtasks}
+        self.assertIn(self.ubuntu, targets_before)
+
+        # Now give the CVE real distro and series packages.
+        cve.distro_packages = [
+            CVE.DistroPackage(
+                target=self.ubuntu_package,
+                importance=BugTaskImportance.LOW,
+                package_name=self.ubuntu_package.sourcepackagename,
+                tags=set(),
+            ),
+        ]
+        cve.series_packages = [
+            CVE.SeriesPackage(
+                target=SourcePackage(
+                    sourcepackagename=self.ubuntu_package.sourcepackagename,
+                    distroseries=self.ubuntu_current_series,
+                ),
+                package_name=self.ubuntu_package.sourcepackagename,
+                importance=None,
+                status=BugTaskStatus.FIXRELEASED,
+                status_explanation="fixed",
+            ),
+        ]
+
+        self.importer.update_bug(bug, cve, self.lp_cve)
+
+        bug_tasks_by_target = {t.target: t for t in bug.bugtasks}
+
+        # Ubuntu bare distribution target should be gone, the only tasks
+        # should be the distro package and its series task.
+        self.assertEqual(2, len(bug.bugtasks))
+        self.assertNotIn(self.ubuntu, bug_tasks_by_target)
+        # Real package task should be present with NEW status and correct
+        # importance i.e. same as if created from scratch.
+        self.assertIn(self.ubuntu_package, bug_tasks_by_target)
+        distro_task = bug_tasks_by_target[self.ubuntu_package]
+        self.assertEqual(BugTaskStatus.NEW, distro_task.status)
+        self.assertEqual(BugTaskImportance.LOW, distro_task.importance)
+
+    def test_update_bug_dne_stays_dne_keeps_ubuntu_fallback(self):
+        """Updating a CVE that remains all-DNE preserves the Ubuntu fallback
+        bugtask with DoesNotExist status."""
+        cve = self._make_all_dne_cve()
+        bug, _ = self.importer.create_bug(cve, self.lp_cve)
+
+        # Update again with still empty packages.
+        self.importer.update_bug(bug, cve, self.lp_cve)
+
+        bug_tasks_by_target = {t.target: t for t in bug.bugtasks}
+        self.assertEqual(1, len(bug.bugtasks))
+        self.assertIn(self.ubuntu, bug_tasks_by_target)
+        self.assertEqual(
+            BugTaskStatus.DOESNOTEXIST,
+            bug_tasks_by_target[self.ubuntu].status,
+        )
 
 
 class TestCVELibDateNormalization(TestCase):
