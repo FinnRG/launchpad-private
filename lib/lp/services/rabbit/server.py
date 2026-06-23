@@ -28,6 +28,7 @@ class RabbitServer(rabbitfixture.server.RabbitServer):
             """\
             [rabbitmq]
             broker_urls: amqp://guest:guest@localhost:%d//
+            oops_broker_urls: amqp://guest:guest@localhost:%d//
             """
-            % self.config.port
+            % (self.config.port, self.config.port)
         )

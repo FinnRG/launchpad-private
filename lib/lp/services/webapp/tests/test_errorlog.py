@@ -6,6 +6,7 @@
 import http.client
 import sys
 import traceback
+from functools import partial
 from textwrap import dedent
 
 import oops_amqp
@@ -26,6 +27,7 @@ from lp.app.errors import GoneError, TranslationUnavailable
 from lp.layers import WebServiceLayer
 from lp.services.config import config
 from lp.services.database.sqlbase import flush_database_caches
+from lp.services.messaging import rabbit
 from lp.services.webapp.authentication import LaunchpadPrincipal
 from lp.services.webapp.errorlog import (
     ErrorReportingUtility,
@@ -91,6 +93,55 @@ class TestErrorReportingUtility(TestCaseWithFactory):
         )
         # - a notify publisher
         self.assertEqual(utility._all_publishers[1], notify_publisher)
+
+    def test_oops_amqp_publisher_not_used_without_oops_broker_urls(self):
+        # If oops_broker_urls is unset, OOPS reports are not published over
+        # AMQP at all: there is deliberately no fallback to the main
+        # broker_urls.  Only the on-disk publisher remains.
+        config.push(
+            "no_oops_amqp",
+            dedent(
+                """
+                [rabbitmq]
+                oops_broker_urls: none
+                """
+            ),
+        )
+        self.addCleanup(config.pop, "no_oops_amqp")
+        self.assertIsNone(config.rabbitmq.oops_broker_urls)
+        utility = ErrorReportingUtility()
+        self.assertEqual(1, len(utility._main_publishers))
+        self.assertEqual(
+            utility._main_publishers[0], utility._oops_datedir_repo.publish
+        )
+
+    def test_oops_amqp_publisher_uses_oops_broker_urls(self):
+        # When oops_broker_urls is configured, the OOPS AMQP publisher
+        # connects to that separate cluster instead, while leaving the
+        # default broker_urls (used by e.g. jobs) untouched.
+        oops_broker_urls = "amqp://guest:guest@oops.example//"
+        config.push(
+            "oops_data",
+            dedent(
+                """
+                [rabbitmq]
+                oops_broker_urls: %s
+                """
+                % oops_broker_urls
+            ),
+        )
+        self.addCleanup(config.pop, "oops_data")
+        utility = ErrorReportingUtility()
+        # ErrorReportingUtility appends the AMQP publisher first (when
+        # configured), then the on-disk fallback publisher.
+        publisher = utility._main_publishers[0]
+        self.assertIsInstance(publisher, oops_amqp.Publisher)
+        connection_factory = publisher.connection_factory
+        self.assertIsInstance(connection_factory, partial)
+        self.assertEqual(rabbit.connect, connection_factory.func)
+        self.assertEqual(
+            {"broker_urls": oops_broker_urls}, connection_factory.keywords
+        )
 
     def test_multiple_raises_in_request(self):
         """An OOPS links to the previous OOPS in the request, if any."""

@@ -119,3 +119,27 @@ class TestConnect(TestCase):
                     alt=[],
                 ),
             )
+
+    def test_explicit_broker_urls(self):
+        # Passing broker_urls explicitly (e.g. to publish OOPS reports to a
+        # separate cluster) overrides config.rabbitmq.broker_urls.
+        self.assertIsNotNone(config.rabbitmq.broker_urls)
+        [broker_url] = config.rabbitmq.broker_urls.split()
+        parsed_url = parse_url(broker_url)
+        with rabbit.connect(
+            broker_urls=(
+                "%s amqp://guest:guest@alternate.example//" % broker_url
+            )
+        ) as connection:
+            self.assertThat(
+                connection,
+                MatchesStructure.byEquality(
+                    # kombu.transport.pyamqp forces "localhost" to "127.0.0.1".
+                    hostname="127.0.0.1",
+                    userid=parsed_url["userid"],
+                    password=parsed_url["password"],
+                    virtual_host=parsed_url["virtual_host"],
+                    port=int(parsed_url["port"]),
+                    alt=[broker_url, "amqp://guest:guest@alternate.example//"],
+                ),
+            )
