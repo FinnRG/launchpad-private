@@ -29,7 +29,6 @@ from lp.registry.model.archivesourcepackageseries import (
 from lp.registry.model.distributionsourcepackage import (
     DistributionSourcePackage,
 )
-from lp.registry.model.product import Product
 from lp.registry.model.sourcepackage import SourcePackage
 from lp.registry.model.sourcepackagename import SourcePackageName
 from lp.registry.security import SecurityAdminDistribution
@@ -190,9 +189,6 @@ class UCTExporter(SVTExporter):
         #  DistroPackage importance
         package_importances: Dict[SourcePackageName, BugTaskImportance] = {}
 
-        # Map products to source package names for upstream tasks
-        package_name_by_product: Dict[Product, SourcePackageName] = {}
-
         # We need to process distribution package tasks before processing
         # series tasks to collect importance value for each package.
         distro_packages: List[CVE.DistroPackage] = []
@@ -208,15 +204,6 @@ class UCTExporter(SVTExporter):
 
             # Handle DistributionSourcePackage
             if isinstance(target, DistributionSourcePackage):
-                # This is the `Product` corresponding to the package of this
-                # name with the highest version across any of this
-                # distribution's series that has a packaging link
-                # (it can make a difference if a package name switches to a
-                # different upstream project between series)
-                product = target.upstream_product
-                if product:
-                    package_name_by_product[product] = target.sourcepackagename
-
                 importance = bug_task.importance
                 package_importances[target.sourcepackagename] = importance
 
@@ -239,15 +226,6 @@ class UCTExporter(SVTExporter):
                 continue
 
             # Handle ArchiveSourcePackage (PPA packages)
-            # For PPA packages, try to find upstream product through the
-            # corresponding DistributionSourcePackage (if it exists).
-            distro = target.archive.distribution
-            dsp = distro.getSourcePackage(target.sourcepackagename)
-            if dsp and dsp.upstream_product:
-                package_name_by_product[dsp.upstream_product] = (
-                    target.sourcepackagename
-                )
-
             importance = bug_task.importance
             package_importances[target.sourcepackagename] = importance
 
@@ -318,32 +296,36 @@ class UCTExporter(SVTExporter):
                 )
             )
 
-        # Collect upstream tasks
+        # Collect upstream packages from vulnerability metadata (not bugtasks).
         upstream_packages: List[CVE.UpstreamPackage] = []
-        for bug_task in bug_tasks:
-            target = removeSecurityProxy(bug_task.target)
-            if not isinstance(target, Product):
-                continue
-            if target not in package_name_by_product:
-                logger.warning(
-                    "Could not find a source package for product %s",
-                    target.name,
+        for up_data in (vulnerability.metadata or {}).get(
+            "upstream_packages", []
+        ):
+            importance_str = up_data.get("importance")
+            importance = (
+                CVE.PRIORITY_MAP[UCTRecord.Priority(importance_str)]
+                if importance_str
+                else None
+            )
+            status = CVE.BUG_TASK_STATUS_MAP[
+                UCTRecord.PackageStatus(up_data["status"])
+            ]
+
+            package_name = up_data["package_name"]
+            spn = getUtility(ISourcePackageNameSet).queryByName(package_name)
+
+            if spn is None:
+                raise ValueError(
+                    f"'{package_name}' upstream package name not found in the "
+                    "database."
                 )
-                continue
-            package_name = package_name_by_product[target]
-            up_importance = bug_task.importance
-            package_importance = package_importances.get(package_name)
+
             upstream_packages.append(
                 CVE.UpstreamPackage(
-                    target=target,
-                    package_name=package_name,
-                    importance=(
-                        up_importance
-                        if up_importance != package_importance
-                        else None
-                    ),
-                    status=bug_task.status,
-                    status_explanation=bug_task.status_explanation,
+                    package_name=spn,
+                    importance=importance,
+                    status=status,
+                    status_explanation=up_data.get("status_explanation", ""),
                 )
             )
 
