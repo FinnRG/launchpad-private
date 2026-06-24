@@ -22,5 +22,5 @@ LPCONFIG=launchpad-ftpmaster-uploader
 00 00 * * * find {{ ubuntu_queue_dir }}/rejected -type d -mtime +180 -exec rm -rf {} \; > /dev/null 2>&1
 
 # OOPS amqp
-*/15 * * * * {{ code_dir }}/bin/datedir2amqp --exchange oopses --host {{ rabbitmq_host }} --username {{ rabbitmq_username }} --password {{ rabbitmq_password }} --vhost {{ rabbitmq_vhost }} --repo {{ oopses_dir }} --key ""
+*/15 * * * * {{ code_dir }}/bin/datedir2amqp --exchange oopses --host {{ oops_rabbitmq_host }} --username {{ oops_rabbitmq_username }} --password {{ oops_rabbitmq_password }} --vhost {{ oops_rabbitmq_vhost }} --repo {{ oopses_dir }} --key ""
 
