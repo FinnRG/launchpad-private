@@ -52,7 +52,6 @@ from lp.registry.model.distributionsourcepackage import (
 )
 from lp.registry.model.distroseries import DistroSeries
 from lp.registry.model.person import Person
-from lp.registry.model.product import Product
 from lp.registry.model.sourcepackage import SourcePackage
 from lp.registry.model.sourcepackagename import SourcePackageName
 from lp.services.propertycache import cachedproperty
@@ -472,8 +471,12 @@ class CVE:
         status: BugTaskStatus
         status_explanation: str
 
+    # TODO: ilkeremrekoc 2026-06-23: UpstreamPackage is currently only stored
+    # as a metadata, which is why it doesn't have a `target` field. In the
+    # near future, we need to add a long term solution to store upstream
+    # packages as bugtasks as well which will most likely require external
+    # website integration.
     class UpstreamPackage(NamedTuple):
-        target: Product
         package_name: SourcePackageName
         importance: Optional[BugTaskImportance]
         status: BugTaskStatus
@@ -588,7 +591,6 @@ class CVE:
             "archive": {},
             "distribution": {},
             "distroseries": {},
-            "product": {},
         }
 
     @classmethod
@@ -609,16 +611,6 @@ class CVE:
         value: Any,
     ) -> None:
         cache_entities[bucket][key] = value
-
-    @classmethod
-    def _get_product_cache_key(
-        cls,
-        source_package_name: SourcePackageName,
-        distribution_name: Optional[str],
-    ) -> Tuple[Optional[str], str]:
-        # upstream_product is resolved from DistributionSourcePackage, which is
-        # distribution-scoped; series is not needed for this cache key.
-        return (distribution_name, source_package_name.name)
 
     @classmethod
     def _get_ppa_archive(
@@ -664,69 +656,6 @@ class CVE:
         cls._set_in_cache(cache_entities, "archive", cache_key, archive)
 
         return archive
-
-    @classmethod
-    def _find_upstream_product(
-        cls,
-        source_package_name: SourcePackageName,
-        packages: Union[List["CVE.DistroPackage"], List["CVE.PPAPackage"]],
-        cache_entities: Dict,
-    ) -> Optional[Product]:
-        """
-        Find the upstream Product for a source package by checking packages.
-
-        For DistroPackages, looks up via target.upstream_product.
-        For PPAPackages, looks up via the corresponding DSP (if it exists).
-
-        Args:
-            source_package_name: The package to find upstream product for
-            packages: List of DistroPackage or PPAPackage objects to search
-            cache_entities: Cache dictionary for storing/retrieving products
-
-        Returns:
-            Product if found, None otherwise
-        """
-        for package in packages:
-            if source_package_name != package.package_name:
-                continue
-
-            # Determine distribution name and product source based on package
-            # type
-            if isinstance(package, cls.DistroPackage):
-                distro_name = package.target.distribution.name
-                product_source = package.target
-            elif isinstance(package, cls.PPAPackage):
-                distro_name = package.target.archive.distribution.name
-                # For PPA packages, try to find upstream via DSP
-                dsp = package.target.archive.distribution.getSourcePackage(
-                    package.package_name
-                )
-                if not dsp:
-                    continue
-                product_source = dsp
-            else:
-                continue
-
-            # Check cache
-            product_cache_key = cls._get_product_cache_key(
-                source_package_name, distro_name
-            )
-            found, cached_product = cls._get_from_cache(
-                cache_entities, "product", product_cache_key
-            )
-            if found:
-                return cached_product
-
-            # Fetch and cache
-            product = product_source.upstream_product
-            cls._set_in_cache(
-                cache_entities, "product", product_cache_key, product
-            )
-
-            if product is not None:
-                return product
-
-        return None
 
     @classmethod
     def make_from_uct_record(
@@ -893,42 +822,21 @@ class CVE:
                     )
                 )
 
-        upstream_packages = []
-        for source_package_name, upstream_status in upstream_statuses.items():
-            # Try distro packages first
-            product = cls._find_upstream_product(
-                source_package_name, distro_packages, cache_entities
+        # Upstream packages will only be stored as metadata, so the
+        # initialization is a lot more straightforward.
+        upstream_packages = [
+            cls.UpstreamPackage(
+                package_name=spn,
+                importance=(
+                    cls.PRIORITY_MAP[upstream_status.priority]
+                    if upstream_status.priority
+                    else None
+                ),
+                status=cls.BUG_TASK_STATUS_MAP[upstream_status.status],
+                status_explanation=upstream_status.reason,
             )
-
-            # If no distro package found, try PPA packages.
-            # This is relevant if there are upstream packages that have a
-            # corresponding PPA package, but no corresponding distro package
-            # (which is an edge case but could happen).
-            if product is None:
-                product = cls._find_upstream_product(
-                    source_package_name, ppa_packages, cache_entities
-                )
-
-            if product is None:
-                logger.warning(
-                    "Could not find the product for: %s",
-                    source_package_name.name,
-                )
-                continue
-
-            upstream_packages.append(
-                cls.UpstreamPackage(
-                    target=product,
-                    package_name=source_package_name,
-                    importance=(
-                        cls.PRIORITY_MAP[upstream_status.priority]
-                        if upstream_status.priority
-                        else None
-                    ),
-                    status=cls.BUG_TASK_STATUS_MAP[upstream_status.status],
-                    status_explanation=upstream_status.reason,
-                )
-            )
+            for spn, upstream_status in upstream_statuses.items()
+        ]
 
         if uct_record.assigned_to:
             assignee = getUtility(IPersonSet).getByName(uct_record.assigned_to)
