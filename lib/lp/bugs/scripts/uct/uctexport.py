@@ -57,6 +57,7 @@ class UCTExporter(SVTExporter):
     class ParsedDescription(NamedTuple):
         description: str
         references: List[str]
+        bug_urls: List[str]
 
     def __init__(self):
         self.subprojects = load_subprojects(_CONTRIB_SUBPROJECTS_JSON)
@@ -164,9 +165,7 @@ class UCTExporter(SVTExporter):
 
         parsed_description = self._parse_bug_description(bug.description)
 
-        bug_urls = []
-        for bug_watch in bug.watches:
-            bug_urls.append(bug_watch.url)
+        bug_urls = parsed_description.bug_urls
 
         bug_tasks: List[BugTask] = list(bug.bugtasks)
 
@@ -432,6 +431,7 @@ class UCTExporter(SVTExporter):
         current_field = "description"
         known_fields = {
             "References:": "references",
+            "Bugs:": "bug_urls",
         }
         lines = bug_description.split("\n")
         for line in lines:
@@ -445,4 +445,5 @@ class UCTExporter(SVTExporter):
         return UCTExporter.ParsedDescription(
             description="\n".join(field_values.get("description", [])),
             references=field_values.get("references", []),
+            bug_urls=field_values.get("bug_urls", []),
         )
