@@ -42,7 +42,11 @@ from lp.app.interfaces.launchpad import ILaunchpadCelebrities
 from lp.bugs.interfaces.bug import CreateBugParams, IBugSet
 from lp.bugs.interfaces.bugactivity import IBugActivitySet
 from lp.bugs.interfaces.bugattachment import BugAttachmentType
-from lp.bugs.interfaces.bugtask import BugTaskImportance, IBugTaskSet
+from lp.bugs.interfaces.bugtask import (
+    BugTaskImportance,
+    BugTaskStatus,
+    IBugTaskSet,
+)
 from lp.bugs.interfaces.bugwatch import IBugWatchSet
 from lp.bugs.interfaces.cve import ICveSet
 from lp.bugs.interfaces.vulnerability import IVulnerabilitySet
@@ -150,14 +154,6 @@ class UCTImporter(SVTImporter):
                 cve.sequence,
             )
             return None, None, None
-        if not cve.series_packages and not cve.ppa_series_packages:
-            logger.warning(
-                "%s: could not find any affected packages, aborting."
-                "%s was not imported.",
-                cve.series_packages,
-                cve.sequence,
-            )
-            return None, None, None
         lp_cve: CveModel = removeSecurityProxy(
             getUtility(ICveSet)[cve.sequence]
         )
@@ -214,11 +210,16 @@ class UCTImporter(SVTImporter):
         if cve.distro_packages:
             initial_package = cve.distro_packages[0]
             remaining_distro_packages = cve.distro_packages[1:]
-            remaining_ppa_packages = cve.ppa_packages
+            initial_target = initial_package.target
+            initial_importance = initial_package.importance
         else:
-            initial_package = cve.ppa_packages[0]
+            # If no distro packages are present i.e. if all main archive
+            # statuses are DNE then target the initial bugtask directly at
+            # Ubuntu as an indicator that none of the packages in this CVE
+            # are present in the main archive.
             remaining_distro_packages = []
-            remaining_ppa_packages = cve.ppa_packages[1:]
+            initial_target = self.ubuntu
+            initial_importance = cve.importance
 
         # Create the bug
         bug: BugModel = removeSecurityProxy(
@@ -228,8 +229,8 @@ class UCTImporter(SVTImporter):
                     title=cve.sequence,
                     information_type=self.information_type,
                     owner=self.bug_importer,
-                    target=initial_package.target,
-                    importance=initial_package.importance,
+                    target=initial_target,
+                    importance=initial_importance,
                     cve=lp_cve,
                     check_permissions=False,
                     check_ppa_source_package=False,
@@ -248,7 +249,7 @@ class UCTImporter(SVTImporter):
             bug,
             remaining_distro_packages,
             cve.series_packages,
-            ppa_packages=remaining_ppa_packages,
+            ppa_packages=cve.ppa_packages,
             ppa_series_packages=cve.ppa_series_packages,
         )
         self._update_statuses_and_importances(
@@ -291,6 +292,24 @@ class UCTImporter(SVTImporter):
         :param lp_cve: Launchpad `Cve` model
         """
         bug.description = self._make_bug_description(cve)
+
+        # Handle transitions between a CVE with only DoesNotExist statuses for
+        # the main archive to a CVE with at least one distro package.
+        ubuntu_fallback_task = next(
+            (t for t in bug.bugtasks if t.target == self.ubuntu), None
+        )
+        if cve.distro_packages and ubuntu_fallback_task is not None:
+            # If transitioning from all-DNE to having real packages, then
+            # retarget the Ubuntu bugtask to the first real distro package.
+            # before creating the remaining tasks as usual.
+            first_package = cve.distro_packages[0]
+            ubuntu_fallback_task.transitionToTarget(
+                first_package.target, self.bug_importer
+            )
+
+            # Reset the status to NEW so the task is equivalent to one created
+            # from scratch.
+            ubuntu_fallback_task.transitionToStatus(BugTaskStatus.NEW)
 
         self._create_bug_tasks(
             bug,
@@ -638,6 +657,13 @@ class UCTImporter(SVTImporter):
             task.transitionToImportance(psp_importance)
             task.transitionToStatus(psp.status)
             task.status_explanation = psp.status_explanation
+
+        if not distro_packages:
+            # All main archive statuses were DNE so mark the Ubuntu bugtask
+            # as DoesNotExist.
+            ubuntu_task = bug_task_by_target.get(self.ubuntu)
+            if ubuntu_task:
+                ubuntu_task.transitionToStatus(BugTaskStatus.DOESNOTEXIST)
 
     def _update_external_bug_urls(
         self, bug: BugModel, bug_urls: List[str]
