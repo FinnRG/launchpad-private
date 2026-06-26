@@ -740,6 +740,9 @@ class UCTImporter(SVTImporter):
         if cve.references:
             parts.extend(["", "References:"])
             parts.extend(cve.references)
+        if cve.bug_urls:
+            parts.extend(["", "Bugs:"])
+            parts.extend(cve.bug_urls)
         return "\n".join(parts)
 
     def checkUserPermissions(self, user):
