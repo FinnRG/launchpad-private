@@ -789,6 +789,13 @@ class CVE:
                     # next status without doing that.
                     continue
 
+                # Ignore packages that don't exist in the main archive.
+                if (
+                    uct_package_status.status
+                    == UCTRecord.PackageStatus.DOES_NOT_EXIST
+                ):
+                    continue
+
                 distro_series = cls.get_distro_series(
                     uct_package_status.series, cache_entities=cache_entities
                 )
