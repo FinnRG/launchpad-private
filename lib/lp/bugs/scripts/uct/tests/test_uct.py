@@ -84,10 +84,11 @@ class TestUCTRecord(TestCase):
                 "seth-arnold> set kernel.unprivileged_bpf_disabled to 1"
             ),
             notes=(
-                "sbeattie> Ubuntu 21.10 / 5.13+ kernels disable "
-                "unprivileged BPF by default.\n  kernels 5.8 and "
-                "older are not affected, priority high is "
-                "for\n  5.10 and 5.11 based kernels only"
+                "sbeattie> Ubuntu 21.10 / 5.13+ kernels disable unprivileged "
+                "BPF by default.\n"
+                "sbeattie> kernels 5.8 and older are not affected, priority "
+                "high is for\n"
+                "sbeattie> 5.10 and 5.11 based kernels only"
             ),
             priority=UCTRecord.Priority.CRITICAL,
             references=["https://ubuntu.com/security/notices/USN-5368-1"],
@@ -344,7 +345,7 @@ class TestUCTRecord(TestCase):
             description="Test",
             discovered_by="",
             mitigation=None,
-            notes="author1> Line 1\n Line 2\nauthor2> Line 3",
+            notes="author1> Line 1\nauthor1> Line 2\nauthor2> Line 3",
             priority=UCTRecord.Priority.HIGH,
             priority_explanation="",
             references=[],
@@ -357,7 +358,7 @@ class TestUCTRecord(TestCase):
 
         # Verify multiline notes are properly formatted
         self.assertIn("author1> Line 1", serialized)
-        self.assertIn(" Line 2", serialized)
+        self.assertIn("author1> Line 2", serialized)
         self.assertIn("author2> Line 3", serialized)
 
     def test_to_str_with_priority_explanation(self):
@@ -3469,6 +3470,214 @@ class TestCVELibDateNormalization(TestCase):
             self.assertEqual("2024-03-20 09:00:00 UTC", data["PublicDate"])
             self.assertEqual(
                 "2024-03-20 09:00:00 UTC", data["PublicDateAtUSN"]
+            )
+        finally:
+            cve_file.unlink()
+
+
+class TestCVELibParseNotes(TestCase):
+    """Test parse_notes behavior in load_cve function."""
+
+    def _create_test_cve_file(self, content):
+        """Helper to create a temporary CVE file with given content."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix="", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(textwrap.dedent(content))
+            return Path(f.name)
+
+    def test_load_cve_parse_notes_true_returns_list(self):
+        """Test that parse_notes=True (default) returns notes as a list of
+        [author, text] pairs."""
+        cve_content = """\
+            Candidate: CVE-2024-NOTES1
+            PublicDate: 2024-01-01
+            References:
+            Description:
+             Test vulnerability
+            Ubuntu-Description:
+            Notes:
+             author1> First note
+             author2> Second note
+            Bugs:
+            Priority: medium
+            Discovered-by:
+            Assigned-to:
+            CVSS:
+            """
+        cve_file = self._create_test_cve_file(cve_content)
+
+        try:
+            data = load_cve(str(cve_file), parse_notes=True)
+            self.assertIsInstance(data["Notes"], list)
+            self.assertEqual(
+                [["author1", "First note"], ["author2", "Second note"]],
+                data["Notes"],
+            )
+        finally:
+            cve_file.unlink()
+
+    def test_load_cve_parse_notes_false_returns_raw_string(self):
+        """Test that parse_notes=False returns notes as a raw string without
+        author prefix parsing."""
+        cve_content = """\
+            Candidate: CVE-2024-NOTES2
+            PublicDate: 2024-01-01
+            References:
+            Description:
+             Test vulnerability
+            Ubuntu-Description:
+            Notes:
+             author1> First note
+             author2> Second note
+            Bugs:
+            Priority: medium
+            Discovered-by:
+            Assigned-to:
+            CVSS:
+            """
+        cve_file = self._create_test_cve_file(cve_content)
+
+        try:
+            data = load_cve(str(cve_file), parse_notes=False)
+            self.assertIsInstance(data["Notes"], str)
+            self.assertEqual(
+                "author1> First note\nauthor2> Second note",
+                data["Notes"],
+            )
+        finally:
+            cve_file.unlink()
+
+    def test_load_cve_parse_notes_false_multiline_same_author(self):
+        """Test that parse_notes=False preserves multiple lines from the same
+        author as separate lines in the raw string."""
+        cve_content = """\
+            Candidate: CVE-2024-NOTES3
+            PublicDate: 2024-01-01
+            References:
+            Description:
+             Test vulnerability
+            Ubuntu-Description:
+            Notes:
+             author1> Line 1
+             author1> Line 2
+             author1> Line 3
+            Bugs:
+            Priority: medium
+            Discovered-by:
+            Assigned-to:
+            CVSS:
+            """
+        cve_file = self._create_test_cve_file(cve_content)
+
+        try:
+            data = load_cve(str(cve_file), parse_notes=False)
+            self.assertEqual(
+                "author1> Line 1\nauthor1> Line 2\nauthor1> Line 3",
+                data["Notes"],
+            )
+        finally:
+            cve_file.unlink()
+
+    def test_load_cve_parse_notes_false_empty_notes(self):
+        """Test that parse_notes=False handles an empty Notes field."""
+        cve_content = """\
+            Candidate: CVE-2024-NOTES4
+            PublicDate: 2024-01-01
+            References:
+            Description:
+             Test vulnerability
+            Ubuntu-Description:
+            Notes:
+            Bugs:
+            Priority: medium
+            Discovered-by:
+            Assigned-to:
+            CVSS:
+            """
+        cve_file = self._create_test_cve_file(cve_content)
+
+        try:
+            data = load_cve(str(cve_file), parse_notes=False)
+            self.assertEqual("", data["Notes"])
+        finally:
+            cve_file.unlink()
+
+    def test_load_cve_parse_notes_false_two_space_continuation(self):
+        """Test that parse_notes=False preserves two-space-indented
+        continuation lines as-is in the raw string, keeping the single
+        leading space that remains after line[1:] stripping.
+        """
+        cve_content = """\
+            Candidate: CVE-2024-NOTES5
+            PublicDate: 2024-01-01
+            References:
+            Description:
+             Test vulnerability
+            Ubuntu-Description:
+            Notes:
+             author1> Line 1
+               continuation line
+            Bugs:
+            Priority: medium
+            Discovered-by:
+            Assigned-to:
+            CVSS:
+            """
+        cve_file = self._create_test_cve_file(cve_content)
+
+        try:
+            data = load_cve(str(cve_file), parse_notes=False)
+            self.assertIsInstance(data["Notes"], str)
+            # The leading space from " author1> Line 1" is stripped by
+            # line[1:], giving "author1> Line 1". The continuation line
+            # "   continuation line" loses only one space, leaving
+            # "  continuation line" (two spaces).
+            self.assertEqual(
+                "author1> Line 1\n  continuation line",
+                data["Notes"],
+            )
+        finally:
+            cve_file.unlink()
+
+    def test_load_cve_parse_notes_false_pipe_separator(self):
+        """Test that parse_notes=False preserves author| separator lines as
+        raw strings, unlike parse_notes=True which joins them with spaces."""
+        cve_content = """\
+            Candidate: CVE-2024-NOTES6
+            PublicDate: 2024-01-01
+            References:
+            Description:
+             Test vulnerability
+            Ubuntu-Description:
+            Notes:
+             author1| First part
+             author1| Second part
+            Bugs:
+            Priority: medium
+            Discovered-by:
+            Assigned-to:
+            CVSS:
+            """
+        cve_file = self._create_test_cve_file(cve_content)
+
+        try:
+            # With parse_notes=False each line is kept verbatim (minus the
+            # leading space).
+            data_raw = load_cve(str(cve_file), parse_notes=False)
+            self.assertIsInstance(data_raw["Notes"], str)
+            self.assertEqual(
+                "author1| First part\nauthor1| Second part",
+                data_raw["Notes"],
+            )
+
+            # With parse_notes=True (default) the | separator causes the two
+            # parts to be concatenated into a single note with a space.
+            data_parsed = load_cve(str(cve_file), parse_notes=True)
+            self.assertIsInstance(data_parsed["Notes"], list)
+            self.assertEqual(
+                [["author1", "First part Second part"]],
+                data_parsed["Notes"],
             )
         finally:
             cve_file.unlink()

@@ -156,7 +156,7 @@ class UCTRecord(SVTRecord):
         # normalize_dates=False is needed to preserve the original dates
         # from the UCT CVE file
         cve_data: Dict[str, Any] = load_cve(
-            str(cve_path), normalize_dates=False
+            str(cve_path), normalize_dates=False, parse_notes=False
         )
 
         packages = []
@@ -261,7 +261,7 @@ class UCTRecord(SVTRecord):
             mitigation=cls._pop_cve_property(
                 cve_data, "Mitigation", required=False
             ),
-            notes=cls._format_notes(cls._pop_cve_property(cve_data, "Notes")),
+            notes=cls._pop_cve_property(cve_data, "Notes"),
             priority=cls.Priority(_priority[0]),
             priority_explanation="\n".join(_priority[1]),
             references=cls._pop_cve_property(cve_data, "References").split(
@@ -413,16 +413,6 @@ class UCTRecord(SVTRecord):
     @classmethod
     def _format_datetime(cls, dt: datetime) -> str:
         return dt.strftime("%Y-%m-%d %H:%M:%S %Z")
-
-    @classmethod
-    def _format_notes(cls, notes: List[Tuple[str, str]]) -> str:
-        lines = []
-        for author, text in notes:
-            note_lines = text.split("\n")
-            lines.append(f"{author}> {note_lines[0]}")
-            for line in note_lines[1:]:
-                lines.append("  " + line)
-        return "\n".join(lines)
 
     @classmethod
     def _format_priority(cls, priority: Priority, explanation: str) -> str:
