@@ -1382,11 +1382,17 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             expected_description = "{}\n\nReferences:\n{}".format(
                 expected_description, "\n".join(cve.references)
             )
+        if cve.bug_urls:
+            expected_description = "{}\n\nBugs:\n{}".format(
+                expected_description, "\n".join(cve.bug_urls)
+            )
         self.assertEqual(expected_description, bug.description)
 
+        # BugWatches are created on a best-effort basis for parseable URLs;
+        # all URLs are preserved in the description regardless.
         watches = list(bug.watches)
-        self.assertEqual(len(cve.bug_urls), len(watches))
-        self.assertEqual(sorted(cve.bug_urls), sorted(w.url for w in watches))
+        watch_urls = {w.url for w in watches}
+        self.assertTrue(watch_urls.issubset(set(cve.bug_urls)))
 
         self.checkBugTags(bug, cve)
         self.checkBugAttachments(bug, cve)
@@ -2022,6 +2028,61 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         cve.bug_urls.pop(0)
         self.importer.update_bug(bug, cve, self.lp_cve)
         self.checkBug(bug, cve)
+
+    def test_bug_urls_with_bug_watches_and_those_without_in_description(self):
+        """All bug URLs that have fitting BugWatches get one. Both these and
+        any unparseable URLs are stored in the description under a 'Bugs:'
+        section, regardless of whether Launchpad BugWatches can parse the URL
+        format.
+        """
+        cve = self.cve
+        # Mix a parseable URL with an unparseable URL.
+        cve.bug_urls = [
+            "https://github.com/org/repo/issues/1",
+            "https://jira.example.com/browse/PROJ-123",
+        ]
+        bug, _ = self.importer.create_bug(cve, self.lp_cve)
+
+        # Both URLs must appear in the description.
+        self.assertIn("Bugs:", bug.description)
+        for url in cve.bug_urls:
+            self.assertIn(url, bug.description)
+
+        # Only the URL that can get a BugWatch gets one; the other does
+        # not match any parser so no watch is created for it.
+        watch_urls = {w.url for w in bug.watches}
+        self.assertIn("https://github.com/org/repo/issues/1", watch_urls)
+        self.assertNotIn(
+            "https://jira.example.com/browse/PROJ-123", watch_urls
+        )
+
+    def test_export_reads_bug_urls_from_description_not_watches(self):
+        """The exporter reconstructs the Bugs: list from the description,
+        not from BugWatches.
+
+        This means unparseable URLs (with no BugWatch) and URLs with a
+        BugWatch are still exported.
+        """
+        cve = self.cve
+        cve.bug_urls = [
+            "https://github.com/org/repo/issues/1",
+            "https://jira.example.com/browse/PROJ-123",
+        ]
+        self.importer.import_cve(cve)
+        bug = self.importer._find_existing_bug(self.lp_cve, self.ubuntu)
+
+        # Confirm the expected watch state: one has a BugWatch, the other does
+        # not due to no matching parser being there.
+        watch_urls = {w.url for w in bug.watches}
+        self.assertIn("https://github.com/org/repo/issues/1", watch_urls)
+        self.assertNotIn(
+            "https://jira.example.com/browse/PROJ-123", watch_urls
+        )
+
+        # Despite only one watch, both URLs must successfully export.
+        exported_cve = self.exporter._import_cve(bug, bug.vulnerabilities[0])
+
+        self.assertEqual(sorted(cve.bug_urls), sorted(exported_cve.bug_urls))
 
     def test_update_bug_global_tags_changed(self):
         bug, _ = self.importer.create_bug(self.cve, self.lp_cve)
