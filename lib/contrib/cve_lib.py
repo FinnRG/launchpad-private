@@ -614,7 +614,7 @@ class NotesParser(object):
         self.notes = None
         return notes
 
-def load_cve(cvefile, strict=False, srcentries=None, normalize_dates=False):
+def load_cve(cvefile, strict=False, srcentries=None, normalize_dates=False, parse_notes=True):
     '''Loads a given CVE into:
        dict( fields...
              'pkgs' -> dict(  pkg -> dict(  release ->  (state, details)   ) )
@@ -644,7 +644,7 @@ def load_cve(cvefile, strict=False, srcentries=None, normalize_dates=False):
     if not os.path.exists(cvefile):
         raise ValueError("File does not exist: '%s'" % cvefile)
     linenum = 0
-    notes_parser = NotesParser()
+    notes_parser = NotesParser() if parse_notes else None
     priority_reason = {}
     cvss_entries = []
     with codecs.open(cvefile, encoding="utf-8") as inF:
@@ -659,10 +659,12 @@ def load_cve(cvefile, strict=False, srcentries=None, normalize_dates=False):
         if line.startswith(' '):
             try:
                 # parse Notes properly
-                if lastfield == 'Notes':
+                if lastfield == 'Notes' and notes_parser is not None:
                     code, newmsg = notes_parser.parse_line(cvefile, line, linenum, code)
                     if code != EXIT_OKAY:
                         msg += newmsg
+                elif lastfield == 'Notes':
+                    data[lastfield] += '\n%s' % (line[1:])
                 elif lastfield.startswith('Priority'):
                     priority_part = lastfield.split('_')[1] if '_' in lastfield else None
                     if priority_part in priority_reason:
@@ -807,7 +809,7 @@ def load_cve(cvefile, strict=False, srcentries=None, normalize_dates=False):
             data.setdefault(field, value)
             srcentries.setdefault(field, (cvefile, linenum))
 
-    data['Notes'] = notes_parser.finalize()
+    data['Notes'] = notes_parser.finalize() if notes_parser is not None else data.get('Notes', '').lstrip('\n')
     data['CVSS'] = cvss_entries
 
     # Check for required fields
