@@ -34,6 +34,11 @@
 
     ProxyPassReverse / balancer://launchpad-appserver-main/
     ProxyPassReverse / balancer://cached-launchpad-appserver-main/
+{%- if lui_routing_enabled and lui_endpoint %}
+    # Rewrite self-referential Location/Content-Location/URI headers
+    # emitted by the LUI back to this vhost.
+    ProxyPassReverse / {{ lui_endpoint.rstrip("/") }}/
+{%- endif %}
     ProxyPreserveHost on
 
     RewriteEngine on
@@ -62,6 +67,26 @@
 {% if internal_bzr_codebrowse_endpoint %}
     # https://portal.admin.canonical.com/C46608: Proxy requests to Loggerhead.
     RewriteRule ^/\+loggerhead/(.*)$ {{ internal_bzr_codebrowse_endpoint }}$1 [P,L,NE]
+{%- endif %}
+
+{% if lui_routing_enabled and lui_endpoint %}
+    # TLS terminates here and the proxy hop to the LUI is plain HTTP; tell
+    # the LUI the original scheme so it reconstructs the correct origin
+    # (requires PROTOCOL_HEADER=x-forwarded-proto or ORIGIN on the LUI side).
+    RequestHeader set X-Forwarded-Proto "https"
+
+    # SvelteKit remote function endpoints (LUI-only; never valid on LC).
+    RewriteRule ^(/_app/remote/[^/]+/[^/]+.*)$ {{ lui_endpoint.rstrip("/") }}$1 [P,L,NE]
+
+    # Distribution source package pages:
+    #   /{distro}/+source/{src_pkg_name}
+    #   /{distro}/+source/{src_pkg_name}/{version}
+    # Anchored on /+source/ as the second path segment to avoid bare
+    # /{pillar} ambiguity.  +-prefixed sub-pages (e.g. +subscribe) and the
+    # distroseries form (/{distro}/{series}/+source/...) are intentionally
+    # left on Launchpad Classic; distro/distroseries root routing is tracked
+    # as a follow-up.
+    RewriteRule ^(/[^/]+/\+source/[^/]+(?:/[^+/][^/]*)?)/?$ {{ lui_endpoint.rstrip("/") }}$1 [P,L,NE]
 {%- endif %}
 
     # Most anonymous requests are cacheable.
