@@ -3,11 +3,6 @@ TZ=UTC
 MAILFROM={{ bounce_address }}
 MAILTO={{ cron_mailto }}
 LPCONFIG=launchpad-ppa-uploader
-{% if http_proxy -%}
-http_proxy="{{ http_proxy }}"
-https_proxy="{{ https_proxy }}"
-no_proxy="{{ no_proxy }}"
-{% endif %}
 
 {% if active -%}
 * * * * * nice -n 5 {{ code_dir }}/scripts/process-upload.py -C insecure -q {{ ppa_queue_dir }}/ --log-file=DEBUG:{{ logs_dir }}/process-upload.log
