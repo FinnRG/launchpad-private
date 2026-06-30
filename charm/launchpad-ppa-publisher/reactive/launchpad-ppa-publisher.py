@@ -212,6 +212,7 @@ def configure_parallel_publisher_run_script(config):
 @when(
     "launchpad.db.configured",
     "memcache.available",
+    "launchpad.storage.available",
 )
 @when_not("service.configured")
 def configure():

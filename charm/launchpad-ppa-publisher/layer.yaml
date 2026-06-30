@@ -1,6 +1,7 @@
 includes:
   - layer:launchpad-db
   - interface:memcache
+  - layer:launchpad-storage
   - interface:apache-website
 repo: https://git.launchpad.net/launchpad
 options:
