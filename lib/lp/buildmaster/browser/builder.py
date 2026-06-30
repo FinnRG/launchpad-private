@@ -179,6 +179,14 @@ class CleanInfoMixin:
         else:
             return "Cleaning"
 
+    def getBuildInfo(self, buildqueue):
+        duration = buildqueue.current_build_duration
+        if duration is None or duration <= timedelta(days=1):
+            return None
+        return "Building for {}".format(
+            DurationFormatterAPI(duration).approximateduration()
+        )
+
 
 class BuilderSetView(CleanInfoMixin, LaunchpadView):
     """Default BuilderSet view class."""

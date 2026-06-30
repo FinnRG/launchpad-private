@@ -255,3 +255,35 @@ class TestBuildersHomepage(TestCaseWithFactory, BuildCreationMixin):
                 for row in find_tags_by_class(content, "builder-row")
             ],
         )
+
+    def test_build_status_duration(self):
+        now = get_transaction_timestamp(IStore(Builder))
+        short_duration = timedelta(hours=12)
+        long_duration = timedelta(days=2)
+        with admin_logged_in():
+            for builder in getUtility(IBuilderSet):
+                builder.active = False
+            builders = [self.factory.makeBuilder(), self.factory.makeBuilder()]
+            for builder, duration in zip(
+                builders, [short_duration, long_duration]
+            ):
+                build = self.factory.makeBinaryPackageBuild()
+                build.updateStatus(
+                    BuildStatus.NEEDSBUILD, force_invalid_transition=True
+                )
+                queue = build.queueBuild()
+                queue.markAsBuilding(builder)
+                removeSecurityProxy(queue).date_started = now - duration
+        content = builders_homepage_render()
+        self.assertIn(
+            "Building for {}".format(
+                DurationFormatterAPI(long_duration).approximateduration()
+            ),
+            content,
+        )
+        self.assertNotIn(
+            "Building for {}".format(
+                DurationFormatterAPI(short_duration).approximateduration()
+            ),
+            content,
+        )
