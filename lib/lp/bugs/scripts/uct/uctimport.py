@@ -46,12 +46,13 @@ from lp.bugs.interfaces.bugtask import (
     BugTaskImportance,
     BugTaskStatus,
     IBugTaskSet,
+    IllegalTarget,
 )
 from lp.bugs.interfaces.bugwatch import IBugWatchSet
 from lp.bugs.interfaces.cve import ICveSet
 from lp.bugs.interfaces.vulnerability import IVulnerabilitySet
 from lp.bugs.model.bug import Bug as BugModel
-from lp.bugs.model.bugtask import BugTask
+from lp.bugs.model.bugtask import BugTask, validate_new_target
 from lp.bugs.model.cve import Cve as CveModel
 from lp.bugs.model.vulnerability import Vulnerability
 from lp.bugs.scripts.svthandler import SVTImporter
@@ -438,6 +439,18 @@ class UCTImporter(SVTImporter):
         ):
             target = package.target
             if target not in seen_targets:
+                try:
+                    validate_new_target(
+                        bug, target, check_ppa_source_package=False
+                    )
+                except IllegalTarget as e:
+                    logger.warning(
+                        "%s: skipping package %s: %s",
+                        bug.title,
+                        target.bugtargetdisplayname,
+                        e,
+                    )
+                    continue
                 seen_targets.add(target)
                 targets_to_create.append(target)
 
@@ -462,11 +475,13 @@ class UCTImporter(SVTImporter):
             )
 
         # Create all tasks in a single batch operation
+        # Targets were already validated above.
         if targets_to_create:
             bug_task_set.createManyTasks(
                 bug,
                 self.bug_importer,
                 targets_to_create,
+                validate_target=False,
                 check_ppa_source_package=False,
             )
 
@@ -629,9 +644,11 @@ class UCTImporter(SVTImporter):
         package_importances: Dict[str, BugTaskImportance] = {}
 
         for dp in distro_packages:
-            task = bug_task_by_target[dp.target]
+            task = bug_task_by_target.get(dp.target)
             dp_importance = dp.importance or cve_importance
             package_importances[dp.package_name.name] = dp_importance
+            if task is None:
+                continue
             task.transitionToImportance(dp_importance)
 
         for pp in ppa_packages or []:
@@ -641,7 +658,9 @@ class UCTImporter(SVTImporter):
             task.transitionToImportance(pp_importance)
 
         for sp in series_packages:
-            task = bug_task_by_target[sp.target]
+            task = bug_task_by_target.get(sp.target)
+            if task is None:
+                continue
             package_name = sp.package_name.name
             package_importance = package_importances[package_name]
             sp_importance = sp.importance or package_importance
