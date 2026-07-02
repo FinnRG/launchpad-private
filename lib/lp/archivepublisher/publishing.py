@@ -1665,6 +1665,18 @@ class Publisher:
         )
         current_files = {}
         content_hash = filtered_hashes[-1]
+        # An existing on-disk Release file may predate
+        # the strongest allowed hash (e.g. it has no SHA512
+        # section) if the suite hasn't been rewritten since that hash was
+        # enabled.  Signal this to the caller by returning None so it can skip
+        # by-hash reconciliation for the suite.
+        if content_hash.apt_name not in release_data:
+            self.log.warning(
+                "by-hash: Release file for %s has no %s section; skipping "
+                "by-hash reconciliation for this suite"
+                % (suite, content_hash.apt_name)
+            )
+            return None
         for current_entry in release_data[
             content_hash.apt_name
         ] + extra_data.get(content_hash.apt_name, []):
@@ -1757,6 +1769,19 @@ class Publisher:
         current_files = self._getCurrentFiles(
             suite, release_file_name, extra_files, allowed_hashes
         )
+        # _getCurrentFiles returns None when the on-disk Release
+        # file predates the strongest allowed hash
+        # (e.g. no SHA512 section).  In that case we can't safely reconcile
+        # the live set, so skip deletion scheduling and new-file creation for
+        # this round; the by-hash entries added above from the DB remain in
+        # place.  This suite will be reconciled properly once its Release file
+        # is rewritten with the new hash.  Remove once all suites have been
+        # rewritten.
+        if current_files is None:
+            by_hashes.prune()
+            if reapable_files:
+                archive_file_set.markDeleted(reapable_files)
+            return
         new_live_files = {
             (path, digest) for path, (_, digest, _) in current_files.items()
         }

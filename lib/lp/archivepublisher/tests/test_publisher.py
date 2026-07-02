@@ -4788,6 +4788,65 @@ class TestUpdateByHash(TestPublisherBase):
             ByHashHasContents(main_contents),
         )
 
+    def test_prune_immutable_release_without_strongest_hash(self):
+        # If a suite's on-disk Release file predates the strongest allowed
+        # hash (e.g. it has no SHA512 section because SHA512 was only
+        # enabled after the suite was last written), then pruning by-hash
+        # files for that immutable suite must not crash.
+        top_contents, main_contents = self.setUpPruneableSuite()
+        suite_path = partial(
+            os.path.join, self.config.distsroot, "breezy-autotest"
+        )
+        release_path = suite_path("Release")
+        # The Release files written so far only advertise the default
+        # hashes, so they have no SHA512 section.
+        with open(release_path) as release_file:
+            self.assertNotIn("SHA512", Release(release_file))
+        release_mtime = os.stat(release_path).st_mtime
+
+        # Switch the series to publish only SHA512 by-hash, and make the
+        # suite immutable so that its Release file is not regenerated
+        self.breezy_autotest.allowed_hashes = ["sha512"]
+        self.breezy_autotest.status = SeriesStatus.CURRENT
+
+        publisher = Publisher(
+            self.logger,
+            self.config,
+            self.disk_pool,
+            self.ubuntutest.main_archive,
+        )
+        self.runSteps(publisher, step_a2=True, step_c=True, step_d=True)
+        transaction.commit()
+        self.assertEqual(set(), publisher.dirty_suites)
+        # The immutable Release file was left untouched.
+        self.assertEqual(release_mtime, os.stat(release_path).st_mtime)
+
+        # Once the suite becomes mutable and is republished, its Release
+        # file is regenerated with the SHA512 section, and by-hash
+        # reconciliation proceeds normally against the new hash.
+        self.breezy_autotest.status = SeriesStatus.DEVELOPMENT
+        self.advanceTime(delta=timedelta(hours=1))
+        self.getPubSource(sourcename="qux", filecontent=b"Source: qux\n")
+        publisher = Publisher(
+            self.logger,
+            self.config,
+            self.disk_pool,
+            self.ubuntutest.main_archive,
+        )
+        self.runSteps(publisher, step_a=True, step_c=True, step_d=True)
+        transaction.commit()
+        with open(release_path) as release_file:
+            release = Release(release_file)
+        self.assertIn("SHA512", release)
+        # The regenerated Release file is tracked in the SHA512 by-hash tree.
+        with open(release_path, "rb") as f:
+            release_contents = f.read()
+        release_sha512 = hashlib.sha512(release_contents).hexdigest()
+        self.assertThat(
+            suite_path("by-hash", "SHA512", release_sha512),
+            FileContainsBytes(release_contents),
+        )
+
 
 class TestUpdateByHashOverriddenDistsroot(TestUpdateByHash):
     """Test by-hash handling with an overridden distsroot.
