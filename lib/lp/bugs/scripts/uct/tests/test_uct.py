@@ -2223,6 +2223,86 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         self.importer.update_bug(bug, cve, self.lp_cve)
         self.checkBug(bug, cve)
 
+    def test_tags_roundtrip_for_dotted_package_name(self):
+        """Package tags survive import→export when the package name contains
+        dots like "python3.10"."""
+        # Create a source package whose name contains a dot.
+        dotted_spn = self.factory.makeSourcePackageName(name="python3.10")
+        dotted_dsp = self.factory.makeDistributionSourcePackage(
+            sourcepackagename=dotted_spn, distribution=self.ubuntu
+        )
+        for series in (
+            self.ubuntu_supported_series,
+            self.ubuntu_current_series,
+        ):
+            self.factory.makeSourcePackagePublishingHistory(
+                distroseries=series,
+                sourcepackagerelease=self.factory.makeSourcePackageRelease(
+                    distroseries=series,
+                    sourcepackagename=dotted_spn,
+                ),
+            )
+
+        lp_cve = self.factory.makeCVE("2022-99901")
+        cve = CVE(
+            sequence="CVE-2022-99901",
+            date_made_public=datetime(2022, 1, 14, 8, 15, tzinfo=timezone.utc),
+            date_notice_issued=None,
+            date_coordinated_release=None,
+            distro_packages=[
+                CVE.DistroPackage(
+                    target=dotted_dsp,
+                    importance=BugTaskImportance.MEDIUM,
+                    package_name=dotted_spn,
+                    tags={"universe-binary"},
+                ),
+            ],
+            series_packages=[
+                CVE.SeriesPackage(
+                    target=SourcePackage(
+                        sourcepackagename=dotted_spn,
+                        distroseries=self.ubuntu_supported_series,
+                    ),
+                    package_name=dotted_spn,
+                    importance=None,
+                    status=BugTaskStatus.NEW,
+                    status_explanation="",
+                ),
+            ],
+            upstream_packages=[],
+            ppa_packages=[],
+            ppa_series_packages=[],
+            importance=BugTaskImportance.MEDIUM,
+            status=VulnerabilityStatus.ACTIVE,
+            assignee=None,
+            bug_urls=[],
+            patch_urls=[],
+            break_fix_data=[],
+            notes="",
+            mitigation=None,
+            description="test",
+            ubuntu_description="",
+            references=[],
+            global_tags=set(),
+            importance_explanation="",
+            cvss={},
+            discovered_by="",
+        )
+
+        bug, _ = self.importer.create_bug(cve, lp_cve)
+
+        # The stored tag should be "python3.10.universe-binary".
+        self.assertIn("python3.10.universe-binary", bug.tags)
+
+        # Now export and verify the tag is attributed to the correct package.
+        exported_cve = self.exporter._make_cve_from_bug(bug)
+        dotted_pkg = next(
+            dp
+            for dp in exported_cve.distro_packages
+            if dp.package_name.name == "python3.10"
+        )
+        self.assertIn("universe-binary", dotted_pkg.tags)
+
     def test_import_cve(self):
         self.importer.import_cve(self.cve)
         self.assertIsNotNone(
