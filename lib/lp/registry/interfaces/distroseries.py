@@ -576,6 +576,21 @@ class IDistroSeriesPublic(
         )
     )
 
+    allowed_hashes = exported(
+        List(
+            value_type=TextLine(),
+            title=_("Allowed hash algorithms for publishing"),
+            required=False,
+            description=_(
+                """
+            A list of hash algorithm names (e.g. ["sha256", "sha512"])
+            that will be included in published index files (Release,
+            Packages, Sources) and by-hash directories.  If not set,
+            all supported hashes are used."""
+            ),
+        )
+    )
+
     strict_supported_component_dependencies = exported(
         Bool(
             title=_("Strict dependencies of supported components"),
