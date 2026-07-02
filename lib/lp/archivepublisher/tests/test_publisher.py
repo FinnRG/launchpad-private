@@ -3218,11 +3218,6 @@ class TestPublisher(TestPublisherBase):
                         "name": "Test",
                         "size": len(contents),
                     },
-                    "sha512": {
-                        "sha512": hashlib.sha512(contents).hexdigest(),
-                        "name": "Test",
-                        "size": len(contents),
-                    },
                 },
                 publisher._readIndexFileHashes("breezy-autotest", "Test"),
             )
