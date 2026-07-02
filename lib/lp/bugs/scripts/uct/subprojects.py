@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Tuple
 
+import yaml
+
 
 class PPAReference(NamedTuple):
     owner: str
@@ -145,6 +147,34 @@ def load_subprojects_from_str(
 def load_subprojects(path: Path) -> Dict[str, SubProjectPPAs]:
     """Load subprojects.json from *path* and return the PPA lookup dict."""
     return load_subprojects_from_str(path.read_text())
+
+
+def load_cppa_subprojects_from_str(
+    content: str,
+) -> Dict[str, SubProjectPPAs]:
+    """Parse a YAML-encoded CPPA subprojects config into a PPA lookup dict.
+
+    Expected format::
+
+        ppa-alias/series:
+          ubuntu_series: series
+          ppa: owner/archive
+
+    Returns a dict mapping each subproject key to a :class:`SubProjectPPAs`.
+    """
+    data = yaml.safe_load(content) or {}
+    result: Dict[str, SubProjectPPAs] = {}
+    for key, entry in data.items():
+        owner, archive = entry["ppa"].split("/", 1)
+        result[key] = SubProjectPPAs(
+            ubuntu_series=entry["ubuntu_series"],
+            ppa=PPAReference(
+                owner=owner,
+                archive=archive,
+                pocket="release",
+            ),
+        )
+    return result
 
 
 def create_archive_to_subproject_map(
