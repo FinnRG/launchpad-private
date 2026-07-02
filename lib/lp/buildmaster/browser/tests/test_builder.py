@@ -261,6 +261,8 @@ class TestBuildersHomepage(TestCaseWithFactory, BuildCreationMixin):
         short_duration = timedelta(hours=12)
         long_duration = timedelta(days=2)
         with admin_logged_in():
+            # Deactivate pre-existing sample data builders so only our
+            # test builders (which default to active=True) are rendered.
             for builder in getUtility(IBuilderSet):
                 builder.active = False
             builders = [self.factory.makeBuilder(), self.factory.makeBuilder()]
@@ -275,15 +277,75 @@ class TestBuildersHomepage(TestCaseWithFactory, BuildCreationMixin):
                 queue.markAsBuilding(builder)
                 removeSecurityProxy(queue).date_started = now - duration
         content = builders_homepage_render()
+        short_text = "(for {})".format(
+            DurationFormatterAPI(short_duration).approximateduration()
+        )
+        long_text = "(for {})".format(
+            DurationFormatterAPI(long_duration).approximateduration()
+        )
+        # Both builds show their duration.
+        self.assertIn(short_text, content)
+        self.assertIn(long_text, content)
+        # The long build gets the warning style.
         self.assertIn(
-            "Building for {}".format(
-                DurationFormatterAPI(long_duration).approximateduration()
+            'style="color: darkorange; font-weight: bold">{}'.format(
+                long_text
             ),
             content,
         )
-        self.assertNotIn(
-            "Building for {}".format(
-                DurationFormatterAPI(short_duration).approximateduration()
+        # The short build renders without any style attribute.
+        self.assertIn(
+            f"<span>{short_text}</span>",
+            content,
+        )
+
+    def test_build_status_duration_slow_processor_not_highlighted(self):
+        # Builds on known slow/emulated processors (e.g. riscv64) are not
+        # highlighted until they exceed the higher threshold (7 days).
+        now = get_transaction_timestamp(IStore(Builder))
+        riscv64 = self.factory.makeProcessor(
+            name="riscv64", title="RISC-V 64bit", description="RISC-V 64bit"
+        )
+        under_threshold = timedelta(days=3)
+        over_threshold = timedelta(days=8)
+        with admin_logged_in():
+            # Deactivate pre-existing sample data builders so only our
+            # test builders (which default to active=True) are rendered.
+            for builder in getUtility(IBuilderSet):
+                builder.active = False
+            builders = [
+                self.factory.makeBuilder(processors=[riscv64]),
+                self.factory.makeBuilder(processors=[riscv64]),
+            ]
+            for builder, duration in zip(
+                builders, [under_threshold, over_threshold]
+            ):
+                build = self.factory.makeBinaryPackageBuild()
+                build.updateStatus(
+                    BuildStatus.NEEDSBUILD, force_invalid_transition=True
+                )
+                queue = build.queueBuild()
+                queue.markAsBuilding(builder)
+                removeSecurityProxy(queue).date_started = now - duration
+        content = builders_homepage_render()
+        under_text = "(for {})".format(
+            DurationFormatterAPI(under_threshold).approximateduration()
+        )
+        over_text = "(for {})".format(
+            DurationFormatterAPI(over_threshold).approximateduration()
+        )
+        # Both builds show their duration.
+        self.assertIn(under_text, content)
+        self.assertIn(over_text, content)
+        # Only the build exceeding the riscv64 threshold is highlighted.
+        self.assertIn(
+            'style="color: darkorange; font-weight: bold">{}'.format(
+                over_text
             ),
+            content,
+        )
+        # The under-threshold build renders without any style attribute.
+        self.assertIn(
+            f"<span>{under_text}</span>",
             content,
         )

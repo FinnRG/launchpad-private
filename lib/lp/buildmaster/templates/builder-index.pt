@@ -121,9 +121,11 @@
       <img width="14" height="14" src="/@@/processing" alt="[building]" />
       <tal:specific-build replace="structure job/specific_build/@@+current" />
       <tal:build-info
-        tal:define="build_info python: view.getBuildInfo(job)"
+        tal:define="build_info python: view.getBuildInfo(builder, job)"
         tal:condition="build_info">
-        <span tal:content="string: (${build_info})" />
+        <span
+          tal:attributes="style build_info/style"
+          tal:content="string:(for ${build_info/duration})" />
       </tal:build-info>
     </tal:job-header>
 
