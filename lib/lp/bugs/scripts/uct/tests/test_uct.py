@@ -1792,6 +1792,100 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             self.ubuntu,
         )
 
+    def test_create_bug_skips_unpublished_package(self):
+        # A distro/series package that is not published in Ubuntu should be
+        # skipped rather than aborting the whole CVE import. PPA tasks for the
+        # same package name should still be created.
+        unpublished_pckg = self.factory.makeDistributionSourcePackage(
+            distribution=self.ubuntu
+        )
+        # Deliberately do not publish unpublished_pckg in any series.
+
+        published_pckg = self.ubuntu_package
+
+        cve = CVE(
+            sequence="CVE-2022-23222",
+            date_made_public=datetime(2022, 1, 14, 8, 15, tzinfo=timezone.utc),
+            date_notice_issued=None,
+            date_coordinated_release=None,
+            distro_packages=[
+                CVE.DistroPackage(
+                    target=published_pckg,
+                    importance=BugTaskImportance.LOW,
+                    package_name=published_pckg.sourcepackagename,
+                    tags=set(),
+                ),
+                CVE.DistroPackage(
+                    target=unpublished_pckg,
+                    importance=BugTaskImportance.MEDIUM,
+                    package_name=unpublished_pckg.sourcepackagename,
+                    tags=set(),
+                ),
+            ],
+            series_packages=[
+                CVE.SeriesPackage(
+                    target=SourcePackage(
+                        sourcepackagename=published_pckg.sourcepackagename,
+                        distroseries=self.ubuntu_supported_series,
+                    ),
+                    package_name=published_pckg.sourcepackagename,
+                    importance=BugTaskImportance.LOW,
+                    status=BugTaskStatus.FIXRELEASED,
+                    status_explanation="",
+                ),
+                CVE.SeriesPackage(
+                    target=SourcePackage(
+                        sourcepackagename=unpublished_pckg.sourcepackagename,
+                        distroseries=self.ubuntu_supported_series,
+                    ),
+                    package_name=unpublished_pckg.sourcepackagename,
+                    importance=None,
+                    status=BugTaskStatus.FIXRELEASED,
+                    status_explanation="",
+                ),
+            ],
+            upstream_packages=[],
+            importance=BugTaskImportance.MEDIUM,
+            status=VulnerabilityStatus.ACTIVE,
+            assignee=None,
+            discovered_by="",
+            description="description",
+            ubuntu_description="",
+            bug_urls=[],
+            references=[],
+            notes="",
+            mitigation="",
+            cvss={},
+            patch_urls=[],
+            break_fix_data=[],
+            global_tags=set(),
+            ppa_packages=[],
+            ppa_series_packages=[],
+        )
+
+        # Import must succeed despite the unpublished package.
+        bug, _ = self.importer.create_bug(cve, self.lp_cve)
+
+        bug_task_targets = {t.target for t in bug.bugtasks}
+        # The published package and its series have bugtasks.
+        self.assertIn(published_pckg, bug_task_targets)
+        self.assertIn(
+            SourcePackage(
+                sourcepackagename=published_pckg.sourcepackagename,
+                distroseries=self.ubuntu_supported_series,
+            ),
+            bug_task_targets,
+        )
+        # The unpublished package and its series do NOT have bugtasks.
+        self.assertNotIn(unpublished_pckg, bug_task_targets)
+        self.assertNotIn(
+            SourcePackage(
+                sourcepackagename=unpublished_pckg.sourcepackagename,
+                distroseries=self.ubuntu_supported_series,
+            ),
+            bug_task_targets,
+        )
+
     def test_update_bug_new_package(self):
         package = self.factory.makeDistributionSourcePackage(
             distribution=self.ubuntu
