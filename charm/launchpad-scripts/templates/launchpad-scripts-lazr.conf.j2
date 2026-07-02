@@ -32,3 +32,8 @@ debbugs_db_location: {{ var_dir }}/debbugs-mirror
 [memcache]
 servers: {{ memcache_servers }}
 
+{% if cppa_subprojects %}
+[IImportVulnerabilityJobSource]
+cppa_subprojects: {{ cppa_subprojects }}
+{% endif %}
+

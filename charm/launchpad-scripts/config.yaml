@@ -89,3 +89,14 @@ options:
       Base64-encoded NaCl private key for decrypting snap store upload
       tokens.
     default:
+  cppa_subprojects:
+    type: string
+    description: |
+      YAML-encoded dict mapping subproject keys (e.g. "ppa-alias/series") to
+      their corresponding PPA references. Required when the CPPA vulnerability
+      import handler is enabled. Example:
+      cppa_subprojects:
+        ppa-alias/series:
+          ubuntu_series: series
+          ppa: owner/archive
+    default:
