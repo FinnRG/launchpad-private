@@ -68,9 +68,14 @@ class CPPARecord(SVTRecord):
         )
 
     @classmethod
-    def from_str(cls, content: str) -> "CPPARecord":
-        """Create a `CPPARecord` from a string or bytes."""
-        data = parser.from_str(content)
+    def from_str(cls, content: str, candidate: str) -> "CPPARecord":
+        """Create a `CPPARecord` from a string or bytes.
+
+        :param content: Raw CPPA file content as ``str`` or ``bytes``.
+        :param candidate: CVE identifier (e.g. ``"CVE-2024-0001"``), used as
+            the filename when parsing so the CVE ID can be extracted correctly.
+        """
+        data = parser.from_str(content, candidate)
         return cls(
             candidate=data["candidate"],
             packages=[

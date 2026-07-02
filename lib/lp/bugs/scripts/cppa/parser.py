@@ -139,18 +139,31 @@ def load(cve_path: Path) -> Dict[str, Any]:
     }
 
 
-def from_str(content) -> Dict[str, Any]:
-    """Parse a CPPA record from a string or bytes, returning a plain dict."""
-    with tempfile.NamedTemporaryFile(
-        mode="wb", suffix="", delete=False, prefix="CVE-"
-    ) as f:
-        if isinstance(content, str):
-            f.write(content.encode("utf-8"))
-        else:
-            f.write(content)
-        temp_path = Path(f.name)
+def from_str(content, candidate: str) -> Dict[str, Any]:
+    """Parse a CPPA record from a string or bytes, returning a plain dict.
 
-    try:
-        return load(temp_path)
-    finally:
-        temp_path.unlink()
+    Unlike :func:`load`, which derives the CVE ID from the filename on disk,
+    this function accepts the content directly.  A temporary file named after
+    *candidate* is created so that :func:`load` can extract the CVE ID from
+    the filename as usual.
+
+    :param content: Raw file content as ``str`` or ``bytes``.
+    :param candidate: CVE identifier used as the temporary filename
+        (e.g. ``"CVE-2024-0001"``).  Must be a plain filename with no
+        directory components.
+    """
+    # candidate is used as a filename; reject path separators to prevent
+    # writing outside the temporary directory.
+    if Path(candidate).name != candidate:
+        raise ValueError(
+            f"candidate must be a plain filename with no path components, "
+            f"got: {candidate!r}"
+        )
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        named_path = Path(tmp_dir) / candidate
+        with open(named_path, "wb") as f:
+            if isinstance(content, str):
+                f.write(content.encode("utf-8"))
+            else:
+                f.write(content)
+        return load(named_path)
