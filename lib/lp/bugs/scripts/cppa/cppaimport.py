@@ -82,6 +82,11 @@ class CPPAImportError(Exception):
 class CPPAImporter(SVTImporter):
     """Adds/updates customer-PPA bugtasks on bugs already imported by UCT.
 
+    Implements the :class:`SVTImporter` interface so it can be used inside
+    :class:`ImportVulnerabilityJob` alongside the UCT and SOSS importers.
+    CPPA never creates bugs, so the *created* flag in the returned 3-tuple
+    is always ``False``.
+
     :param ubuntu: The Ubuntu distribution object.
     :param subprojects: Mapping from subproject key (e.g. ``"esm-apps/focal"``)
         to the corresponding PPA.
@@ -107,24 +112,28 @@ class CPPAImporter(SVTImporter):
         self.cache_entities = cache_entities or CVE.new_cache()
         self.subprojects = subprojects
 
-    def import_cve_from_file(self, cve_path: Path) -> BugModel:
+    def import_cve_from_file(
+        self, cve_path: Path
+    ) -> Tuple[BugModel, Vulnerability, bool]:
         """Load a CPPA CVE file and import it.
 
         :param cve_path: Path to the CPPA CVE file.  The filename must start
             with ``CVE-``.
-        :returns: The existing Launchpad bug that was updated.
+        :returns: ``(bug, vulnerability, False)``, CPPA never creates bugs.
         """
         logger.info("[CPPAImporter] Importing %s", cve_path)
         record = CPPARecord.load(cve_path)
         return self.import_cve(record)
 
-    def from_record(self, record: CPPARecord, cve_sequence: str) -> BugModel:
+    def from_record(
+        self, record: CPPARecord, cve_sequence: str
+    ) -> Tuple[BugModel, Vulnerability, bool]:
         """Import a :class:`CPPARecord`.
 
         :param record: Parsed CPPA CVE record.
         :param cve_sequence: Expected CVE identifier (e.g. "CVE-2013-1953").
             Import is aborted when this does not match `record.candidate`.
-        :returns: The existing Launchpad bug that was updated.
+        :returns: ``(bug, vulnerability, False)``, CPPA never creates bugs.
         :raises CPPAImportError: When the CVE sequence does not match.
         """
         if record.candidate != cve_sequence:
@@ -134,19 +143,21 @@ class CPPAImporter(SVTImporter):
             )
         return self.import_cve(record)
 
-    def import_cve(self, record: CPPARecord) -> BugModel:
+    def import_cve(
+        self, record: CPPARecord
+    ) -> Tuple[BugModel, Vulnerability, bool]:
         """Import a `CPPARecord` into Launchpad.
 
         Looks up the existing Ubuntu bug created by the UCT importer and
         creates or updates PPA bugtasks on it.
 
         :param record: Parsed CPPA CVE record.
-        :returns: The existing Launchpad bug that was updated.
+        :returns: ``(bug, vulnerability, False)``, CPPA never creates bugs.
         :raises CPPAImportError: When the CVE is not found in Launchpad, or no
             Ubuntu vulnerability / bug exists for it yet.
         """
         lp_cve = self._get_launchpad_cve(record.candidate)
-        bug = self._find_existing_bug(lp_cve)
+        bug, vulnerability = self._find_existing_bug(lp_cve)
 
         try:
             self.update_bug(bug, record)
@@ -175,7 +186,8 @@ class CPPAImporter(SVTImporter):
                 record.candidate,
             )
 
-        return bug
+        # created=False: CPPA only updates existing UCT-imported bugs.
+        return bug, vulnerability, False
 
     def update_bug(self, bug: BugModel, record: CPPARecord) -> BugModel:
         """Update *bug* with the PPA bugtasks described in *record*.
@@ -207,8 +219,10 @@ class CPPAImporter(SVTImporter):
             )
         return lp_cve
 
-    def _find_existing_bug(self, lp_cve: CveModel) -> BugModel:
-        """Return the Ubuntu bug linked to *lp_cve* or raise CPPAImportError.
+    def _find_existing_bug(
+        self, lp_cve: CveModel
+    ) -> Tuple[BugModel, Vulnerability]:
+        """Return ``(bug, vulnerability)`` for lp_cve or raise CPPAImportError.
 
         The UCT importer creates exactly one bug per CVE linked via an Ubuntu
         vulnerability.  If that bug is missing we cannot proceed.
@@ -235,7 +249,7 @@ class CPPAImporter(SVTImporter):
                 f"Ubuntu vulnerability {vulnerability.id}."
             )
 
-        return removeSecurityProxy(bugs[0])
+        return removeSecurityProxy(bugs[0]), vulnerability
 
     def _resolve_ppa_packages(
         self, record: CPPARecord
