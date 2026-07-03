@@ -6,6 +6,7 @@ import json
 from lp.bugs.scripts.uct.subprojects import (
     PPAReference,
     SubProjectPPAs,
+    create_archive_to_subproject_map,
     load_subprojects_from_str,
 )
 from lp.testing import TestCase
@@ -444,3 +445,79 @@ class TestLoadSubprojectsFromStr(TestCase):
         error = self.assertRaises(KeyError, load_subprojects_from_str, content)
         self.assertIn("version", str(error))
         self.assertIn("ubuntu/focal", str(error))
+
+
+class TestCreateArchiveToSubprojectMap(TestCase):
+    """Tests for create_archive_to_subproject_map."""
+
+    def _make_subprojects(self, entries):
+        """Build a subprojects dict directly from (key, archive, series)
+        tuples."""
+        result = {}
+        for key, archive, series in entries:
+            result[key] = SubProjectPPAs(
+                ubuntu_series=series,
+                ppa=PPAReference("ubuntu-esm", archive, "security"),
+            )
+        return result
+
+    def test_basic_mapping(self):
+        # A single entry maps (archive, series) to its key.
+        subprojects = self._make_subprojects(
+            [("esm-infra/focal", "esm-infra-security", "focal")]
+        )
+        result = create_archive_to_subproject_map(subprojects)
+        self.assertEqual(
+            {("esm-infra-security", "focal"): "esm-infra/focal"}, result
+        )
+
+    def test_first_key_wins_over_alias(self):
+        # When a subproject key and its alias both map to the same
+        # (archive, series), the first key (inserted first by
+        # load_subprojects_from_str) takes precedence.
+        content = json.dumps(
+            {
+                "esm/trusty": {
+                    "codename": "Trusty Tahr",
+                    "alias": "trusty/esm",
+                    "ppas": [
+                        {
+                            "ppa": "ubuntu-esm/esm-infra-security",
+                            "pocket": "security",
+                        },
+                    ],
+                }
+            }
+        )
+        subprojects = load_subprojects_from_str(content)
+        # Both keys are present in the forward map.
+        self.assertIn("esm/trusty", subprojects)
+        self.assertIn("trusty/esm", subprojects)
+
+        result = create_archive_to_subproject_map(subprojects)
+        key = ("esm-infra-security", "trusty")
+        self.assertIn(key, result)
+        # The first key must win.
+        self.assertEqual("esm/trusty", result[key])
+
+    def test_distinct_entries_all_present(self):
+        # Different (archive, series) pairs each get their own entry.
+        subprojects = self._make_subprojects(
+            [
+                ("esm-infra/focal", "esm-infra-security", "focal"),
+                ("esm-infra/xenial", "esm-infra-security", "xenial"),
+                ("esm-apps/focal", "esm-apps-security", "focal"),
+            ]
+        )
+        result = create_archive_to_subproject_map(subprojects)
+        self.assertEqual(
+            {
+                ("esm-infra-security", "focal"): "esm-infra/focal",
+                ("esm-infra-security", "xenial"): "esm-infra/xenial",
+                ("esm-apps-security", "focal"): "esm-apps/focal",
+            },
+            result,
+        )
+
+    def test_empty_subprojects(self):
+        self.assertEqual({}, create_archive_to_subproject_map({}))

@@ -3267,16 +3267,36 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             serialized,
         )
 
-    def test_subproject_key_fallback_warning(self):
-        """Test fallback behavior when subproject mapping is missing."""
-        # Create CVE with PPA packages
+    def test_no_subprojects_skips_all_ppa_packages(self):
+        """When no subprojects mapping is loaded (None), all PPA packages are
+        silently excluded from the UCT export, but non-PPA (distro/series)
+        packages are unaffected and still exported."""
+        spn = self.ubuntu_package.sourcepackagename
         cve = CVE(
             sequence="CVE-2024-00001",
             date_made_public=None,
             date_notice_issued=None,
             date_coordinated_release=None,
-            distro_packages=[],
-            series_packages=[],
+            distro_packages=[
+                CVE.DistroPackage(
+                    target=self.ubuntu_package,
+                    package_name=spn,
+                    importance=BugTaskImportance.MEDIUM,
+                    tags=set(),
+                ),
+            ],
+            series_packages=[
+                CVE.SeriesPackage(
+                    target=SourcePackage(
+                        sourcepackagename=spn,
+                        distroseries=self.ubuntu_supported_series,
+                    ),
+                    package_name=spn,
+                    importance=None,
+                    status=BugTaskStatus.NEW,
+                    status_explanation="",
+                ),
+            ],
             upstream_packages=[],
             ppa_packages=[
                 CVE.PPAPackage(
@@ -3311,14 +3331,211 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             break_fix_data=[],
         )
 
-        # Convert without providing subprojects mapping
-        with self.expectedLog("No subproject mapping found"):
-            uct_record = cve.to_uct_record(subprojects=None)
+        # subprojects=None: PPA packages are silently excluded, but the
+        # regular distro package is still present.
+        uct_record = cve.to_uct_record(subprojects=None)
 
-        # Verify fallback format is used
-        package = uct_record.packages[0]
-        series_names = {s.series for s in package.statuses}
-        self.assertIn("esm-infra-security/focal", series_names)
+        pkg_names = [p.name for p in uct_record.packages]
+        # The non-PPA distro package must be exported.
+        self.assertIn(spn.name, pkg_names)
+        # The PPA package must be absent.
+        self.assertNotIn(self.esm_package.sourcepackagename.name, pkg_names)
+        # The distro package carries its series status.
+        distro_pkg = next(p for p in uct_record.packages if p.name == spn.name)
+        self.assertEqual(
+            [self.ubuntu_supported_series.name],
+            [s.series for s in distro_pkg.statuses],
+        )
+
+    def test_unrelated_ppa_package_excluded_when_not_in_subprojects(self):
+        """PPA tasks whose archive is not in subprojects are silently excluded
+        from the UCT export when a subprojects mapping is provided."""
+        # A PPA archive that is not in the subprojects mapping.
+        outside_ppa = self.factory.makeArchive(
+            distribution=self.ubuntu, name="outside-ppa"
+        )
+        outside_ppa_spn = self.factory.makeSourcePackageName()
+        outside_ppa_asp = ArchiveSourcePackage(outside_ppa, outside_ppa_spn)
+        outside_ppa_asps = ArchiveSourcePackageSeries(
+            outside_ppa, self.ubuntu_supported_series, outside_ppa_spn
+        )
+
+        # Build a minimal subprojects dict that knows esm-apps-security but
+        # not the PPA above.
+        known_subprojects = {
+            "esm-apps/jammy": SubProjectPPAs(
+                ubuntu_series="jammy",
+                ppa=PPAReference(
+                    owner=self.ppa_owner.name,
+                    archive=self.ppa_apps.name,  # esm-apps-security
+                    pocket="security",
+                ),
+            ),
+        }
+
+        cve = CVE(
+            sequence="CVE-2024-00002",
+            date_made_public=None,
+            date_notice_issued=None,
+            date_coordinated_release=None,
+            distro_packages=[],
+            series_packages=[],
+            upstream_packages=[],
+            ppa_packages=[
+                # Known PPA (esm-apps-security) must be exported.
+                CVE.PPAPackage(
+                    target=self.esm_package_apps,
+                    package_name=self.esm_package_apps.sourcepackagename,
+                    importance=BugTaskImportance.MEDIUM,
+                    tags=set(),
+                ),
+                # Outside PPA must be silently skipped.
+                CVE.PPAPackage(
+                    target=outside_ppa_asp,
+                    package_name=outside_ppa_spn,
+                    importance=BugTaskImportance.HIGH,
+                    tags=set(),
+                ),
+            ],
+            ppa_series_packages=[
+                CVE.PPASeriesPackage(
+                    target=self.esm_ppa_asps_current,
+                    package_name=self.esm_package_apps.sourcepackagename,
+                    importance=BugTaskImportance.MEDIUM,
+                    status=BugTaskStatus.FIXRELEASED,
+                    status_explanation="fixed",
+                ),
+                CVE.PPASeriesPackage(
+                    target=outside_ppa_asps,
+                    package_name=outside_ppa_spn,
+                    importance=BugTaskImportance.HIGH,
+                    status=BugTaskStatus.FIXRELEASED,
+                    status_explanation="fixed",
+                ),
+            ],
+            importance=BugTaskImportance.MEDIUM,
+            importance_explanation="",
+            status=VulnerabilityStatus.ACTIVE,
+            assignee=None,
+            discovered_by="",
+            description="Test",
+            ubuntu_description="",
+            bug_urls=[],
+            references=[],
+            notes="",
+            mitigation="",
+            cvss={},
+            global_tags=set(),
+            break_fix_data=[],
+        )
+
+        uct_record = cve.to_uct_record(subprojects=known_subprojects)
+
+        pkg_names = [p.name for p in uct_record.packages]
+        # The known PPA package must be present.
+        self.assertIn(self.esm_package_apps.sourcepackagename.name, pkg_names)
+        # The outside PPA package must be absent.
+        self.assertNotIn(outside_ppa_spn.name, pkg_names)
+
+    def test_ppa_series_entry_excluded_when_archive_series_not_in_subprojects(
+        self,
+    ):
+        """A PPA series entry whose (archive, series) combination has no
+        subproject mapping is skipped with a warning, while other series
+        entries for the same archive that ARE mapped are still exported.
+        """
+        # subprojects maps esm-apps/jammy only, focal has no mapping.
+        known_subprojects = {
+            "esm-apps/jammy": SubProjectPPAs(
+                ubuntu_series="jammy",
+                ppa=PPAReference(
+                    owner=self.ppa_owner.name,
+                    archive=self.ppa_apps.name,
+                    pocket="security",
+                ),
+            ),
+        }
+
+        # Create an ASPS for the same archive but the focal series, which is
+        # NOT in known_subprojects.
+        ppa_apps_asps_focal = self.factory.makeArchiveSourcePackageSeries(
+            sourcepackagename=self.esm_package_apps.sourcepackagename,
+            archive=self.ppa_apps,
+            distroseries=self.ubuntu_supported_series,  # focal
+        )
+
+        cve = CVE(
+            sequence="CVE-2024-00003",
+            date_made_public=None,
+            date_notice_issued=None,
+            date_coordinated_release=None,
+            distro_packages=[],
+            series_packages=[],
+            upstream_packages=[],
+            ppa_packages=[
+                CVE.PPAPackage(
+                    target=self.esm_package_apps,
+                    package_name=self.esm_package_apps.sourcepackagename,
+                    importance=BugTaskImportance.MEDIUM,
+                    tags=set(),
+                ),
+            ],
+            ppa_series_packages=[
+                # jammy is in known_subprojects, it must export.
+                CVE.PPASeriesPackage(
+                    target=self.esm_ppa_asps_current,
+                    package_name=self.esm_package_apps.sourcepackagename,
+                    importance=BugTaskImportance.MEDIUM,
+                    status=BugTaskStatus.FIXRELEASED,
+                    status_explanation="fixed in jammy",
+                ),
+                # focal has no subproject key; this entry must be skipped with
+                # a warning.
+                CVE.PPASeriesPackage(
+                    target=ppa_apps_asps_focal,
+                    package_name=self.esm_package_apps.sourcepackagename,
+                    importance=BugTaskImportance.MEDIUM,
+                    status=BugTaskStatus.FIXRELEASED,
+                    status_explanation="fixed in focal",
+                ),
+            ],
+            importance=BugTaskImportance.MEDIUM,
+            importance_explanation="",
+            status=VulnerabilityStatus.ACTIVE,
+            assignee=None,
+            discovered_by="",
+            description="Test",
+            ubuntu_description="",
+            bug_urls=[],
+            references=[],
+            notes="",
+            mitigation="",
+            cvss={},
+            global_tags=set(),
+            break_fix_data=[],
+        )
+
+        with self.expectedLog(
+            f"No subproject mapping for archive '{self.ppa_apps.name}'"
+            f" series '{self.ubuntu_supported_series.name}';"
+            " skipping series entry."
+        ):
+            uct_record = cve.to_uct_record(subprojects=known_subprojects)
+
+        # The package must be present because the jammy entry was mapped.
+        pkg_names = [p.name for p in uct_record.packages]
+        self.assertIn(self.esm_package_apps.sourcepackagename.name, pkg_names)
+
+        # Only the jammy status entry must appear; focal must be absent.
+        pkg = next(
+            p
+            for p in uct_record.packages
+            if p.name == self.esm_package_apps.sourcepackagename.name
+        )
+        exported_series = [s.series for s in pkg.statuses]
+        self.assertIn("esm-apps/jammy", exported_series)
+        self.assertNotIn("esm-apps/focal", exported_series)
+        self.assertEqual(1, len(exported_series))
 
     def test_get_patch_urls_with_invalid_url(self):
         """Test that invalid URLs are logged and skipped."""
