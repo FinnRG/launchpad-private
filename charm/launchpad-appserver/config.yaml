@@ -80,6 +80,16 @@ options:
     type: string
     description: Frequency of logrotate (daily or hourly)
     default: daily
+  lui_routing_enabled:
+    type: boolean
+    description: >
+      Route selected paths to the Launchpad UI (LUI).  Enable only for PS7+;
+      must stay disabled on PS5.  Requires lui_endpoint.
+    default: false
+  lui_endpoint:
+    type: string
+    description: The base URL of the Launchpad UI (LUI) service.
+    default: ""
   mailman_archive_url_template:
     type: string
     description: Template expanded to form URLs for Launchpad list archives.
