@@ -1749,7 +1749,7 @@ class Distribution(
             ]
         return store.find(OCIProject, *clauses)
 
-    def guessPublishedSourcePackageName(self, pkgname):
+    def guessPublishedSourcePackageName(self, pkgname, include_eol=False):
         """See `IDistribution`"""
         assert isinstance(pkgname, str), "Expected string. Got: %r" % pkgname
 
@@ -1763,6 +1763,16 @@ class Distribution(
             raise NotFoundError(
                 "%s has no series; %r was never "
                 "published in it" % (self.displayname, pkgname)
+            )
+
+        included_publishing_statuses = list(active_publishing_status)
+        # Sometimes we might want to include packages that were once published,
+        # but are now EOL in the search, for example when we want to map a
+        # package to an old vulnerability, in which case EOL packages would
+        # also be considered "Published".
+        if include_eol:
+            included_publishing_statuses.append(
+                PackagePublishingStatus.OBSOLETE
             )
 
         sourcepackagename = getUtility(ISourcePackageNameSet).queryByName(
@@ -1787,7 +1797,7 @@ class Distribution(
                     SourcePackagePublishingHistory.sourcepackagename
                     == sourcepackagename,
                     SourcePackagePublishingHistory.status.is_in(
-                        active_publishing_status
+                        included_publishing_statuses
                     ),
                 )
                 .order_by(Desc(SourcePackagePublishingHistory.id))
@@ -1829,7 +1839,7 @@ class Distribution(
                     BinaryPackagePublishingHistory.binarypackagename
                     == binarypackagename,
                     BinaryPackagePublishingHistory.status.is_in(
-                        active_publishing_status
+                        included_publishing_statuses
                     ),
                 )
                 .order_by(Desc(BinaryPackagePublishingHistory.id))

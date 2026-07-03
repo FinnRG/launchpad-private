@@ -440,8 +440,17 @@ class UCTImporter(SVTImporter):
             target = package.target
             if target not in seen_targets:
                 try:
+                    # PPA bugtasks are not validated for source package
+                    # existence, because they may be for packages that are not
+                    # published in the PPA yet.
+                    # Similarly, we allow EOL distribution packages to be
+                    # imported, because they may have been published in the
+                    # past.
                     validate_new_target(
-                        bug, target, check_ppa_source_package=False
+                        bug,
+                        target,
+                        check_ppa_source_package=False,
+                        include_eol_distribution_package=True,
                     )
                 except IllegalTarget as e:
                     logger.warning(

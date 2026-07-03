@@ -295,6 +295,35 @@ class TestDistribution(TestCaseWithFactory):
             ).name,
         )
 
+    def test_guessPublishedSourcePackageName_eol_excluded_by_default(self):
+        # Packages with OBSOLETE status are not found when include_eol=False
+        # (the default).
+        distroseries = self.factory.makeDistroSeries()
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=distroseries,
+            sourcepackagename="eol-package",
+            status=PackagePublishingStatus.OBSOLETE,
+        )
+        with self.assertRaisesRegex(NotFoundError, "not published in"):
+            distroseries.distribution.guessPublishedSourcePackageName(
+                "eol-package"
+            )
+
+    def test_guessPublishedSourcePackageName_include_eol(self):
+        # Packages with OBSOLETE status are found when include_eol=True.
+        distroseries = self.factory.makeDistroSeries()
+        spph = self.factory.makeSourcePackagePublishingHistory(
+            distroseries=distroseries,
+            sourcepackagename="eol-package",
+            status=PackagePublishingStatus.OBSOLETE,
+        )
+        self.assertEqual(
+            spph.sourcepackagerelease.sourcepackagename,
+            distroseries.distribution.guessPublishedSourcePackageName(
+                "eol-package", include_eol=True
+            ),
+        )
+
     def test_guessPublishedSourcePackageName_official_package_branch(self):
         # It consider that a sourcepackage that has an official package
         # branch is published.
