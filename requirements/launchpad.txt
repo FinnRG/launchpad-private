@@ -182,8 +182,7 @@ soupsieve==2.6
 stack-data==0.6.3
 statsd==3.3.0
 stevedore==1.32.0
-# lp:~launchpad-committers/storm/lp
-storm==0.26+lp418
+storm==1.2
 talisker==0.18.0
 tenacity==9.0.0
 testresources==0.2.7
