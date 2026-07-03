@@ -418,6 +418,7 @@ def validate_target(
     retarget_existing=True,
     check_source_package=True,
     check_ppa_source_package=True,
+    include_eol_distribution_package=False,
 ):
     """Validate a bugtask target against a bug's existing tasks.
 
@@ -486,7 +487,8 @@ def validate_target(
         ):
             try:
                 target.distribution.guessPublishedSourcePackageName(
-                    target.sourcepackagename.name
+                    target.sourcepackagename.name,
+                    include_eol=include_eol_distribution_package,
                 )
             except NotFoundError as e:
                 raise IllegalTarget(e.args[0])
@@ -529,7 +531,11 @@ def validate_target(
 
 
 def validate_new_target(
-    bug, target, check_source_package=True, check_ppa_source_package=True
+    bug,
+    target,
+    check_source_package=True,
+    check_ppa_source_package=True,
+    include_eol_distribution_package=False,
 ):
     """Validate a bugtask target to be added.
 
@@ -602,6 +608,7 @@ def validate_new_target(
         retarget_existing=False,
         check_source_package=check_source_package,
         check_ppa_source_package=check_ppa_source_package,
+        include_eol_distribution_package=include_eol_distribution_package,
     )
 
 

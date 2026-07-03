@@ -964,7 +964,7 @@ class IDistributionView(
         (a substring of) their binary package names.
         """
 
-    def guessPublishedSourcePackageName(pkgname):
+    def guessPublishedSourcePackageName(pkgname, include_eol=False):
         """Return the "published" SourcePackageName related to pkgname.
 
         If pkgname corresponds to a source package that was published in
@@ -977,6 +977,9 @@ class IDistributionView(
         Otherwise, try to find a published binary package name and then return
         the source package name from which it comes from.
 
+        :param pkgname: The name of the source or binary package to look up.
+        :param include_eol: If True, also consider packages with an OBSOLETE
+            publishing status (i.e. end-of-life series). Defaults to False.
         :raises NotFoundError: when pkgname doesn't correspond to either a
             published source or binary package name in this distribution.
         """

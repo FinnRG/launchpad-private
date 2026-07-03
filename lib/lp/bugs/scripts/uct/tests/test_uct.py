@@ -42,6 +42,7 @@ from lp.registry.model.archivesourcepackageseries import (
 )
 from lp.registry.model.sourcepackage import SourcePackage
 from lp.services.propertycache import clear_property_cache
+from lp.soyuz.enums import PackagePublishingStatus
 from lp.testing import TestCase, TestCaseWithFactory
 from lp.testing.layers import ZopelessDatabaseLayer
 
@@ -1885,6 +1886,120 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             ),
             bug_task_targets,
         )
+
+    def test_create_bug_includes_eol_package(self):
+        # A distro package which was once published but is now in OBSOLETE
+        # (end-of-life) status in the import
+        eol_pckg = self.factory.makeDistributionSourcePackage(
+            distribution=self.ubuntu
+        )
+        # Publish with OBSOLETE status (end-of-life series).
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=self.ubuntu_supported_series,
+            sourcepackagename=eol_pckg.sourcepackagename,
+            archive=self.ubuntu.main_archive,
+            status=PackagePublishingStatus.OBSOLETE,
+        )
+
+        cve = CVE(
+            sequence="CVE-2022-23222",
+            date_made_public=datetime(2022, 1, 14, 8, 15, tzinfo=timezone.utc),
+            date_notice_issued=None,
+            date_coordinated_release=None,
+            distro_packages=[
+                CVE.DistroPackage(
+                    target=self.ubuntu_package,
+                    importance=BugTaskImportance.LOW,
+                    package_name=self.ubuntu_package.sourcepackagename,
+                    tags=set(),
+                ),
+                CVE.DistroPackage(
+                    target=eol_pckg,
+                    importance=BugTaskImportance.MEDIUM,
+                    package_name=eol_pckg.sourcepackagename,
+                    tags=set(),
+                ),
+            ],
+            series_packages=[],
+            upstream_packages=[],
+            importance=BugTaskImportance.MEDIUM,
+            status=VulnerabilityStatus.ACTIVE,
+            assignee=None,
+            discovered_by="",
+            description="description",
+            ubuntu_description="",
+            bug_urls=[],
+            references=[],
+            notes="",
+            mitigation="",
+            cvss={},
+            patch_urls=[],
+            break_fix_data=[],
+            global_tags=set(),
+            ppa_packages=[],
+            ppa_series_packages=[],
+        )
+
+        bug, _ = self.importer.create_bug(cve, self.lp_cve)
+
+        bug_task_targets = {t.target for t in bug.bugtasks}
+        # Both the active-publication package and the EOL package have tasks.
+        self.assertIn(self.ubuntu_package, bug_task_targets)
+        self.assertIn(eol_pckg, bug_task_targets)
+
+    def test_create_bug_skips_truly_unpublished_despite_eol_flag(self):
+        # A package with no publication at all is still skipped, even though
+        # EOL packages are allowed.  The two cases must remain distinct.
+        never_published = self.factory.makeDistributionSourcePackage(
+            distribution=self.ubuntu
+        )
+        # Deliberately publish nothing for never_published.
+
+        cve = CVE(
+            sequence="CVE-2022-23222",
+            date_made_public=datetime(2022, 1, 14, 8, 15, tzinfo=timezone.utc),
+            date_notice_issued=None,
+            date_coordinated_release=None,
+            distro_packages=[
+                CVE.DistroPackage(
+                    target=self.ubuntu_package,
+                    importance=BugTaskImportance.LOW,
+                    package_name=self.ubuntu_package.sourcepackagename,
+                    tags=set(),
+                ),
+                CVE.DistroPackage(
+                    target=never_published,
+                    importance=BugTaskImportance.MEDIUM,
+                    package_name=never_published.sourcepackagename,
+                    tags=set(),
+                ),
+            ],
+            series_packages=[],
+            upstream_packages=[],
+            importance=BugTaskImportance.MEDIUM,
+            status=VulnerabilityStatus.ACTIVE,
+            assignee=None,
+            discovered_by="",
+            description="description",
+            ubuntu_description="",
+            bug_urls=[],
+            references=[],
+            notes="",
+            mitigation="",
+            cvss={},
+            patch_urls=[],
+            break_fix_data=[],
+            global_tags=set(),
+            ppa_packages=[],
+            ppa_series_packages=[],
+        )
+
+        bug, _ = self.importer.create_bug(cve, self.lp_cve)
+
+        bug_task_targets = {t.target for t in bug.bugtasks}
+        self.assertIn(self.ubuntu_package, bug_task_targets)
+        # The never-published package has no task.
+        self.assertNotIn(never_published, bug_task_targets)
 
     def test_update_bug_new_package(self):
         package = self.factory.makeDistributionSourcePackage(

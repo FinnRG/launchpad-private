@@ -81,6 +81,7 @@ from lp.services.searchbuilder import any
 from lp.services.webapp.authorization import check_permission
 from lp.services.webapp.interfaces import ILaunchBag, OAuthPermission
 from lp.services.webapp.snapshot import notify_modified
+from lp.soyuz.enums import PackagePublishingStatus
 from lp.soyuz.interfaces.archive import ArchivePurpose
 from lp.testing import (
     ANONYMOUS,
@@ -4165,6 +4166,63 @@ class TestValidateTarget(TestCaseWithFactory, ValidateTargetMixin):
         # This should not raise an exception
         validate_target(bug, asps, check_ppa_source_package=False)
 
+    def test_dsp_with_eol_publication_disallowed_by_default(self):
+        # A DSP whose only publication is OBSOLETE is rejected by default.
+        series = self.factory.makeDistroSeries()
+        dsp = self.factory.makeDistributionSourcePackage(
+            distribution=series.distribution
+        )
+        another_dsp = self.factory.makeDistributionSourcePackage(
+            distribution=series.distribution
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=series,
+            sourcepackagename=another_dsp.sourcepackagename,
+            archive=series.main_archive,
+        )
+        self.assertTrue(series.distribution.has_published_sources)
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=series,
+            sourcepackagename=dsp.sourcepackagename,
+            archive=series.main_archive,
+            status=PackagePublishingStatus.OBSOLETE,
+        )
+        task = self.factory.makeBugTask()
+        self.assertRaisesWithContent(
+            IllegalTarget,
+            "Package %s not published in %s"
+            % (dsp.sourcepackagename.name, dsp.distribution.displayname),
+            validate_target,
+            task.bug,
+            dsp,
+        )
+
+    def test_dsp_with_eol_publication_allowed_with_include_eol(self):
+        # A DSP whose only publication is OBSOLETE is allowed when
+        # include_eol_distribution_package=True.
+        series = self.factory.makeDistroSeries()
+        dsp = self.factory.makeDistributionSourcePackage(
+            distribution=series.distribution
+        )
+        another_dsp = self.factory.makeDistributionSourcePackage(
+            distribution=series.distribution
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=series,
+            sourcepackagename=another_dsp.sourcepackagename,
+            archive=series.main_archive,
+        )
+        self.assertTrue(series.distribution.has_published_sources)
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=series,
+            sourcepackagename=dsp.sourcepackagename,
+            archive=series.main_archive,
+            status=PackagePublishingStatus.OBSOLETE,
+        )
+        task = self.factory.makeBugTask()
+        # Should not raise.
+        validate_target(task.bug, dsp, include_eol_distribution_package=True)
+
     def test_createTask_creates_when_check_ppa_source_package_false(self):
         # createTask allows unpublished PPA packages when
         # check_ppa_source_package=False.
@@ -4232,6 +4290,65 @@ class TestValidateNewTarget(TestCaseWithFactory, ValidateTargetMixin):
             validate_new_target,
             task.bug,
             p,
+        )
+
+    def test_dsp_with_eol_publication_disallowed_by_default(self):
+        # A DSP whose only publication is OBSOLETE is rejected by default.
+        series = self.factory.makeDistroSeries()
+        dsp = self.factory.makeDistributionSourcePackage(
+            distribution=series.distribution
+        )
+        another_dsp = self.factory.makeDistributionSourcePackage(
+            distribution=series.distribution
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=series,
+            sourcepackagename=another_dsp.sourcepackagename,
+            archive=series.main_archive,
+        )
+        self.assertTrue(series.distribution.has_published_sources)
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=series,
+            sourcepackagename=dsp.sourcepackagename,
+            archive=series.main_archive,
+            status=PackagePublishingStatus.OBSOLETE,
+        )
+        task = self.factory.makeBugTask()
+        self.assertRaisesWithContent(
+            IllegalTarget,
+            "Package %s not published in %s"
+            % (dsp.sourcepackagename.name, dsp.distribution.displayname),
+            validate_new_target,
+            task.bug,
+            dsp,
+        )
+
+    def test_dsp_with_eol_publication_allowed_with_include_eol(self):
+        # A DSP whose only publication is OBSOLETE is allowed when
+        # include_eol_distribution_package=True.
+        series = self.factory.makeDistroSeries()
+        dsp = self.factory.makeDistributionSourcePackage(
+            distribution=series.distribution
+        )
+        another_dsp = self.factory.makeDistributionSourcePackage(
+            distribution=series.distribution
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=series,
+            sourcepackagename=another_dsp.sourcepackagename,
+            archive=series.main_archive,
+        )
+        self.assertTrue(series.distribution.has_published_sources)
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=series,
+            sourcepackagename=dsp.sourcepackagename,
+            archive=series.main_archive,
+            status=PackagePublishingStatus.OBSOLETE,
+        )
+        task = self.factory.makeBugTask()
+        # Should not raise.
+        validate_new_target(
+            task.bug, dsp, include_eol_distribution_package=True
         )
 
     def test_package_task_with_distribution_task_forbidden(self):
