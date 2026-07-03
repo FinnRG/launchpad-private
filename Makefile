@@ -324,6 +324,9 @@ publish-tarball: build-tarball
 $(VENV_INSTANCE_NAME): download-cache requirements/combined.txt setup.py
 	rm -rf env
 	mkdir -p env
+	# Ensure the wheels find-links directory referenced by PIP_FIND_LINKS
+	# exists, so pip doesn't warn about it being missing on every invocation.
+	mkdir -p wheels
 	$(VIRTUALENV) \
 		--python=$(PYTHON) --never-download \
 		--extra-search-dir=$(WD)/download-cache/dist/ \
