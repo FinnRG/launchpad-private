@@ -21,6 +21,7 @@ from lp.bugs.scripts.uct.subprojects import (
     create_archive_to_subproject_map,
 )
 from lp.registry.interfaces.distribution import IDistributionSet
+from lp.registry.interfaces.person import IPerson
 from lp.registry.interfaces.role import IPersonRoles
 from lp.registry.model.archivesourcepackageseries import (
     ArchiveSourcePackageSeries,
@@ -128,6 +129,8 @@ class CPPAExporter(SVTExporter):
             CPPARecord.Package(name=pkg_name, statuses=statuses)
             for pkg_name, statuses in packages_by_name.items()
         ]
+        if not packages:
+            return None
         return CPPARecord(candidate=cve_sequence, packages=packages)
 
     def export_bug_to_cppa_file(
@@ -175,10 +178,24 @@ class CPPAExporter(SVTExporter):
         record = self.to_record(
             removeSecurityProxy(bug), removeSecurityProxy(vulnerability)
         )
-        if not record.packages:
+        if record is None:
             return []
 
-        # Group statuses by project name (part of subproject key before "/").
+        saved_paths = self._write_record_to_dir(record, output_dir)
+        for path in saved_paths:
+            logger.info("[CPPAExporter] Bug %s exported to %s", bug_id, path)
+        return saved_paths
+
+    def _write_record_to_dir(
+        self, record: CPPARecord, output_dir: Path
+    ) -> List[Path]:
+        """Split *record* by project and write one file per project subdir.
+
+        :param record: :class:`CPPARecord` to serialise.
+        :param output_dir: Root directory; project subdirectories are created
+            automatically.
+        :returns: List of paths written.
+        """
         projects = defaultdict(lambda: defaultdict(list))
         for pkg in record.packages:
             for status in pkg.statuses:
@@ -196,20 +213,16 @@ class CPPAExporter(SVTExporter):
             )
             project_dir = output_dir / project_name
             project_dir.mkdir(parents=True, exist_ok=True)
-            save_path = project_record.save(project_dir)
-            logger.info(
-                "[CPPAExporter] Bug %s exported to %s", bug_id, save_path
-            )
-            saved_paths.append(save_path)
+            saved_paths.append(project_record.save(project_dir))
 
         return saved_paths
 
-    def checkUserPermissions(self, user) -> None:  # noqa: N802
+    def checkUserPermissions(self, user: IPerson) -> bool:
         """Check that *user* may use this exporter.
 
         Delegates to the same security check used by the UCT exporter.
         """
         ubuntu = getUtility(IDistributionSet).getByName("ubuntu")
-        SecurityAdminDistribution(ubuntu).checkAuthenticated(
+        return SecurityAdminDistribution(ubuntu).checkAuthenticated(
             IPersonRoles(user)
         )
