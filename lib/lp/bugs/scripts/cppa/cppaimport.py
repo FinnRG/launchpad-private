@@ -205,6 +205,16 @@ class CPPAImporter(SVTImporter):
         self._update_statuses_and_importances(
             bug, package_importances, ppa_packages, ppa_series_packages
         )
+
+        # TODO: ilkeremrekoc 2026-07-03: CPPAs should not change the whole
+        # bug's information type, but as it stands, we do not have a way to
+        # control access per bugtask.  For now, we just make sure the bug is
+        # at least private. This should be removed when per-bugtask access
+        # control is implemented.
+        if bug.information_type != InformationType.PRIVATESECURITY:
+            bug.transitionToInformationType(
+                InformationType.PRIVATESECURITY, self.bug_importer
+            )
         return bug
 
     def _get_launchpad_cve(self, cve_sequence: str) -> CveModel:
