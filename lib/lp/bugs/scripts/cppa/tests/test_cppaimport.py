@@ -384,6 +384,33 @@ class TestCPPAImporterHappyPath(TestCPPAImporterSetup):
         messages = [a.message for a in bug.activity]
         self.assertIn("CPPA CVE entry CVE-2013-1953", messages)
 
+    def test_bug_transitions_to_private_security(self):
+        """After a CPPA import the bug is PRIVATESECURITY."""
+        bug = self._make_bug_with_no_ppa_tasks()
+        self.assertEqual(InformationType.PUBLICSECURITY, bug.information_type)
+        importer = self._make_importer()
+        importer.from_record(self._make_record(), "CVE-2013-1953")
+
+        self.assertEqual(InformationType.PRIVATESECURITY, bug.information_type)
+
+    def test_bug_already_private_security_unchanged(self):
+        """A bug already marked PRIVATESECURITY is not touched again."""
+        bug = self._make_ubuntu_bug()
+        bug.transitionToInformationType(
+            InformationType.PRIVATESECURITY, self.bug_importer
+        )
+
+        importer = self._make_importer()
+        importer.from_record(self._make_record(), "CVE-2013-1953")
+
+        # No extra activity entry for the information_type transition.
+        activity_messages = [a.message for a in bug.activity]
+        transition_entries = [
+            m for m in activity_messages if "private" in m.lower()
+        ]
+        self.assertEqual([], transition_entries)
+        self.assertEqual(InformationType.PRIVATESECURITY, bug.information_type)
+
     def _make_bug_with_no_ppa_tasks(self):
         """Wrapper around _make_ubuntu_bug for readability."""
         return self._make_ubuntu_bug()
