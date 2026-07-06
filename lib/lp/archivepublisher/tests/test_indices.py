@@ -30,7 +30,7 @@ from lp.soyuz.model.publishing import (
 from lp.soyuz.tests.test_publishing import TestNativePublishingBase
 
 
-def build_bpph_stanza(bpph, include_sha512=False):
+def build_bpph_stanza(bpph):
     return build_binary_stanza_fields(
         bpph.binarypackagerelease,
         bpph.component,
@@ -38,16 +38,14 @@ def build_bpph_stanza(bpph, include_sha512=False):
         bpph.priority,
         bpph.phased_update_percentage,
         False,
-        include_sha512=include_sha512,
     )
 
 
-def build_spph_stanza(spph, include_sha512=False):
+def build_spph_stanza(spph):
     return build_source_stanza_fields(
         spph.sourcepackagerelease,
         spph.component,
         spph.section,
-        include_sha512=include_sha512,
     )
 
 
@@ -61,10 +59,18 @@ class TestNativeArchiveIndexes(TestNativePublishingBase):
     deb_sha256 = (
         "006ca0f356f54b1916c24c282e6fd19961f4356441401f4b0966f2a00bb3e945"
     )
+    deb_sha512 = (
+        "77544cff55acb3694c129b7b5e9e87896bcd5757347ef7d12acd4e4e8531ecb3"
+        "fa6c9760921a0bf88cdde46deed85265c1b74d9c92f15789c2dc7b9ffb2e567c"
+    )
     dsc_md5 = "5913c3ad52c14a62e6ae7eef51f9ef42"
     dsc_sha1 = "e35e29b2ea94bbaa831882e11d1f456690f04e69"
     dsc_sha256 = (
         "ac512102db9724bee18f26945efeeb82fdab89819e64e120fbfda755ca50c2c6"
+    )
+    dsc_sha512 = (
+        "0671cb61d7df4be7e384bce3e17fbbc206e456fee8c565e454c0b65b29eaad6c"
+        "47b4e5dc61f7ecfc270f7b47d2d85e5cf18452503a83bb762605a69fe1ff8932"
     )
 
     def setUp(self):
@@ -118,6 +124,8 @@ class TestNativeArchiveIndexes(TestNativePublishingBase):
                 " %s 28 foo_666.dsc" % self.dsc_sha1,
                 "Checksums-Sha256:",
                 " %s 28 foo_666.dsc" % self.dsc_sha256,
+                "Checksums-Sha512:",
+                " %s 28 foo_666.dsc" % self.dsc_sha512,
             ],
             build_spph_stanza(pub_source).makeOutput().splitlines(),
         )
@@ -166,6 +174,8 @@ class TestNativeArchiveIndexes(TestNativePublishingBase):
                 " %s 28 foo_666.dsc" % self.dsc_sha1,
                 "Checksums-Sha256:",
                 " %s 28 foo_666.dsc" % self.dsc_sha256,
+                "Checksums-Sha512:",
+                " %s 28 foo_666.dsc" % self.dsc_sha512,
                 "Python-Version: < 1.5",
             ],
             build_spph_stanza(pub_source).makeOutput().splitlines(),
@@ -214,6 +224,7 @@ class TestNativeArchiveIndexes(TestNativePublishingBase):
                 "MD5sum: " + self.deb_md5,
                 "SHA1: " + self.deb_sha1,
                 "SHA256: " + self.deb_sha256,
+                "SHA512: " + self.deb_sha512,
                 "Phased-Update-Percentage: 50",
                 "Description: Foo app is great",
                 " Well ...",
@@ -327,6 +338,7 @@ class TestNativeArchiveIndexes(TestNativePublishingBase):
                 "MD5sum: " + self.deb_md5,
                 "SHA1: " + self.deb_sha1,
                 "SHA256: " + self.deb_sha256,
+                "SHA512: " + self.deb_sha512,
                 "Description: Foo app is great",
                 " Well ...",
                 " it does nothing, though",
@@ -373,6 +385,7 @@ class TestNativeArchiveIndexes(TestNativePublishingBase):
                 "MD5sum: " + self.deb_md5,
                 "SHA1: " + self.deb_sha1,
                 "SHA256: " + self.deb_sha256,
+                "SHA512: " + self.deb_sha512,
                 "Description: Foo app is great",
                 " Normal",
                 " Normal",
@@ -411,6 +424,7 @@ class TestNativeArchiveIndexes(TestNativePublishingBase):
                 "MD5sum: " + self.deb_md5,
                 "SHA1: " + self.deb_sha1,
                 "SHA256: " + self.deb_sha256,
+                "SHA512: " + self.deb_sha512,
                 "Description: Foo app is great",
                 " Using non-ascii as: \xe7\xe3\xe9\xf3",
             ],
@@ -665,11 +679,7 @@ class TestDirectSourcesIndex(TestNativePublishingBase):
         The ORM path (build_source_stanza_fields) does not emit Priority
         because PPAs don't use it.
         """
-        lines = (
-            build_spph_stanza(pub_source, include_sha512=True)
-            .makeOutput()
-            .splitlines()
-        )
+        lines = build_spph_stanza(pub_source).makeOutput().splitlines()
         for i, line in enumerate(lines):
             if line.startswith("Section:"):
                 lines.insert(i, "Priority: %s" % priority)
@@ -899,9 +909,7 @@ class TestDirectPackagesIndex(TestNativePublishingBase):
         bpph = pubs[0]
 
         packages_bytes, _ = self._generate(bpph)
-        expected = (
-            build_bpph_stanza(bpph, include_sha512=True).makeOutput() + "\n\n"
-        )
+        expected = build_bpph_stanza(bpph).makeOutput() + "\n\n"
         self.assertEqual(expected, packages_bytes.decode("utf-8"))
 
     def test_empty_index(self):

@@ -125,14 +125,10 @@ def build_source_stanza_fields(
     spr,
     component,
     section,
-    include_sha512=False,
     allowed_hashes=None,
 ):
     """Build a map of fields to be included in a Sources file.
 
-    :param include_sha512: If True, include Checksums-Sha512. Defaults to
-        False because SHA-512 has not been backfilled for all archives (e.g.
-        PPAs).
     :param allowed_hashes: List of allowed hash name strings, or None for all.
     """
     # Special fields preparation.
@@ -140,13 +136,13 @@ def build_source_stanza_fields(
     files_list = []
     sha1_list = []
     sha256_list = []
-    sha512_list = [] if include_sha512 else None
+    sha512_list = []
     for spf in spr.files:
         common = (spf.libraryfile.content.filesize, spf.libraryfile.filename)
         files_list.append((spf.libraryfile.content.md5, common))
         sha1_list.append((spf.libraryfile.content.sha1, common))
         sha256_list.append((spf.libraryfile.content.sha256, common))
-        if sha512_list is not None:
+        if spf.libraryfile.content.sha512 is not None:
             sha512_list.append((spf.libraryfile.content.sha512, common))
     user_defined_fields = OrderedDict(
         [(key.lower(), (key, value)) for key, value in spr.user_defined_fields]
@@ -182,7 +178,9 @@ def build_source_stanza_fields(
         fields.append("Checksums-Sha1", format_file_list(sha1_list))
     if _hash_allowed("sha256", allowed_hashes):
         fields.append("Checksums-Sha256", format_file_list(sha256_list))
-    if _hash_allowed("sha512", allowed_hashes) and sha512_list is not None:
+    if _hash_allowed("sha512", allowed_hashes) and len(sha512_list) == len(
+        files_list
+    ):
         fields.append("Checksums-Sha512", format_file_list(sha512_list))
     fields.append("Homepage", spr.homepage)
     fields.extend(user_defined_fields.values())
@@ -197,15 +195,12 @@ def build_binary_stanza_fields(
     priority,
     phased_update_percentage,
     separate_long_descriptions=False,
-    include_sha512=False,
     allowed_hashes=None,
 ):
     """Build a map of fields to be included in a Packages file.
 
     :param separate_long_descriptions: if True, the long description will
     be omitted from the stanza and Description-md5 will be included.
-    :param include_sha512: If True, include SHA512. Defaults to False
-        because SHA-512 has not been backfilled for all archives (e.g. PPAs).
     :param allowed_hashes: List of allowed hash name strings, or None for all.
     """
     spr = bpr.build.source_package_release
@@ -217,9 +212,7 @@ def build_binary_stanza_fields(
     bin_md5 = bin_file.libraryfile.content.md5
     bin_sha1 = bin_file.libraryfile.content.sha1
     bin_sha256 = bin_file.libraryfile.content.sha256
-    bin_sha512 = (
-        bin_file.libraryfile.content.sha512 if include_sha512 else None
-    )
+    bin_sha512 = bin_file.libraryfile.content.sha512
     bin_filepath = os.path.join(
         makePoolPath(spr.name, component.name), bin_filename
     )
