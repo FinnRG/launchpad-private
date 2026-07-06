@@ -407,7 +407,7 @@ class TestCVEUpdater(TestCase):
         cveset.new(
             "2024-0004",
             original_desc,
-            CveStatus.ENTRY,
+            CveStatus.CANDIDATE,
             metadata=original_metadata,
         )
         updater.txn.commit()
@@ -435,6 +435,7 @@ class TestCVEUpdater(TestCase):
         updated_cve = cveset["2024-0004"]
         self.assertEqual(new_desc, updated_cve.description)
         self.assertEqual(new_metadata, updated_cve.metadata)
+        self.assertEqual(CveStatus.ENTRY, updated_cve.status)
 
     def test_extract_github_zip(self):
         """Test extract_github_zip for complete releases."""

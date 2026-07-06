@@ -800,6 +800,13 @@ class CVEUpdater(LaunchpadCronScript):
 
         # update CVE if needed
         modified = False
+        if cve.status != status:
+            self.logger.info(
+                f"CVE-{sequence} changed from {cve.status.title}"
+                f" to {status.title}"
+            )
+            cve.status = status
+            modified = True
         if cve.description != description:
             self.logger.info(f"CVE-{sequence} updated description")
             cve.description = description
