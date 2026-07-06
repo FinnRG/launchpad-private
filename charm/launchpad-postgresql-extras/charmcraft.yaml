@@ -11,7 +11,7 @@ bases:
 parts:
   charm-wheels:
     source: https://git.launchpad.net/~ubuntuone-hackers/ols-charm-deps/+git/wheels
-    source-commit: "42c89d9c66dbe137139b047fd54aed49b66d1a5e"
+    source-commit: "c6ab756145b816be0819e71a35628c0f5bd3f674"
     source-submodules: []
     source-type: git
     plugin: dump
@@ -21,7 +21,7 @@ parts:
       - "-charm-wheels"
   ols-layers:
     source: https://git.launchpad.net/ols-charm-deps
-    source-commit: "f63ae0386275bf9089b30c8abae252a0ea523633"
+    source-commit: "e0881cbc66acfec6cec25c646ef848e326f47755"
     source-submodules: []
     source-type: git
     plugin: dump
