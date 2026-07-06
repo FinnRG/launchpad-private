@@ -176,13 +176,14 @@ class TestCPPAExporterToRecord(TestCPPAExporterSetup):
     """Tests for CPPAExporter.to_record()."""
 
     def test_to_record_empty_ppa_tasks(self):
-        """to_record returns None when the bug has no
+        """to_record returns an empty CPPARecord when the bug has no
         ArchiveSourcePackageSeries tasks for known CPPA archives."""
         bug, vulnerability = self._make_ubuntu_bug()
 
         record = self.exporter.to_record(bug, vulnerability)
 
-        self.assertIsNone(record)
+        self.assertIsNotNone(record)
+        self.assertEqual([], record.packages)
 
     def test_to_record_single_ppa_series_task(self):
         """to_record produces one Package entry with one SeriesPackageStatus
@@ -376,7 +377,8 @@ class TestCPPAExporterToRecord(TestCPPAExporterSetup):
 
         record = self.exporter.to_record(bug, vulnerability)
 
-        self.assertIsNone(record)
+        self.assertIsNotNone(record)
+        self.assertEqual([], record.packages)
 
     def test_to_record_raises_on_none_bug(self):
         """to_record raises ValueError when bug is None."""
