@@ -83,6 +83,16 @@ class CveStatus(DBEnumeratedType):
         """,
     )
 
+    PLACEHOLDER = DBItem(
+        99,
+        """
+        Placeholder
+
+        This CVE entry was automatically created as a placeholder because it
+        was not yet present in the Launchpad CVE database.
+        """,
+    )
+
 
 @exported_as_webservice_entry(as_of="beta")
 class ICve(Interface):

@@ -49,7 +49,7 @@ from lp.bugs.interfaces.bugtask import (
     IllegalTarget,
 )
 from lp.bugs.interfaces.bugwatch import IBugWatchSet
-from lp.bugs.interfaces.cve import ICveSet
+from lp.bugs.interfaces.cve import CveStatus, ICveSet
 from lp.bugs.interfaces.vulnerability import IVulnerabilitySet
 from lp.bugs.model.bug import Bug as BugModel
 from lp.bugs.model.bugtask import BugTask, validate_new_target
@@ -155,19 +155,27 @@ class UCTImporter(SVTImporter):
                 cve.sequence,
             )
             return None, None, None
-        lp_cve: CveModel = removeSecurityProxy(
-            getUtility(ICveSet)[cve.sequence]
-        )
-        if lp_cve is None:
-            logger.warning(
-                "%s: could not find the CVE in LP. Aborting. "
-                "%s was not imported.",
-                cve.sequence,
-                cve.sequence,
-            )
-            return None, None, None
-        bug = self._find_existing_bug(lp_cve, self.ubuntu)
         try:
+            lp_cve: CveModel = removeSecurityProxy(
+                getUtility(ICveSet)[cve.sequence]
+            )
+            if lp_cve is None:
+                logger.warning(
+                    "%s: could not find the CVE in LP, creating it.",
+                    cve.sequence,
+                )
+                lp_cve = removeSecurityProxy(
+                    getUtility(ICveSet).new(
+                        sequence=cve.sequence.split("-", 1)[1],
+                        description=cve.description,
+                        status=CveStatus.PLACEHOLDER,
+                        date_made_public=cve.date_made_public,
+                        discovered_by=cve.discovered_by,
+                        cvss=cve.cvss,
+                    )
+                )
+            bug = self._find_existing_bug(lp_cve, self.ubuntu)
+
             if bug is None:
                 bug, vulnerability = self.create_bug(cve, lp_cve)
                 logger.info(
@@ -175,7 +183,7 @@ class UCTImporter(SVTImporter):
                 )
                 created = True
             else:
-                logging.info(
+                logger.info(
                     "%s: found existing bug with ID: %s",
                     cve.sequence,
                     bug.id,

@@ -23,6 +23,7 @@ from lp.bugs.interfaces.bugtask import (
     BugTaskStatus,
     IBugTaskSet,
 )
+from lp.bugs.interfaces.cve import CveStatus, ICveSet
 from lp.bugs.model.bug import Bug
 from lp.bugs.model.bugtask import BugTask
 from lp.bugs.scripts.uct import (
@@ -2571,7 +2572,11 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             record, cache_entities=None, subprojects=None
         ):
             cached_entries.append(cache_entities)
-            return Mock(sequence=record.sequence)
+
+            # date_made_public=None to ensure we return early with
+            # (None, None, None) tuple as this test only cares about cache
+            # usage, not the actual CVE import.
+            return Mock(sequence=record.sequence, date_made_public=None)
 
         with patch(
             "lp.bugs.scripts.uct.uctimport.CVE.make_from_uct_record",
@@ -2656,16 +2661,29 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         self.assertTrue(created)
 
     def test_import_non_existing_cve(self):
-        """Try to import a non existing cve won't create a bug and
-        vulnerability."""
-        self.cve.sequence = "CVE-2023-0000"
+        """Importing a CVE not in LP creates the CVE automatically using UCT
+        values with a CveStatus.PLACEHOLDER status then creates the bug."""
+
+        self.cve.sequence = "CVE-2023-1234"
+
+        self.assertIsNone(getUtility(ICveSet)["CVE-2023-1234"])
+
         uct_record = self.cve.to_uct_record()
         bug, vuln, created = self.importer.from_record(
-            uct_record, "CVE-2023-0000"
+            uct_record, "CVE-2023-1234"
         )
-        self.assertEqual(bug, None)
-        self.assertEqual(vuln, None)
-        self.assertEqual(created, None)
+
+        lp_cve = getUtility(ICveSet)["CVE-2023-1234"]
+        self.assertIsNotNone(lp_cve)
+        self.assertEqual(CveStatus.PLACEHOLDER, lp_cve.status)
+        self.assertEqual(self.cve.description, lp_cve.description)
+        self.assertEqual(self.cve.date_made_public, lp_cve.date_made_public)
+        self.assertEqual(self.cve.discovered_by, lp_cve.discovered_by)
+        self.assertEqual(self.cve.cvss, lp_cve.cvss)
+
+        self.assertIsNotNone(bug)
+        self.assertIsNotNone(vuln)
+        self.assertTrue(created)
 
     def test_import_duplicate(self):
         """Import more than once a cve and check that it does not duplicate."""
