@@ -200,9 +200,13 @@ def create_archive_to_subproject_map(
     Returns:
         Dict mapping (archive_name, series_name) tuples to subproject keys
     """
-    archive_to_subproject: Dict[Tuple[str, str], str] = {}
+    archive_to_subproject: Dict[Tuple[str, str, str], str] = {}
     for subproject_key, subproject_ppa in subprojects.items():
-        key = (subproject_ppa.ppa.archive, subproject_ppa.ubuntu_series)
+        key = (
+            subproject_ppa.ppa.owner,
+            subproject_ppa.ppa.archive,
+            subproject_ppa.ubuntu_series,
+        )
         # On subprojects with aliases, the original key (e.g. `esm/trusty`)
         # gets inserted before its alias (e.g. `trusty/esm`) by
         # load_subprojects_from_str thus they take precedence.

@@ -3516,7 +3516,8 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         )
 
         with self.expectedLog(
-            f"No subproject mapping for archive '{self.ppa_apps.name}'"
+            f"No subproject mapping for archive"
+            f" '{self.ppa_apps.owner.name}/{self.ppa_apps.name}'"
             f" series '{self.ubuntu_supported_series.name}';"
             " skipping series entry."
         ):

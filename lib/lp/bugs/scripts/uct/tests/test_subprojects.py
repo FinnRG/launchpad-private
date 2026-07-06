@@ -467,9 +467,10 @@ class TestCreateArchiveToSubprojectMap(TestCase):
             [("esm-infra/focal", "esm-infra-security", "focal")]
         )
         result = create_archive_to_subproject_map(subprojects)
-        self.assertEqual(
-            {("esm-infra-security", "focal"): "esm-infra/focal"}, result
-        )
+        expected = {
+            ("ubuntu-esm", "esm-infra-security", "focal"): "esm-infra/focal",
+        }
+        self.assertEqual(expected, result)
 
     def test_first_key_wins_over_alias(self):
         # When a subproject key and its alias both map to the same
@@ -495,7 +496,7 @@ class TestCreateArchiveToSubprojectMap(TestCase):
         self.assertIn("trusty/esm", subprojects)
 
         result = create_archive_to_subproject_map(subprojects)
-        key = ("esm-infra-security", "trusty")
+        key = ("ubuntu-esm", "esm-infra-security", "trusty")
         self.assertIn(key, result)
         # The first key must win.
         self.assertEqual("esm/trusty", result[key])
@@ -510,14 +511,12 @@ class TestCreateArchiveToSubprojectMap(TestCase):
             ]
         )
         result = create_archive_to_subproject_map(subprojects)
-        self.assertEqual(
-            {
-                ("esm-infra-security", "focal"): "esm-infra/focal",
-                ("esm-infra-security", "xenial"): "esm-infra/xenial",
-                ("esm-apps-security", "focal"): "esm-apps/focal",
-            },
-            result,
-        )
+        expected = {
+            ("ubuntu-esm", "esm-infra-security", "focal"): "esm-infra/focal",
+            ("ubuntu-esm", "esm-infra-security", "xenial"): "esm-infra/xenial",
+            ("ubuntu-esm", "esm-apps-security", "focal"): "esm-apps/focal",
+        }
+        self.assertEqual(expected, result)
 
     def test_empty_subprojects(self):
         self.assertEqual({}, create_archive_to_subproject_map({}))
