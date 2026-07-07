@@ -96,10 +96,11 @@ class CPPAExporter(SVTExporter):
                 continue
 
             archive_name = target.archive.name
+            archive_owner = target.archive.owner.name
             series_name = target.distroseries.name
 
             subproject_key = self._archive_to_subproject.get(
-                (archive_name, series_name)
+                (archive_owner, archive_name, series_name)
             )
             if subproject_key is None:
                 continue

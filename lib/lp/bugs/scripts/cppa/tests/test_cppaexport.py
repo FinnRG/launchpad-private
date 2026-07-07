@@ -314,7 +314,7 @@ class TestCPPAExporterToRecord(TestCPPAExporterSetup):
                 ),
             )
             self.exporter._archive_to_subproject[
-                ("my-ppa", extra_series.name)
+                ("my-ppa-owner", "my-ppa", extra_series.name)
             ] = key
 
             self._import_ppa_task(

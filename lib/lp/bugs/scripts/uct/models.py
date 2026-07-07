@@ -904,10 +904,11 @@ class CVE:
             if subprojects
             else {}
         )
-        # Set of archive names that have at least one UCT subproject mapping.
-        # Used to skip tasks without touching the subproject-key lookup.
+        # Set of (owner, archive_name) pairs that have at least one UCT
+        # subproject mapping. Used to skip tasks without touching the
+        # subproject-key lookup.
         known_ppa_archives = frozenset(
-            archive for archive, _ in archive_to_subproject
+            (owner, archive) for owner, archive, _ in archive_to_subproject
         )
 
         series_packages_by_name: Dict[
@@ -924,6 +925,7 @@ class CVE:
         for ppa_series_package in self.ppa_series_packages:
             key = (
                 ppa_series_package.package_name,
+                ppa_series_package.target.archive.owner.name,
                 ppa_series_package.target.archive.name,
             )
             ppa_series_packages_by_key[key].append(ppa_series_package)
@@ -978,16 +980,17 @@ class CVE:
 
         for ppa_package in self.ppa_packages:
             spn = ppa_package.package_name
+            archive_owner = ppa_package.target.archive.owner.name
             archive_name = ppa_package.target.archive.name
             # Skip when no subprojects file was loaded, or the archive is not
             # covered by any UCT subproject mapping
             if (
                 not archive_to_subproject
-                or archive_name not in known_ppa_archives
+                or (archive_owner, archive_name) not in known_ppa_archives
             ):
                 continue
             ppa_series_packages = ppa_series_packages_by_key.get(
-                (spn, archive_name), []
+                (spn, archive_owner, archive_name), []
             )
 
             statuses: List[UCTRecord.SeriesPackageStatus] = []
@@ -1002,12 +1005,13 @@ class CVE:
                 ]
                 # Skip series entries with no mapping
                 uct_series = archive_to_subproject.get(
-                    (archive_name, series_name)
+                    (archive_owner, archive_name, series_name)
                 )
                 if uct_series is None:
                     logger.warning(
-                        "No subproject mapping for archive '%s' series '%s';"
-                        " skipping series entry.",
+                        "No subproject mapping for archive '%s/%s' series "
+                        "'%s'; skipping series entry.",
+                        archive_owner,
                         archive_name,
                         series_name,
                     )
