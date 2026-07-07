@@ -70,13 +70,21 @@
 {%- endif %}
 
 {% if lui_routing_enabled and lui_endpoint %}
+{%- set lui_host = (lui_endpoint.rstrip("/").split("://")[-1]).split("/")[0] %}
     # TLS terminates here and the proxy hop to the LUI is plain HTTP; tell
     # the LUI the original scheme so it reconstructs the correct origin
-    # (requires PROTOCOL_HEADER=x-forwarded-proto or ORIGIN on the LUI side).
+    # (requires PROTOCOL_HEADER=x-forwarded-proto on the LUI side).
     RequestHeader set X-Forwarded-Proto "https"
 
+    # The LUI's ingress routes on the LUI hostname, so rewrite Host on the
+    # outbound hop (LUI-proxied requests only) and pass the public host in
+    # X-Original-Host instead (requires HOST_HEADER=x-original-host on the
+    # LUI side; X-Forwarded-Host would be corrupted by the rewritten Host).
+    RequestHeader set X-Original-Host "%{LUI_PROXY}e" env=LUI_PROXY
+    RequestHeader set Host "{{ lui_host }}" env=LUI_PROXY
+
     # SvelteKit remote function endpoints (LUI-only; never valid on LC).
-    RewriteRule ^(/_app/remote/[^/]+/[^/]+.*)$ {{ lui_endpoint.rstrip("/") }}$1 [P,L,NE]
+    RewriteRule ^(/_app/remote/[^/]+/[^/]+.*)$ {{ lui_endpoint.rstrip("/") }}$1 [P,L,NE,E=LUI_PROXY:%{HTTP_HOST}]
 
     # Distribution source package pages:
     #   /{distro}/+source/{src_pkg_name}
@@ -86,7 +94,7 @@
     # distroseries form (/{distro}/{series}/+source/...) are intentionally
     # left on Launchpad Classic; distro/distroseries root routing is tracked
     # as a follow-up.
-    RewriteRule ^(/[^/]+/\+source/[^/]+(?:/[^+/][^/]*)?)/?$ {{ lui_endpoint.rstrip("/") }}$1 [P,L,NE]
+    RewriteRule ^(/[^/]+/\+source/[^/]+(?:/[^+/][^/]*)?)/?$ {{ lui_endpoint.rstrip("/") }}$1 [P,L,NE,E=LUI_PROXY:%{HTTP_HOST}]
 {%- endif %}
 
     # Most anonymous requests are cacheable.
