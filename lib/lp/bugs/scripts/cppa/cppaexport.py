@@ -130,8 +130,6 @@ class CPPAExporter(SVTExporter):
             CPPARecord.Package(name=pkg_name, statuses=statuses)
             for pkg_name, statuses in packages_by_name.items()
         ]
-        if not packages:
-            return None
         return CPPARecord(candidate=cve_sequence, packages=packages)
 
     def export_bug_to_cppa_file(
