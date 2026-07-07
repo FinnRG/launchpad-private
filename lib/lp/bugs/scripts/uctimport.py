@@ -65,4 +65,7 @@ class UCTImportScript(LaunchpadScript):
         ubuntu = getUtility(ILaunchpadCelebrities).ubuntu
         importer = UCTImporter(ubuntu, dry_run=self.options.dry_run)
         for cve_path in cve_paths:
-            importer.import_cve_from_file(cve_path)
+            try:
+                importer.import_cve_from_file(cve_path)
+            except Exception as e:
+                logger.error("%s was not imported: %s", cve_path.name, e)
