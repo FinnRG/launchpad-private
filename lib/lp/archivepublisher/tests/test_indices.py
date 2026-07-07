@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 import apt_pkg
+from zope.security.proxy import removeSecurityProxy
 
 from lp.archivepublisher.indices import (
     IndexStanzaFields,
@@ -28,6 +29,7 @@ from lp.soyuz.model.publishing import (
     SourcePackagePublishingHistory,
 )
 from lp.soyuz.tests.test_publishing import TestNativePublishingBase
+from lp.testing.dbuser import switch_dbuser
 
 
 def build_bpph_stanza(bpph):
@@ -458,6 +460,49 @@ class TestNativeArchiveIndexes(TestNativePublishingBase):
         self.assertEqual(
             "foo (666)", get_field(build_bpph_stanza(pub_binary), "Source")
         )
+
+    def test_binary_stanza_null_sha512(self):
+        """When lfc.sha512 is None, SHA512 is omitted but SHA256 is present.
+
+        This guards against emitting 'None' into the Packages index for
+        packages whose LibraryFileContent has not yet been backfilled.
+        """
+        pub_binary = self.getPubBinaries()[0]
+        bpr = pub_binary.binarypackagerelease
+        lfc = removeSecurityProxy(bpr.files[0].libraryfile.content)
+
+        switch_dbuser("testadmin")
+        lfc.sha512 = None
+        switch_dbuser("launchpad")
+
+        stanza = build_bpph_stanza(pub_binary)
+        output = stanza.makeOutput()
+        self.assertNotIn("None", output)
+        self.assertNotIn("SHA512:", output)
+        # SHA256 must always be present for apt security.
+        self.assertIn("SHA256: " + self.deb_sha256, output)
+
+    def test_source_stanza_null_sha512(self):
+        """When lfc.sha512 is None, Checksums-Sha512 is omitted.
+
+        This guards against emitting 'None' into the Sources index for
+        files whose LibraryFileContent has not yet been backfilled.
+        """
+        pub_source = self.getPubSource()
+        spr = pub_source.sourcepackagerelease
+        for spf in spr.files:
+            lfc = removeSecurityProxy(spf.libraryfile.content)
+            switch_dbuser("testadmin")
+            lfc.sha512 = None
+
+        switch_dbuser("launchpad")
+
+        stanza = build_spph_stanza(pub_source)
+        output = stanza.makeOutput()
+        self.assertNotIn("None", output)
+        self.assertNotIn("Checksums-Sha512:", output)
+        # SHA256 must always be present for apt security.
+        self.assertIn("Checksums-Sha256:", output)
 
 
 class TestNativeArchiveIndexesReparsing(TestNativePublishingBase):

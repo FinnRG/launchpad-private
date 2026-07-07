@@ -176,7 +176,10 @@ def build_source_stanza_fields(
     fields.append("Files", format_file_list(files_list))
     if _hash_allowed("sha1", allowed_hashes):
         fields.append("Checksums-Sha1", format_file_list(sha1_list))
-    if _hash_allowed("sha256", allowed_hashes):
+    # XXX: Always emit sha256 if sha512 hasn't been backfilled
+    if _hash_allowed("sha256", allowed_hashes) or len(sha512_list) != len(
+        files_list
+    ):
         fields.append("Checksums-Sha256", format_file_list(sha256_list))
     if _hash_allowed("sha512", allowed_hashes) and len(sha512_list) == len(
         files_list
@@ -281,7 +284,8 @@ def build_binary_stanza_fields(
         fields.append("MD5sum", bin_md5)
     if _hash_allowed("sha1", allowed_hashes):
         fields.append("SHA1", bin_sha1)
-    if _hash_allowed("sha256", allowed_hashes):
+    # XXX: Always emit sha256 if sha512 hasn't been backfilled
+    if _hash_allowed("sha256", allowed_hashes) or bin_sha512 is None:
         fields.append("SHA256", bin_sha256)
     if _hash_allowed("sha512", allowed_hashes) and bin_sha512 is not None:
         fields.append("SHA512", bin_sha512)
