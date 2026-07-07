@@ -1660,6 +1660,10 @@ class TestPublisher(TestPublisherBase):
             b"Checksums-Sha256:",
             b" 64ec88ca00b268e5ba1a35678a1b5316d212f4f366b2477232534a8aeca37f"
             b"3c 11 foo_1.dsc",
+            b"Checksums-Sha512:",
+            b" b7f783baed8297f0db917462184ff4f08e69c2d5e5f79a942600f9725f58ce"
+            b"1f29c18139bf80b06c0fff2bdd34738452ecf40c488c22a7e3d80cdf6f9c1c"
+            b"0d47 11 foo_1.dsc",
             b"",
         ]
         self.assertEqual(expected_index_contents, index_contents)
@@ -1686,6 +1690,9 @@ class TestPublisher(TestPublisherBase):
             b"SHA1: 30b7b4e583fa380772c5a40e428434628faef8cf",
             b"SHA256: 006ca0f356f54b1916c24c282e6fd19961f4356441401f4b0966f2a"
             b"00bb3e945",
+            b"SHA512: 77544cff55acb3694c129b7b5e9e87896bcd5757347ef7d12acd4e"
+            b"4e8531ecb3fa6c9760921a0bf88cdde46deed85265c1b74d9c92f15789c2dc"
+            b"7b9ffb2e567c",
             b"Description: Foo app is great",
             b" My leading spaces are normalised to a single space but not "
             b"trailing.  ",
@@ -1717,6 +1724,9 @@ class TestPublisher(TestPublisherBase):
             b"SHA1: 30b7b4e583fa380772c5a40e428434628faef8cf",
             b"SHA256: 006ca0f356f54b1916c24c282e6fd19961f4356441401f4b0966f2a"
             b"00bb3e945",
+            b"SHA512: 77544cff55acb3694c129b7b5e9e87896bcd5757347ef7d12acd4e"
+            b"4e8531ecb3fa6c9760921a0bf88cdde46deed85265c1b74d9c92f15789c2dc"
+            b"7b9ffb2e567c",
             b"Description: Foo app is great",
             b" nice udeb",
             b"",
@@ -1744,6 +1754,9 @@ class TestPublisher(TestPublisherBase):
             b"SHA1: 30b7b4e583fa380772c5a40e428434628faef8cf",
             b"SHA256: 006ca0f356f54b1916c24c282e6fd19961f4356441401f4b0966f2a"
             b"00bb3e945",
+            b"SHA512: 77544cff55acb3694c129b7b5e9e87896bcd5757347ef7d12acd4e"
+            b"4e8531ecb3fa6c9760921a0bf88cdde46deed85265c1b74d9c92f15789c2dc"
+            b"7b9ffb2e567c",
             b"Description: Foo app is great",
             b" My leading spaces are normalised to a single space but not "
             b"trailing.  ",
@@ -1811,6 +1824,10 @@ class TestPublisher(TestPublisherBase):
             b"Checksums-Sha256:",
             b" 64ec88ca00b268e5ba1a35678a1b5316d212f4f366b2477232534a8aeca37f"
             b"3c 11 foo_1.dsc",
+            b"Checksums-Sha512:",
+            b" b7f783baed8297f0db917462184ff4f08e69c2d5e5f79a942600f9725f58ce"
+            b"1f29c18139bf80b06c0fff2bdd34738452ecf40c488c22a7e3d80cdf6f9c1c"
+            b"0d47 11 foo_1.dsc",
             b"",
         ]
         self.assertEqual(expected_index_contents, index_contents)
@@ -1837,6 +1854,9 @@ class TestPublisher(TestPublisherBase):
             b"SHA1: 30b7b4e583fa380772c5a40e428434628faef8cf",
             b"SHA256: 006ca0f356f54b1916c24c282e6fd19961f4356441401f4b0966f2a"
             b"00bb3e945",
+            b"SHA512: 77544cff55acb3694c129b7b5e9e87896bcd5757347ef7d12acd4e"
+            b"4e8531ecb3fa6c9760921a0bf88cdde46deed85265c1b74d9c92f15789c2dc"
+            b"7b9ffb2e567c",
             b"Description: Foo app is great",
             b"Description-md5: 42d89d502e81dad6d3d4a2f85fdc6c6e",
             b"",
@@ -1866,6 +1886,9 @@ class TestPublisher(TestPublisherBase):
             b"SHA1: 30b7b4e583fa380772c5a40e428434628faef8cf",
             b"SHA256: 006ca0f356f54b1916c24c282e6fd19961f4356441401f4b0966f2a"
             b"00bb3e945",
+            b"SHA512: 77544cff55acb3694c129b7b5e9e87896bcd5757347ef7d12acd4e"
+            b"4e8531ecb3fa6c9760921a0bf88cdde46deed85265c1b74d9c92f15789c2dc"
+            b"7b9ffb2e567c",
             b"Description: Foo app is great",
             b"Description-md5: 6fecedf187298acb6bc5f15cc5807fb7",
             b"",
@@ -1893,6 +1916,9 @@ class TestPublisher(TestPublisherBase):
             b"SHA1: 30b7b4e583fa380772c5a40e428434628faef8cf",
             b"SHA256: 006ca0f356f54b1916c24c282e6fd19961f4356441401f4b0966f2a"
             b"00bb3e945",
+            b"SHA512: 77544cff55acb3694c129b7b5e9e87896bcd5757347ef7d12acd4e"
+            b"4e8531ecb3fa6c9760921a0bf88cdde46deed85265c1b74d9c92f15789c2dc"
+            b"7b9ffb2e567c",
             b"Description: Foo app is great",
             b"Description-md5: 42d89d502e81dad6d3d4a2f85fdc6c6e",
             b"",
