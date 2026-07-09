@@ -17,11 +17,25 @@ import json
 import os.path
 import re
 from collections import OrderedDict
+from typing import List, Optional
 
 from lp.soyuz.enums import PackagePublishingPriority, PackagePublishingStatus
 from lp.soyuz.model.publishing import makePoolPath
 
 DEFAULT_COMPONENT = "main"
+
+
+def _hash_allowed(hash_name: str, allowed_hashes: Optional[List[str]]):
+    """Check if a hash algorithm is allowed.
+
+    :param hash_name: Lowercase hash name (e.g. "sha256").
+    :param allowed_hashes: List of allowed hash name strings, or None
+        to allow all.
+    :return: True if the hash should be included.
+    """
+    if allowed_hashes is None:
+        return True
+    return hash_name in allowed_hashes
 
 
 class IndexStanzaFields:
@@ -107,25 +121,28 @@ def format_description(summary, description):
     return bin_description
 
 
-def build_source_stanza_fields(spr, component, section, include_sha512=False):
+def build_source_stanza_fields(
+    spr,
+    component,
+    section,
+    allowed_hashes=None,
+):
     """Build a map of fields to be included in a Sources file.
 
-    :param include_sha512: If True, include Checksums-Sha512. Defaults to
-        False because SHA-512 has not been backfilled for all archives (e.g.
-        PPAs).
+    :param allowed_hashes: List of allowed hash name strings, or None for all.
     """
     # Special fields preparation.
     pool_path = makePoolPath(spr.name, component.name)
     files_list = []
     sha1_list = []
     sha256_list = []
-    sha512_list = [] if include_sha512 else None
+    sha512_list = []
     for spf in spr.files:
         common = (spf.libraryfile.content.filesize, spf.libraryfile.filename)
         files_list.append((spf.libraryfile.content.md5, common))
         sha1_list.append((spf.libraryfile.content.sha1, common))
         sha256_list.append((spf.libraryfile.content.sha256, common))
-        if sha512_list is not None:
+        if spf.libraryfile.content.sha512 is not None:
             sha512_list.append((spf.libraryfile.content.sha512, common))
     user_defined_fields = OrderedDict(
         [(key.lower(), (key, value)) for key, value in spr.user_defined_fields]
@@ -155,10 +172,18 @@ def build_source_stanza_fields(spr, component, section, include_sha512=False):
     fields.append("Standards-Version", spr.dsc_standards_version)
     fields.append("Format", spr.dsc_format)
     fields.append("Directory", pool_path)
+    # Files (MD5) is always emitted for compatibility.
     fields.append("Files", format_file_list(files_list))
-    fields.append("Checksums-Sha1", format_file_list(sha1_list))
-    fields.append("Checksums-Sha256", format_file_list(sha256_list))
-    if sha512_list is not None:
+    if _hash_allowed("sha1", allowed_hashes):
+        fields.append("Checksums-Sha1", format_file_list(sha1_list))
+    # XXX: Always emit sha256 if sha512 hasn't been backfilled
+    if _hash_allowed("sha256", allowed_hashes) or len(sha512_list) != len(
+        files_list
+    ):
+        fields.append("Checksums-Sha256", format_file_list(sha256_list))
+    if _hash_allowed("sha512", allowed_hashes) and len(sha512_list) == len(
+        files_list
+    ):
         fields.append("Checksums-Sha512", format_file_list(sha512_list))
     fields.append("Homepage", spr.homepage)
     fields.extend(user_defined_fields.values())
@@ -173,14 +198,13 @@ def build_binary_stanza_fields(
     priority,
     phased_update_percentage,
     separate_long_descriptions=False,
-    include_sha512=False,
+    allowed_hashes=None,
 ):
     """Build a map of fields to be included in a Packages file.
 
     :param separate_long_descriptions: if True, the long description will
     be omitted from the stanza and Description-md5 will be included.
-    :param include_sha512: If True, include SHA512. Defaults to False
-        because SHA-512 has not been backfilled for all archives (e.g. PPAs).
+    :param allowed_hashes: List of allowed hash name strings, or None for all.
     """
     spr = bpr.build.source_package_release
 
@@ -191,9 +215,7 @@ def build_binary_stanza_fields(
     bin_md5 = bin_file.libraryfile.content.md5
     bin_sha1 = bin_file.libraryfile.content.sha1
     bin_sha256 = bin_file.libraryfile.content.sha256
-    bin_sha512 = (
-        bin_file.libraryfile.content.sha512 if include_sha512 else None
-    )
+    bin_sha512 = bin_file.libraryfile.content.sha512
     bin_filepath = os.path.join(
         makePoolPath(spr.name, component.name), bin_filename
     )
@@ -258,10 +280,14 @@ def build_binary_stanza_fields(
     fields.append("Essential", essential)
     fields.append("Filename", bin_filepath)
     fields.append("Size", bin_size)
-    fields.append("MD5sum", bin_md5)
-    fields.append("SHA1", bin_sha1)
-    fields.append("SHA256", bin_sha256)
-    if bin_sha512 is not None:
+    if _hash_allowed("md5", allowed_hashes):
+        fields.append("MD5sum", bin_md5)
+    if _hash_allowed("sha1", allowed_hashes):
+        fields.append("SHA1", bin_sha1)
+    # XXX: Always emit sha256 if sha512 hasn't been backfilled
+    if _hash_allowed("sha256", allowed_hashes) or bin_sha512 is None:
+        fields.append("SHA256", bin_sha256)
+    if _hash_allowed("sha512", allowed_hashes) and bin_sha512 is not None:
         fields.append("SHA512", bin_sha512)
     fields.append("Phased-Update-Percentage", phased_update_percentage)
     fields.append("Description", bin_description)
@@ -304,7 +330,13 @@ def build_translations_stanza_fields(bpr, packages):
 
 
 def generate_sources_index(
-    store, archive_id, distroseries_id, pocket, component_id, overrides=None
+    store,
+    archive_id,
+    distroseries_id,
+    pocket,
+    component_id,
+    overrides=None,
+    allowed_hashes=None,
 ):
     """Generate a Sources index file directly from the database.
 
@@ -493,10 +525,15 @@ def generate_sources_index(
         fields.append("Standards-Version", dsc_standards_version)
         fields.append("Format", dsc_format)
         fields.append("Directory", pool_path)
+        # Files (MD5) is always emitted for compatibility.
         fields.append("Files", format_file_list(files_list))
-        fields.append("Checksums-Sha1", format_file_list(sha1_list))
-        fields.append("Checksums-Sha256", format_file_list(sha256_list))
-        if len(sha512_list) == len(raw_files):
+        if _hash_allowed("sha1", allowed_hashes):
+            fields.append("Checksums-Sha1", format_file_list(sha1_list))
+        if _hash_allowed("sha256", allowed_hashes):
+            fields.append("Checksums-Sha256", format_file_list(sha256_list))
+        if _hash_allowed("sha512", allowed_hashes) and len(sha512_list) == len(
+            raw_files
+        ):
             fields.append("Checksums-Sha512", format_file_list(sha512_list))
         fields.append("Homepage", homepage)
         fields.extend(udf_ordered.values())
@@ -556,6 +593,7 @@ def generate_packages_index(
     overrides=None,
     formats=None,
     seen_translations=None,
+    allowed_hashes=None,
 ):
     """Generate a Packages index file directly from the database.
 
@@ -769,12 +807,21 @@ def generate_packages_index(
         fields.append("Essential", essential_str)
         fields.append("Filename", bin_filepath)
         fields.append("Size", filesize)
-        fields.append("MD5sum", md5)
-        fields.append("SHA1", sha1)
-        fields.append("SHA256", sha256)
-        if sha512 is not None:
+        if _hash_allowed("md5", allowed_hashes):
+            fields.append("MD5sum", md5)
+        if _hash_allowed("sha1", allowed_hashes):
+            fields.append("SHA1", sha1)
+        if _hash_allowed("sha256", allowed_hashes):
+            fields.append("SHA256", sha256)
+        if _hash_allowed("sha512", allowed_hashes) and sha512 is not None:
             fields.append("SHA512", sha512)
-        fields.append("Phased-Update-Percentage", phased_update_percentage)
+        # A percentage of 0 is meaningful and must be
+        # emitted. Only a NULL/None value can be skipped. Stringify so that
+        # IndexStanzaFields.makeOutput does not treat 0 as an empty field.
+        if phased_update_percentage is not None:
+            fields.append(
+                "Phased-Update-Percentage", str(phased_update_percentage)
+            )
         fields.append("Homepage", homepage)
         fields.append("Description", display_description)
         if separate_long_descriptions:

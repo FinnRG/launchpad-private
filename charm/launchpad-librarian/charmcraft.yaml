@@ -11,7 +11,7 @@ bases:
 parts:
   charm-wheels:
     source: https://git.launchpad.net/~ubuntuone-hackers/ols-charm-deps/+git/wheels
-    source-commit: "42c89d9c66dbe137139b047fd54aed49b66d1a5e"
+    source-commit: "c6ab756145b816be0819e71a35628c0f5bd3f674"
     source-submodules: []
     source-type: git
     plugin: dump
@@ -21,7 +21,7 @@ parts:
       - "-charm-wheels"
   ols-layers:
     source: https://git.launchpad.net/ols-charm-deps
-    source-commit: "9c59a9804f1f40e2a74be7dac9bf18a655a7864f"
+    source-commit: "e0881cbc66acfec6cec25c646ef848e326f47755"
     source-submodules: []
     source-type: git
     plugin: dump
@@ -35,7 +35,7 @@ parts:
     after:
       - ols-layers
     source: https://git.launchpad.net/launchpad-layers
-    source-commit: "46bf7e80bfe20305206ca29f2c934f1b852c580b"
+    source-commit: "237fa26fcd6cfe24bdaf89e411cfc35eb31c0a4f"
     source-submodules: []
     source-type: git
     plugin: dump
@@ -44,6 +44,7 @@ parts:
       launchpad-base: layers/layer/launchpad-base
       launchpad-db: layers/layer/launchpad-db
       launchpad-payload: layers/layer/launchpad-payload
+      launchpad-storage: layers/layer/launchpad-storage
     stage:
       - layers
     prime:

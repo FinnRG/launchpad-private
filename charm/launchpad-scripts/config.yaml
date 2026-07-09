@@ -89,3 +89,21 @@ options:
       Base64-encoded NaCl private key for decrypting snap store upload
       tokens.
     default:
+  cppa_subprojects:
+    type: string
+    description: |
+      JSON-encoded dict mapping subproject keys (e.g. "project/series") to
+      their corresponding PPA references. Required when the CPPA vulnerability
+      import handler is enabled.
+
+      Must be a single-line JSON string, or a multi-line JSON value where
+      every line (including the outer closing brace) is indented by at least
+      one space. Examples:
+
+        cppa_subprojects: '{"proj/jammy": {"ppa": "owner/ppa-name", "ubuntu_series": "jammy"}, "proj/focal": {"ppa": "owner/ppa-name", "ubuntu_series": "focal"}}'
+
+        cppa_subprojects: {
+          "proj/jammy": {"ppa": "owner/ppa-name", "ubuntu_series": "jammy"},
+          "proj/focal": {"ppa": "owner/ppa-name", "ubuntu_series": "focal"}
+          }
+    default:

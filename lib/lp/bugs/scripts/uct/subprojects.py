@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Tuple
 
+import yaml
+
 
 class PPAReference(NamedTuple):
     owner: str
@@ -147,6 +149,34 @@ def load_subprojects(path: Path) -> Dict[str, SubProjectPPAs]:
     return load_subprojects_from_str(path.read_text())
 
 
+def load_cppa_subprojects_from_str(
+    content: str,
+) -> Dict[str, SubProjectPPAs]:
+    """Parse a YAML-encoded CPPA subprojects config into a PPA lookup dict.
+
+    Expected format::
+
+        ppa-alias/series:
+          ubuntu_series: series
+          ppa: owner/archive
+
+    Returns a dict mapping each subproject key to a :class:`SubProjectPPAs`.
+    """
+    data = yaml.safe_load(content) or {}
+    result: Dict[str, SubProjectPPAs] = {}
+    for key, entry in data.items():
+        owner, archive = entry["ppa"].split("/", 1)
+        result[key] = SubProjectPPAs(
+            ubuntu_series=entry["ubuntu_series"],
+            ppa=PPAReference(
+                owner=owner,
+                archive=archive,
+                pocket="release",
+            ),
+        )
+    return result
+
+
 def create_archive_to_subproject_map(
     subprojects: Dict[str, SubProjectPPAs]
 ) -> Dict[Tuple[str, str], str]:
@@ -156,15 +186,30 @@ def create_archive_to_subproject_map(
     This is used when exporting from Launchpad to UCT format to map PPA archive
     references back to their original subproject keys.
 
+    When a subproject has an alias (e.g. `esm/trusty` with alias
+    `trusty/esm`), both keys map to the same `(archive, series)` pair in
+    the forward dict.  The reverse map uses only one of them so the first
+    key (the one declared as the primary entry in subprojects.json, e.g.
+    `esm/trusty`) takes precedence over the alias (`trusty/esm`).
+    `load_subprojects_from_str` inserts first keys before aliases, so
+    the insertion order of *subprojects* preserves that priority.
+
     Args:
         subprojects: Dict mapping subproject keys to SubProjectPPAs
 
     Returns:
         Dict mapping (archive_name, series_name) tuples to subproject keys
     """
-    archive_to_subproject: Dict[Tuple[str, str], str] = {}
+    archive_to_subproject: Dict[Tuple[str, str, str], str] = {}
     for subproject_key, subproject_ppa in subprojects.items():
-        archive_to_subproject[
-            (subproject_ppa.ppa.archive, subproject_ppa.ubuntu_series)
-        ] = subproject_key
+        key = (
+            subproject_ppa.ppa.owner,
+            subproject_ppa.ppa.archive,
+            subproject_ppa.ubuntu_series,
+        )
+        # On subprojects with aliases, the original key (e.g. `esm/trusty`)
+        # gets inserted before its alias (e.g. `trusty/esm`) by
+        # load_subprojects_from_str thus they take precedence.
+        if key not in archive_to_subproject:
+            archive_to_subproject[key] = subproject_key
     return archive_to_subproject

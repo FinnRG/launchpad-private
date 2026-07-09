@@ -58,12 +58,25 @@ class TestCPPARecord(TestCase):
         with open(load_from, "rb") as f:
             string = f.read()
 
-        record = CPPARecord.from_str(string)
+        record = CPPARecord.from_str(string, "CVE-2013-1953")
 
-        # from_str creates a temp file with random CVE ID, so only compare
-        # packages
+        self.assertEqual("CVE-2013-1953", record.candidate)
         self.assertEqual(record.packages, self.record.packages)
-        self.assertTrue(record.candidate.startswith("CVE-"))
+
+    def test_from_str_path_traversal_rejected(self):
+        """Test that candidate values with path components are rejected."""
+        content = b"project1/focal_pkg: needed\n"
+        for bad_candidate in [
+            "../evil",
+            "/etc/passwd",
+            "subdir/CVE-2024-0001",
+        ]:
+            self.assertRaises(
+                ValueError,
+                CPPARecord.from_str,
+                content,
+                bad_candidate,
+            )
 
     def test_to_str(self):
         """Test serialization to string."""
@@ -176,9 +189,9 @@ class TestCPPARecord(TestCase):
             "project1/focal_my-pkg_2: released (1.0-1)\n"
         )
 
-        record = CPPARecord.from_str(content.encode())
+        record = CPPARecord.from_str(content.encode(), "CVE-2024-0001")
 
-        self.assertTrue(record.candidate.startswith("CVE-"))
+        self.assertEqual("CVE-2024-0001", record.candidate)
         self.assertEqual(2, len(record.packages))
         self.assertEqual("lib-test.package+extra", record.packages[0].name)
         self.assertEqual("my-pkg_2", record.packages[1].name)
@@ -190,9 +203,9 @@ class TestCPPARecord(TestCase):
             "project2/xenial_linux: released (4.4.0-1.2)\n"
         )
 
-        record = CPPARecord.from_str(content.encode())
+        record = CPPARecord.from_str(content.encode(), "CVE-2024-0001")
 
-        self.assertTrue(record.candidate.startswith("CVE-"))
+        self.assertEqual("CVE-2024-0001", record.candidate)
         self.assertEqual(1, len(record.packages))
         self.assertEqual("linux", record.packages[0].name)
         self.assertEqual(2, len(record.packages[0].statuses))
@@ -218,7 +231,7 @@ class TestCPPARecord(TestCase):
             "project1/jammy_pkg9: in-progress\n"
         )
 
-        record = CPPARecord.from_str(content.encode())
+        record = CPPARecord.from_str(content.encode(), "CVE-2024-0001")
 
         self.assertEqual(9, len(record.packages))
         self.assertEqual(
@@ -265,7 +278,7 @@ class TestCPPARecord(TestCase):
             "project1/focal_pkg2: released (1.2.3-4ubuntu5)\n"
         )
 
-        record = CPPARecord.from_str(content.encode())
+        record = CPPARecord.from_str(content.encode(), "CVE-2024-0001")
 
         self.assertEqual(2, len(record.packages))
         self.assertEqual(
@@ -315,24 +328,21 @@ class TestCPPARecord(TestCase):
         """Test parsing of invalid status should skip with warning."""
         content = "project1/jammy_pkg: invalid-status\n"
 
-        record = CPPARecord.from_str(content.encode())
-        self.assertTrue(record.candidate.startswith("CVE-"))
+        record = CPPARecord.from_str(content.encode(), "CVE-2024-0001")
         self.assertEqual(0, len(record.packages))  # Line was skipped
 
     def test_malformed_line_no_underscore(self):
         """Test handling of malformed line without underscore."""
         content = "jammypkg: needed\n"
 
-        record = CPPARecord.from_str(content.encode())
-        self.assertTrue(record.candidate.startswith("CVE-"))
+        record = CPPARecord.from_str(content.encode(), "CVE-2024-0001")
         self.assertEqual(0, len(record.packages))  # Line was skipped
 
     def test_malformed_line_no_colon(self):
         """Test handling of malformed line without colon."""
         content = "jammy_pkg needed\n"
 
-        record = CPPARecord.from_str(content.encode())
-        self.assertTrue(record.candidate.startswith("CVE-"))
+        record = CPPARecord.from_str(content.encode(), "CVE-2024-0001")
         self.assertEqual(0, len(record.packages))  # Line was skipped
 
     def test_whitespace_handling(self):
@@ -344,9 +354,9 @@ class TestCPPARecord(TestCase):
             "project1/bionic_pkg3: pending (2.0)\n"
         )
 
-        record = CPPARecord.from_str(content.encode())
+        record = CPPARecord.from_str(content.encode(), "CVE-2024-0001")
 
-        self.assertTrue(record.candidate.startswith("CVE-"))
+        self.assertEqual("CVE-2024-0001", record.candidate)
         self.assertEqual(3, len(record.packages))
         self.assertEqual("pkg1", record.packages[0].name)
         self.assertEqual("pkg2", record.packages[1].name)
@@ -360,7 +370,12 @@ class TestCPPARecord(TestCase):
             "project1/jammy_pkg: released (2.0)\n"  # Duplicate
         )
 
-        self.assertRaises(ValueError, CPPARecord.from_str, content.encode())
+        self.assertRaises(
+            ValueError,
+            CPPARecord.from_str,
+            content.encode(),
+            "CVE-2024-0001",
+        )
 
     def test_round_trip_consistency(self):
         """Test that load->save->load produces identical results."""
@@ -378,9 +393,9 @@ class TestCPPARecord(TestCase):
         """Test that package names and series preserve case."""
         content = "Project1/jammy_MyPackage: needed\n"
 
-        record = CPPARecord.from_str(content.encode())
+        record = CPPARecord.from_str(content.encode(), "CVE-2024-0001")
 
-        self.assertTrue(record.candidate.startswith("CVE-"))
+        self.assertEqual("CVE-2024-0001", record.candidate)
         self.assertEqual("MyPackage", record.packages[0].name)
         self.assertEqual(
             "Project1/jammy", record.packages[0].statuses[0].series

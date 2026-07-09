@@ -20,3 +20,11 @@ requires:
   apache-website:
     interface: apache-website
     scope: container
+storage:
+  data:
+    type: filesystem
+    location: "/srv/launchpad/data"
+    # XXX 2026-06-30 tushar5526: Drop the optional support after the cloud 
+    # migration. 
+    multiple:
+      range: 0-1

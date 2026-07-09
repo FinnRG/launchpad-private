@@ -223,9 +223,6 @@ class IArchiveHash(Interface):
     dh_name = Attribute(
         "Filename for use when checksumming directories with this algorithm."
     )
-    write_by_hash = Attribute(
-        "Whether to write by-hash subdirectories for this algorithm."
-    )
     write_directory_hash = Attribute(
         "Whether to write *SUM files for this algorithm for directories."
     )
@@ -238,7 +235,6 @@ class MD5ArchiveHash:
     apt_name = "MD5Sum"
     lfc_name = "md5"
     dh_name = "MD5SUMS"
-    write_by_hash = False
     write_directory_hash = False
 
 
@@ -249,7 +245,6 @@ class SHA1ArchiveHash:
     apt_name = "SHA1"
     lfc_name = "sha1"
     dh_name = "SHA1SUMS"
-    write_by_hash = False
     write_directory_hash = False
 
 
@@ -260,33 +255,64 @@ class SHA256ArchiveHash:
     apt_name = "SHA256"
     lfc_name = "sha256"
     dh_name = "SHA256SUMS"
-    write_by_hash = True
     write_directory_hash = True
 
 
+@implementer(IArchiveHash)
+class SHA512ArchiveHash:
+    hash_factory = hashlib.sha512
+    deb822_name = "sha512"
+    apt_name = "SHA512"
+    lfc_name = "sha512"
+    dh_name = "SHA512SUMS"
+    write_directory_hash = False
+
+
+# All implemented archive hashes. This list needs to be ordered from
+# the weakest to the strongest hash.
 archive_hashes = [
     MD5ArchiveHash(),
     SHA1ArchiveHash(),
     SHA256ArchiveHash(),
+    SHA512ArchiveHash(),
 ]
+
+# Hashes published when a distroseries has no allowed_hashes configured.
+# This matches the historical behaviour (MD5Sum/SHA1/SHA256, with SHA256 as
+# the strongest, used for by-hash), so that not setting the config does not
+# introduce a regression.
+DEFAULT_ALLOWED_HASHES = ["md5", "sha1", "sha256"]
+
+
+def get_allowed_archive_hashes(allowed_hash_names):
+    """Filter archive_hashes to only those in the allowed list.
+
+    :param allowed_hash_names: A list of lowercase hash name strings
+        (e.g. ["sha256", "sha512"]), or None to use `DEFAULT_ALLOWED_HASHES`.
+    :return: A list of IArchiveHash instances.
+    """
+    if allowed_hash_names is None:
+        allowed_hash_names = DEFAULT_ALLOWED_HASHES
+    return [h for h in archive_hashes if h.lfc_name in allowed_hash_names]
 
 
 class ByHash:
     """Represents a single by-hash directory tree."""
 
-    def __init__(self, root, key, log):
+    def __init__(self, root, key, log, allowed_hashes=None):
         self.root = root
         self.path = os.path.join(root, key, "by-hash")
         self.log = log
         self.known_digests = defaultdict(lambda: defaultdict(set))
+        self._allowed_hashes = get_allowed_archive_hashes(allowed_hashes)
 
     @property
-    def _usable_archive_hashes(self):
-        usable = []
-        for archive_hash in archive_hashes:
-            if archive_hash.write_by_hash:
-                usable.append(archive_hash)
-        return usable
+    def _preferred_archive_hash(self):
+        # Use only the single strongest (last) hash from the allowed set,
+        # or None if no hashes are allowed.
+        if not self._allowed_hashes:
+            return None
+        return self._allowed_hashes[-1]
 
     def add(self, name, lfa, copy_from_path=None):
         """Ensure that by-hash entries for a single file exist.
@@ -298,37 +324,24 @@ class ByHash:
             for newly-added files to avoid needing to commit the transaction
             before calling this method.
         """
-        best_hash = self._usable_archive_hashes[-1]
-        best_digest = getattr(lfa.content, best_hash.lfc_name)
-        for archive_hash in reversed(self._usable_archive_hashes):
-            digest = getattr(lfa.content, archive_hash.lfc_name)
-            digest_path = os.path.join(
-                self.path, archive_hash.apt_name, digest
-            )
-            self.known_digests[archive_hash.apt_name][digest].add(name)
-            if not os.path.lexists(digest_path):
-                self.log.debug(
-                    "by-hash: Creating %s for %s" % (digest_path, name)
-                )
-                ensure_directory_exists(os.path.dirname(digest_path))
-                if archive_hash != best_hash:
-                    os.symlink(
-                        os.path.join(
-                            os.pardir, best_hash.apt_name, best_digest
-                        ),
-                        digest_path,
-                    )
-                elif copy_from_path is not None:
-                    os.link(
-                        os.path.join(self.root, copy_from_path), digest_path
-                    )
-                else:
-                    with open(digest_path, "wb") as outfile:
-                        lfa.open()
-                        try:
-                            shutil.copyfileobj(lfa, outfile, 4 * 1024 * 1024)
-                        finally:
-                            lfa.close()
+        archive_hash = self._preferred_archive_hash
+        if archive_hash is None:
+            return
+        digest = getattr(lfa.content, archive_hash.lfc_name)
+        digest_path = os.path.join(self.path, archive_hash.apt_name, digest)
+        self.known_digests[archive_hash.apt_name][digest].add(name)
+        if not os.path.lexists(digest_path):
+            self.log.debug("by-hash: Creating %s for %s" % (digest_path, name))
+            ensure_directory_exists(os.path.dirname(digest_path))
+            if copy_from_path is not None:
+                os.link(os.path.join(self.root, copy_from_path), digest_path)
+            else:
+                with open(digest_path, "wb") as outfile:
+                    lfa.open()
+                    try:
+                        shutil.copyfileobj(lfa, outfile, 4 * 1024 * 1024)
+                    finally:
+                        lfa.close()
 
     def known(self, name, hashname, digest):
         """Do we know about a file with this name and digest?"""
@@ -341,7 +354,7 @@ class ByHash:
         This also removes the by-hash directory itself if no entries remain.
         """
         prune_directory = True
-        for archive_hash in archive_hashes:
+        for archive_hash in self._allowed_hashes:
             hash_path = os.path.join(self.path, archive_hash.apt_name)
             if os.path.exists(hash_path):
                 prune_hash_directory = True
@@ -367,10 +380,11 @@ class ByHash:
 class ByHashes:
     """Represents all by-hash directory trees in an archive."""
 
-    def __init__(self, root, log):
+    def __init__(self, root, log, allowed_hashes=None):
         self.root = root
         self.log = log
         self.children = {}
+        self._allowed_hashes = allowed_hashes
 
     def registerChild(self, dirpath):
         """Register a single by-hash directory.
@@ -379,7 +393,9 @@ class ByHashes:
         the `prune` method.
         """
         if dirpath not in self.children:
-            self.children[dirpath] = ByHash(self.root, dirpath, self.log)
+            self.children[dirpath] = ByHash(
+                self.root, dirpath, self.log, self._allowed_hashes
+            )
         return self.children[dirpath]
 
     def add(self, path, lfa, copy_from_path=None):
@@ -1005,6 +1021,7 @@ class Publisher:
             distroseries_id=distroseries.id,
             pocket=pocket.value,
             component_id=component.id,
+            allowed_hashes=distroseries.allowed_hashes,
         )
 
         self.log.debug(
@@ -1066,6 +1083,7 @@ class Publisher:
                 overrides=arch_overrides,
                 formats=[BinaryPackageFormat.DEB],
                 seen_translations=seen_translations,
+                allowed_hashes=distroseries.allowed_hashes,
             )
             self.log.debug(
                 "d-i: Packages %s/%s/%s (%d bytes, %.3fs)",
@@ -1106,6 +1124,7 @@ class Publisher:
                         underlying_architecturetag=arch.underlying_architecturetag,  # noqa: E501
                         overrides=arch_overrides,
                         formats=[BinaryPackageFormat.UDEB],
+                        allowed_hashes=distroseries.allowed_hashes,
                     )
                     sub_index.write(di_bytes)
                 sub_index.close()
@@ -1335,7 +1354,12 @@ class Publisher:
                         for filename in ("Release", "Release.gpg", "InRelease")
                         if file_exists(os.path.join(suite_path, filename))
                     }
-                    self._updateByHash(suite, "Release", extra_by_hash_files)
+                    self._updateByHash(
+                        suite,
+                        "Release",
+                        extra_by_hash_files,
+                        distroseries.allowed_hashes,
+                    )
 
     def _allIndexFiles(self, distroseries):
         """Return all index files on disk for a distroseries.
@@ -1475,7 +1499,10 @@ class Publisher:
             component=component,
         ):
             stanza = build_source_stanza_fields(
-                spp.sourcepackagerelease, spp.component, spp.section
+                spp.sourcepackagerelease,
+                spp.component,
+                spp.section,
+                allowed_hashes=distroseries.allowed_hashes,
             )
             source_index.write(stanza.makeOutput().encode("utf-8") + b"\n\n")
 
@@ -1526,6 +1553,7 @@ class Publisher:
                     bpp.priority,
                     bpp.phased_update_percentage,
                     separate_long_descriptions,
+                    allowed_hashes=distroseries.allowed_hashes,
                 )
                 indices[subcomp].write(
                     stanza.makeOutput().encode("utf-8") + b"\n\n"
@@ -1606,7 +1634,9 @@ class Publisher:
             else {}
         )
 
-    def _getCurrentFiles(self, suite, release_file_name, extra_files):
+    def _getCurrentFiles(
+        self, suite, release_file_name, extra_files, allowed_hashes=None
+    ):
         # Gather information on entries in the current Release file.
         release_path = os.path.join(
             self._config.distsroot, suite, release_file_name
@@ -1614,14 +1644,18 @@ class Publisher:
         with open(release_path) as release_file:
             release_data = Release(release_file)
 
+        filtered_hashes = get_allowed_archive_hashes(allowed_hashes)
         extra_data = {}
         for filename, real_filename in extra_files.items():
             hashes = self._readIndexFileHashes(
-                suite, filename, real_file_name=real_filename
+                suite,
+                filename,
+                real_file_name=real_filename,
+                allowed_hashes=allowed_hashes,
             )
             if hashes is None:
                 continue
-            for archive_hash in archive_hashes:
+            for archive_hash in filtered_hashes:
                 extra_data.setdefault(archive_hash.apt_name, []).append(
                     hashes[archive_hash.deb822_name]
                 )
@@ -1630,9 +1664,22 @@ class Publisher:
             os.path.join(self._config.distsroot, suite), self._config.distsroot
         )
         current_files = {}
-        for current_entry in release_data["SHA256"] + extra_data.get(
-            "SHA256", []
-        ):
+        content_hash = filtered_hashes[-1]
+        # An existing on-disk Release file may predate
+        # the strongest allowed hash (e.g. it has no SHA512
+        # section) if the suite hasn't been rewritten since that hash was
+        # enabled.  Signal this to the caller by returning None so it can skip
+        # by-hash reconciliation for the suite.
+        if content_hash.apt_name not in release_data:
+            self.log.warning(
+                "by-hash: Release file for %s has no %s section; skipping "
+                "by-hash reconciliation for this suite"
+                % (suite, content_hash.apt_name)
+            )
+            return None
+        for current_entry in release_data[
+            content_hash.apt_name
+        ] + extra_data.get(content_hash.apt_name, []):
             path = os.path.join(suite_dir, current_entry["name"])
             real_name = current_entry.get("real_name", current_entry["name"])
             real_path = os.path.join(suite_dir, real_name)
@@ -1646,12 +1693,14 @@ class Publisher:
             if os.path.exists(full_path):
                 current_files[path] = (
                     int(current_entry["size"]),
-                    current_entry["sha256"],
+                    current_entry[content_hash.deb822_name],
                     real_path,
                 )
         return current_files
 
-    def _updateByHash(self, suite, release_file_name, extra_files):
+    def _updateByHash(
+        self, suite, release_file_name, extra_files, allowed_hashes=None
+    ):
         """Update by-hash files for a suite.
 
         This takes Release file data which references a set of on-disk
@@ -1663,10 +1712,15 @@ class Publisher:
         archive_file_set = getUtility(IArchiveFileSet)
         container = "release:%s" % suite
 
-        by_hashes = ByHashes(self._config.distsroot, self.log)
+        by_hashes = ByHashes(self._config.distsroot, self.log, allowed_hashes)
         existing_live_files = {}
         existing_nonlive_files = {}
         reapable_files = set()
+
+        # Identify file content by the strongest allowed hash, matching the
+        # digest read from the Release file in `_getCurrentFiles`.  This must
+        # not assume sha256, which may not be among the allowed hashes.
+        content_hash = get_allowed_archive_hashes(allowed_hashes)[-1]
 
         def strip_dists(path):
             assert path.startswith("dists/")
@@ -1682,7 +1736,7 @@ class Publisher:
         ):
             file_key = (
                 strip_dists(db_file.path),
-                db_file.library_file.content.sha256,
+                getattr(db_file.library_file.content, content_hash.lfc_name),
             )
             # Ensure any subdirectories are registered early on, in case we're
             # about to delete the only file and need to know to prune it.
@@ -1713,10 +1767,23 @@ class Publisher:
 
         # Record all files from the archive on disk.
         current_files = self._getCurrentFiles(
-            suite, release_file_name, extra_files
+            suite, release_file_name, extra_files, allowed_hashes
         )
+        # _getCurrentFiles returns None when the on-disk Release
+        # file predates the strongest allowed hash
+        # (e.g. no SHA512 section).  In that case we can't safely reconcile
+        # the live set, so skip deletion scheduling and new-file creation for
+        # this round; the by-hash entries added above from the DB remain in
+        # place.  This suite will be reconciled properly once its Release file
+        # is rewritten with the new hash.  Remove once all suites have been
+        # rewritten.
+        if current_files is None:
+            by_hashes.prune()
+            if reapable_files:
+                archive_file_set.markDeleted(reapable_files)
+            return
         new_live_files = {
-            (path, sha256) for path, (_, sha256, _) in current_files.items()
+            (path, digest) for path, (_, digest, _) in current_files.items()
         }
 
         # Schedule the deletion of any ArchiveFiles which are current in the
@@ -1745,8 +1812,8 @@ class Publisher:
         # XXX cjwatson 2016-03-15: This should possibly use bulk creation,
         # although we can only avoid about a third of the queries since the
         # librarian client has no bulk upload methods.
-        for path, (size, sha256, real_path) in current_files.items():
-            file_key = (path, sha256)
+        for path, (size, digest, real_path) in current_files.items():
+            file_key = (path, digest)
             full_path = os.path.join(self._config.distsroot, real_path)
             assert os.path.exists(full_path)  # guaranteed by _getCurrentFiles
             # If there isn't a matching live ArchiveFile row, create one.
@@ -1760,11 +1827,10 @@ class Publisher:
                         size,
                         filenameToContentType(path),
                     )
+            else:
+                db_file = existing_live_files[file_key]
             # And ensure the by-hash links exist on disk.
-            if not by_hashes.known(path, "SHA256", sha256):
-                by_hashes.add(
-                    path, db_file.library_file, copy_from_path=real_path
-                )
+            by_hashes.add(path, db_file.library_file, copy_from_path=real_path)
 
         # Remove any files from disk that aren't recorded in the database.
         by_hashes.prune()
@@ -1930,17 +1996,20 @@ class Publisher:
             release_file["ButAutomaticUpgrades"] = "yes"
 
         file_list = sorted(all_files)
+        allowed_hash_names = distroseries.allowed_hashes
+        filtered_hashes = get_allowed_archive_hashes(allowed_hash_names)
         with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
             worker_func = partial(
                 self._readIndexFileHashes,
                 suite,
+                allowed_hashes=allowed_hash_names,
             )
             result_hashes = list(executor.map(worker_func, file_list))
         for hashes in result_hashes:
             if hashes is None:
                 continue
 
-            for archive_hash in archive_hashes:
+            for archive_hash in filtered_hashes:
                 hash = hashes[archive_hash.deb822_name]
                 release_file.setdefault(archive_hash.apt_name, []).append(hash)
 
@@ -1965,7 +2034,12 @@ class Publisher:
             self.log.debug("No signing key available, skipping signature.")
 
         if distroseries.publish_by_hash:
-            self._updateByHash(suite, "Release.new", extra_by_hash_files)
+            self._updateByHash(
+                suite,
+                "Release.new",
+                extra_by_hash_files,
+                distroseries.allowed_hashes,
+            )
 
         for name in ("Release", "Release.gpg", "InRelease"):
             if name in core_files:
@@ -2116,7 +2190,12 @@ class Publisher:
                 os.unlink(i18n_file_name)
 
     def _readIndexFileHashes(
-        self, suite, file_name, subpath=None, real_file_name=None
+        self,
+        suite,
+        file_name,
+        subpath=None,
+        real_file_name=None,
+        allowed_hashes=None,
     ):
         """Read an index file and return its hashes.
 
@@ -2130,6 +2209,8 @@ class Publisher:
             dictionary).  If this is passed, then the returned hash
             component dictionaries will include it in additional "real_name"
             items.
+        :param allowed_hashes: List of allowed hash name strings, or None
+            for all.
         :return: A dictionary mapping hash field names to dictionaries of
             their components as defined by debian.deb822.Release (e.g.
             {"md5sum": {"md5sum": ..., "size": ..., "name": ...}}), or None
@@ -2159,9 +2240,10 @@ class Publisher:
                 self.log.debug("Failed to find " + full_name)
                 return None
 
+        filtered_hashes = get_allowed_archive_hashes(allowed_hashes)
         hashes = {
             archive_hash.deb822_name: archive_hash.hash_factory()
-            for archive_hash in archive_hashes
+            for archive_hash in filtered_hashes
         }
         size = 0
         with open_func(full_name) as in_file:
@@ -2269,10 +2351,11 @@ class Publisher:
 class DirectoryHash:
     """Represents a directory hierarchy for hashing."""
 
-    def __init__(self, root, tmpdir):
+    def __init__(self, root, tmpdir, allowed_hashes=None):
         self.root = root
         self.tmpdir = tmpdir
         self.checksum_hash = []
+        self._allowed_hashes = get_allowed_archive_hashes(allowed_hashes)
 
         for usable in self._usable_archive_hashes:
             csum_path = os.path.join(self.root, usable.dh_name)
@@ -2292,7 +2375,7 @@ class DirectoryHash:
 
     @property
     def _usable_archive_hashes(self):
-        for archive_hash in archive_hashes:
+        for archive_hash in self._allowed_hashes:
             if archive_hash.write_directory_hash:
                 yield archive_hash
 

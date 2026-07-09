@@ -174,7 +174,7 @@ class UCTExporter(SVTExporter):
         global_tags: Set[str] = set()
         for tag in bug.tags:
             if TAG_SEPARATOR in tag:
-                package_name, tag_value = tag.split(TAG_SEPARATOR, 1)
+                package_name, tag_value = tag.rsplit(TAG_SEPARATOR, 1)
                 tags_by_pkg[package_name].add(tag_value)
             else:
                 global_tags.add(tag)

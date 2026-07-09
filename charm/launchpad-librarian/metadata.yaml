@@ -21,3 +21,12 @@ provides:
     interface: http
   vhost-config:
     interface: apache-vhost-config
+
+storage:
+  data:
+    type: filesystem
+    location: "/srv/launchpad/librarian"
+    # XXX tushar5526 2026-06-29:: Drop the optional support after the cloud
+    # migration. 
+    multiple:
+      range: 0-1

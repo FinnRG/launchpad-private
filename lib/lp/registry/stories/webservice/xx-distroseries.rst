@@ -69,6 +69,7 @@ For distroseries we publish a subset of its attributes.
         'http://.../ubuntu/hoary/active_milestones'
     advertise_by_hash: False
     all_milestones_collection_link: 'http://.../ubuntu/hoary/all_milestones'
+    allowed_hashes: None
     architectures_collection_link: 'http://.../ubuntu/hoary/architectures'
     backports_not_automatic: False
     bug_reported_acknowledgement: None

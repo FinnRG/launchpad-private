@@ -191,3 +191,13 @@ class VulnerabilityHandlerEnum(DBEnumeratedType):
         exports.
         """,
     )
+
+    CPPA = DBItem(
+        3,
+        """
+        CPPA Handler
+
+        Specific handler to use for CPPA vulnerability data imports.
+        CPPA Handler adds PPA bugtasks to bugs already imported by UCT.
+        """,
+    )

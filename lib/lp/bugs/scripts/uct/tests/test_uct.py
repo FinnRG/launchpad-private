@@ -23,6 +23,7 @@ from lp.bugs.interfaces.bugtask import (
     BugTaskStatus,
     IBugTaskSet,
 )
+from lp.bugs.interfaces.cve import CveStatus, ICveSet
 from lp.bugs.model.bug import Bug
 from lp.bugs.model.bugtask import BugTask
 from lp.bugs.scripts.uct import (
@@ -42,6 +43,7 @@ from lp.registry.model.archivesourcepackageseries import (
 )
 from lp.registry.model.sourcepackage import SourcePackage
 from lp.services.propertycache import clear_property_cache
+from lp.soyuz.enums import PackagePublishingStatus
 from lp.testing import TestCase, TestCaseWithFactory
 from lp.testing.layers import ZopelessDatabaseLayer
 
@@ -1792,6 +1794,214 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             self.ubuntu,
         )
 
+    def test_create_bug_skips_unpublished_package(self):
+        # A distro/series package that is not published in Ubuntu should be
+        # skipped rather than aborting the whole CVE import. PPA tasks for the
+        # same package name should still be created.
+        unpublished_pckg = self.factory.makeDistributionSourcePackage(
+            distribution=self.ubuntu
+        )
+        # Deliberately do not publish unpublished_pckg in any series.
+
+        published_pckg = self.ubuntu_package
+
+        cve = CVE(
+            sequence="CVE-2022-23222",
+            date_made_public=datetime(2022, 1, 14, 8, 15, tzinfo=timezone.utc),
+            date_notice_issued=None,
+            date_coordinated_release=None,
+            distro_packages=[
+                CVE.DistroPackage(
+                    target=published_pckg,
+                    importance=BugTaskImportance.LOW,
+                    package_name=published_pckg.sourcepackagename,
+                    tags=set(),
+                ),
+                CVE.DistroPackage(
+                    target=unpublished_pckg,
+                    importance=BugTaskImportance.MEDIUM,
+                    package_name=unpublished_pckg.sourcepackagename,
+                    tags=set(),
+                ),
+            ],
+            series_packages=[
+                CVE.SeriesPackage(
+                    target=SourcePackage(
+                        sourcepackagename=published_pckg.sourcepackagename,
+                        distroseries=self.ubuntu_supported_series,
+                    ),
+                    package_name=published_pckg.sourcepackagename,
+                    importance=BugTaskImportance.LOW,
+                    status=BugTaskStatus.FIXRELEASED,
+                    status_explanation="",
+                ),
+                CVE.SeriesPackage(
+                    target=SourcePackage(
+                        sourcepackagename=unpublished_pckg.sourcepackagename,
+                        distroseries=self.ubuntu_supported_series,
+                    ),
+                    package_name=unpublished_pckg.sourcepackagename,
+                    importance=None,
+                    status=BugTaskStatus.FIXRELEASED,
+                    status_explanation="",
+                ),
+            ],
+            upstream_packages=[],
+            importance=BugTaskImportance.MEDIUM,
+            status=VulnerabilityStatus.ACTIVE,
+            assignee=None,
+            discovered_by="",
+            description="description",
+            ubuntu_description="",
+            bug_urls=[],
+            references=[],
+            notes="",
+            mitigation="",
+            cvss={},
+            patch_urls=[],
+            break_fix_data=[],
+            global_tags=set(),
+            ppa_packages=[],
+            ppa_series_packages=[],
+        )
+
+        # Import must succeed despite the unpublished package.
+        bug, _ = self.importer.create_bug(cve, self.lp_cve)
+
+        bug_task_targets = {t.target for t in bug.bugtasks}
+        # The published package and its series have bugtasks.
+        self.assertIn(published_pckg, bug_task_targets)
+        self.assertIn(
+            SourcePackage(
+                sourcepackagename=published_pckg.sourcepackagename,
+                distroseries=self.ubuntu_supported_series,
+            ),
+            bug_task_targets,
+        )
+        # The unpublished package and its series do NOT have bugtasks.
+        self.assertNotIn(unpublished_pckg, bug_task_targets)
+        self.assertNotIn(
+            SourcePackage(
+                sourcepackagename=unpublished_pckg.sourcepackagename,
+                distroseries=self.ubuntu_supported_series,
+            ),
+            bug_task_targets,
+        )
+
+    def test_create_bug_includes_eol_package(self):
+        # A distro package which was once published but is now in OBSOLETE
+        # (end-of-life) status in the import
+        eol_pckg = self.factory.makeDistributionSourcePackage(
+            distribution=self.ubuntu
+        )
+        # Publish with OBSOLETE status (end-of-life series).
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=self.ubuntu_supported_series,
+            sourcepackagename=eol_pckg.sourcepackagename,
+            archive=self.ubuntu.main_archive,
+            status=PackagePublishingStatus.OBSOLETE,
+        )
+
+        cve = CVE(
+            sequence="CVE-2022-23222",
+            date_made_public=datetime(2022, 1, 14, 8, 15, tzinfo=timezone.utc),
+            date_notice_issued=None,
+            date_coordinated_release=None,
+            distro_packages=[
+                CVE.DistroPackage(
+                    target=self.ubuntu_package,
+                    importance=BugTaskImportance.LOW,
+                    package_name=self.ubuntu_package.sourcepackagename,
+                    tags=set(),
+                ),
+                CVE.DistroPackage(
+                    target=eol_pckg,
+                    importance=BugTaskImportance.MEDIUM,
+                    package_name=eol_pckg.sourcepackagename,
+                    tags=set(),
+                ),
+            ],
+            series_packages=[],
+            upstream_packages=[],
+            importance=BugTaskImportance.MEDIUM,
+            status=VulnerabilityStatus.ACTIVE,
+            assignee=None,
+            discovered_by="",
+            description="description",
+            ubuntu_description="",
+            bug_urls=[],
+            references=[],
+            notes="",
+            mitigation="",
+            cvss={},
+            patch_urls=[],
+            break_fix_data=[],
+            global_tags=set(),
+            ppa_packages=[],
+            ppa_series_packages=[],
+        )
+
+        bug, _ = self.importer.create_bug(cve, self.lp_cve)
+
+        bug_task_targets = {t.target for t in bug.bugtasks}
+        # Both the active-publication package and the EOL package have tasks.
+        self.assertIn(self.ubuntu_package, bug_task_targets)
+        self.assertIn(eol_pckg, bug_task_targets)
+
+    def test_create_bug_skips_truly_unpublished_despite_eol_flag(self):
+        # A package with no publication at all is still skipped, even though
+        # EOL packages are allowed.  The two cases must remain distinct.
+        never_published = self.factory.makeDistributionSourcePackage(
+            distribution=self.ubuntu
+        )
+        # Deliberately publish nothing for never_published.
+
+        cve = CVE(
+            sequence="CVE-2022-23222",
+            date_made_public=datetime(2022, 1, 14, 8, 15, tzinfo=timezone.utc),
+            date_notice_issued=None,
+            date_coordinated_release=None,
+            distro_packages=[
+                CVE.DistroPackage(
+                    target=self.ubuntu_package,
+                    importance=BugTaskImportance.LOW,
+                    package_name=self.ubuntu_package.sourcepackagename,
+                    tags=set(),
+                ),
+                CVE.DistroPackage(
+                    target=never_published,
+                    importance=BugTaskImportance.MEDIUM,
+                    package_name=never_published.sourcepackagename,
+                    tags=set(),
+                ),
+            ],
+            series_packages=[],
+            upstream_packages=[],
+            importance=BugTaskImportance.MEDIUM,
+            status=VulnerabilityStatus.ACTIVE,
+            assignee=None,
+            discovered_by="",
+            description="description",
+            ubuntu_description="",
+            bug_urls=[],
+            references=[],
+            notes="",
+            mitigation="",
+            cvss={},
+            patch_urls=[],
+            break_fix_data=[],
+            global_tags=set(),
+            ppa_packages=[],
+            ppa_series_packages=[],
+        )
+
+        bug, _ = self.importer.create_bug(cve, self.lp_cve)
+
+        bug_task_targets = {t.target for t in bug.bugtasks}
+        self.assertIn(self.ubuntu_package, bug_task_targets)
+        # The never-published package has no task.
+        self.assertNotIn(never_published, bug_task_targets)
+
     def test_update_bug_new_package(self):
         package = self.factory.makeDistributionSourcePackage(
             distribution=self.ubuntu
@@ -2223,6 +2433,86 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         self.importer.update_bug(bug, cve, self.lp_cve)
         self.checkBug(bug, cve)
 
+    def test_tags_roundtrip_for_dotted_package_name(self):
+        """Package tags survive import→export when the package name contains
+        dots like "python3.10"."""
+        # Create a source package whose name contains a dot.
+        dotted_spn = self.factory.makeSourcePackageName(name="python3.10")
+        dotted_dsp = self.factory.makeDistributionSourcePackage(
+            sourcepackagename=dotted_spn, distribution=self.ubuntu
+        )
+        for series in (
+            self.ubuntu_supported_series,
+            self.ubuntu_current_series,
+        ):
+            self.factory.makeSourcePackagePublishingHistory(
+                distroseries=series,
+                sourcepackagerelease=self.factory.makeSourcePackageRelease(
+                    distroseries=series,
+                    sourcepackagename=dotted_spn,
+                ),
+            )
+
+        lp_cve = self.factory.makeCVE("2022-99901")
+        cve = CVE(
+            sequence="CVE-2022-99901",
+            date_made_public=datetime(2022, 1, 14, 8, 15, tzinfo=timezone.utc),
+            date_notice_issued=None,
+            date_coordinated_release=None,
+            distro_packages=[
+                CVE.DistroPackage(
+                    target=dotted_dsp,
+                    importance=BugTaskImportance.MEDIUM,
+                    package_name=dotted_spn,
+                    tags={"universe-binary"},
+                ),
+            ],
+            series_packages=[
+                CVE.SeriesPackage(
+                    target=SourcePackage(
+                        sourcepackagename=dotted_spn,
+                        distroseries=self.ubuntu_supported_series,
+                    ),
+                    package_name=dotted_spn,
+                    importance=None,
+                    status=BugTaskStatus.NEW,
+                    status_explanation="",
+                ),
+            ],
+            upstream_packages=[],
+            ppa_packages=[],
+            ppa_series_packages=[],
+            importance=BugTaskImportance.MEDIUM,
+            status=VulnerabilityStatus.ACTIVE,
+            assignee=None,
+            bug_urls=[],
+            patch_urls=[],
+            break_fix_data=[],
+            notes="",
+            mitigation=None,
+            description="test",
+            ubuntu_description="",
+            references=[],
+            global_tags=set(),
+            importance_explanation="",
+            cvss={},
+            discovered_by="",
+        )
+
+        bug, _ = self.importer.create_bug(cve, lp_cve)
+
+        # The stored tag should be "python3.10.universe-binary".
+        self.assertIn("python3.10.universe-binary", bug.tags)
+
+        # Now export and verify the tag is attributed to the correct package.
+        exported_cve = self.exporter._make_cve_from_bug(bug)
+        dotted_pkg = next(
+            dp
+            for dp in exported_cve.distro_packages
+            if dp.package_name.name == "python3.10"
+        )
+        self.assertIn("universe-binary", dotted_pkg.tags)
+
     def test_import_cve(self):
         self.importer.import_cve(self.cve)
         self.assertIsNotNone(
@@ -2282,7 +2572,11 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             record, cache_entities=None, subprojects=None
         ):
             cached_entries.append(cache_entities)
-            return Mock(sequence=record.sequence)
+
+            # date_made_public=None to ensure we return early with
+            # (None, None, None) tuple as this test only cares about cache
+            # usage, not the actual CVE import.
+            return Mock(sequence=record.sequence, date_made_public=None)
 
         with patch(
             "lp.bugs.scripts.uct.uctimport.CVE.make_from_uct_record",
@@ -2367,16 +2661,29 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         self.assertTrue(created)
 
     def test_import_non_existing_cve(self):
-        """Try to import a non existing cve won't create a bug and
-        vulnerability."""
-        self.cve.sequence = "CVE-2023-0000"
+        """Importing a CVE not in LP creates the CVE automatically using UCT
+        values with a CveStatus.PLACEHOLDER status then creates the bug."""
+
+        self.cve.sequence = "CVE-2023-1234"
+
+        self.assertIsNone(getUtility(ICveSet)["CVE-2023-1234"])
+
         uct_record = self.cve.to_uct_record()
         bug, vuln, created = self.importer.from_record(
-            uct_record, "CVE-2023-0000"
+            uct_record, "CVE-2023-1234"
         )
-        self.assertEqual(bug, None)
-        self.assertEqual(vuln, None)
-        self.assertEqual(created, None)
+
+        lp_cve = getUtility(ICveSet)["CVE-2023-1234"]
+        self.assertIsNotNone(lp_cve)
+        self.assertEqual(CveStatus.PLACEHOLDER, lp_cve.status)
+        self.assertEqual(self.cve.description, lp_cve.description)
+        self.assertEqual(self.cve.date_made_public, lp_cve.date_made_public)
+        self.assertEqual(self.cve.discovered_by, lp_cve.discovered_by)
+        self.assertEqual(self.cve.cvss, lp_cve.cvss)
+
+        self.assertIsNotNone(bug)
+        self.assertIsNotNone(vuln)
+        self.assertTrue(created)
 
     def test_import_duplicate(self):
         """Import more than once a cve and check that it does not duplicate."""
@@ -2978,16 +3285,36 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             serialized,
         )
 
-    def test_subproject_key_fallback_warning(self):
-        """Test fallback behavior when subproject mapping is missing."""
-        # Create CVE with PPA packages
+    def test_no_subprojects_skips_all_ppa_packages(self):
+        """When no subprojects mapping is loaded (None), all PPA packages are
+        silently excluded from the UCT export, but non-PPA (distro/series)
+        packages are unaffected and still exported."""
+        spn = self.ubuntu_package.sourcepackagename
         cve = CVE(
             sequence="CVE-2024-00001",
             date_made_public=None,
             date_notice_issued=None,
             date_coordinated_release=None,
-            distro_packages=[],
-            series_packages=[],
+            distro_packages=[
+                CVE.DistroPackage(
+                    target=self.ubuntu_package,
+                    package_name=spn,
+                    importance=BugTaskImportance.MEDIUM,
+                    tags=set(),
+                ),
+            ],
+            series_packages=[
+                CVE.SeriesPackage(
+                    target=SourcePackage(
+                        sourcepackagename=spn,
+                        distroseries=self.ubuntu_supported_series,
+                    ),
+                    package_name=spn,
+                    importance=None,
+                    status=BugTaskStatus.NEW,
+                    status_explanation="",
+                ),
+            ],
             upstream_packages=[],
             ppa_packages=[
                 CVE.PPAPackage(
@@ -3022,14 +3349,212 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             break_fix_data=[],
         )
 
-        # Convert without providing subprojects mapping
-        with self.expectedLog("No subproject mapping found"):
-            uct_record = cve.to_uct_record(subprojects=None)
+        # subprojects=None: PPA packages are silently excluded, but the
+        # regular distro package is still present.
+        uct_record = cve.to_uct_record(subprojects=None)
 
-        # Verify fallback format is used
-        package = uct_record.packages[0]
-        series_names = {s.series for s in package.statuses}
-        self.assertIn("esm-infra-security/focal", series_names)
+        pkg_names = [p.name for p in uct_record.packages]
+        # The non-PPA distro package must be exported.
+        self.assertIn(spn.name, pkg_names)
+        # The PPA package must be absent.
+        self.assertNotIn(self.esm_package.sourcepackagename.name, pkg_names)
+        # The distro package carries its series status.
+        distro_pkg = next(p for p in uct_record.packages if p.name == spn.name)
+        self.assertEqual(
+            [self.ubuntu_supported_series.name],
+            [s.series for s in distro_pkg.statuses],
+        )
+
+    def test_unrelated_ppa_package_excluded_when_not_in_subprojects(self):
+        """PPA tasks whose archive is not in subprojects are silently excluded
+        from the UCT export when a subprojects mapping is provided."""
+        # A PPA archive that is not in the subprojects mapping.
+        outside_ppa = self.factory.makeArchive(
+            distribution=self.ubuntu, name="outside-ppa"
+        )
+        outside_ppa_spn = self.factory.makeSourcePackageName()
+        outside_ppa_asp = ArchiveSourcePackage(outside_ppa, outside_ppa_spn)
+        outside_ppa_asps = ArchiveSourcePackageSeries(
+            outside_ppa, self.ubuntu_supported_series, outside_ppa_spn
+        )
+
+        # Build a minimal subprojects dict that knows esm-apps-security but
+        # not the PPA above.
+        known_subprojects = {
+            "esm-apps/jammy": SubProjectPPAs(
+                ubuntu_series="jammy",
+                ppa=PPAReference(
+                    owner=self.ppa_owner.name,
+                    archive=self.ppa_apps.name,  # esm-apps-security
+                    pocket="security",
+                ),
+            ),
+        }
+
+        cve = CVE(
+            sequence="CVE-2024-00002",
+            date_made_public=None,
+            date_notice_issued=None,
+            date_coordinated_release=None,
+            distro_packages=[],
+            series_packages=[],
+            upstream_packages=[],
+            ppa_packages=[
+                # Known PPA (esm-apps-security) must be exported.
+                CVE.PPAPackage(
+                    target=self.esm_package_apps,
+                    package_name=self.esm_package_apps.sourcepackagename,
+                    importance=BugTaskImportance.MEDIUM,
+                    tags=set(),
+                ),
+                # Outside PPA must be silently skipped.
+                CVE.PPAPackage(
+                    target=outside_ppa_asp,
+                    package_name=outside_ppa_spn,
+                    importance=BugTaskImportance.HIGH,
+                    tags=set(),
+                ),
+            ],
+            ppa_series_packages=[
+                CVE.PPASeriesPackage(
+                    target=self.esm_ppa_asps_current,
+                    package_name=self.esm_package_apps.sourcepackagename,
+                    importance=BugTaskImportance.MEDIUM,
+                    status=BugTaskStatus.FIXRELEASED,
+                    status_explanation="fixed",
+                ),
+                CVE.PPASeriesPackage(
+                    target=outside_ppa_asps,
+                    package_name=outside_ppa_spn,
+                    importance=BugTaskImportance.HIGH,
+                    status=BugTaskStatus.FIXRELEASED,
+                    status_explanation="fixed",
+                ),
+            ],
+            importance=BugTaskImportance.MEDIUM,
+            importance_explanation="",
+            status=VulnerabilityStatus.ACTIVE,
+            assignee=None,
+            discovered_by="",
+            description="Test",
+            ubuntu_description="",
+            bug_urls=[],
+            references=[],
+            notes="",
+            mitigation="",
+            cvss={},
+            global_tags=set(),
+            break_fix_data=[],
+        )
+
+        uct_record = cve.to_uct_record(subprojects=known_subprojects)
+
+        pkg_names = [p.name for p in uct_record.packages]
+        # The known PPA package must be present.
+        self.assertIn(self.esm_package_apps.sourcepackagename.name, pkg_names)
+        # The outside PPA package must be absent.
+        self.assertNotIn(outside_ppa_spn.name, pkg_names)
+
+    def test_ppa_series_entry_excluded_when_archive_series_not_in_subprojects(
+        self,
+    ):
+        """A PPA series entry whose (archive, series) combination has no
+        subproject mapping is skipped with a warning, while other series
+        entries for the same archive that ARE mapped are still exported.
+        """
+        # subprojects maps esm-apps/jammy only, focal has no mapping.
+        known_subprojects = {
+            "esm-apps/jammy": SubProjectPPAs(
+                ubuntu_series="jammy",
+                ppa=PPAReference(
+                    owner=self.ppa_owner.name,
+                    archive=self.ppa_apps.name,
+                    pocket="security",
+                ),
+            ),
+        }
+
+        # Create an ASPS for the same archive but the focal series, which is
+        # NOT in known_subprojects.
+        ppa_apps_asps_focal = self.factory.makeArchiveSourcePackageSeries(
+            sourcepackagename=self.esm_package_apps.sourcepackagename,
+            archive=self.ppa_apps,
+            distroseries=self.ubuntu_supported_series,  # focal
+        )
+
+        cve = CVE(
+            sequence="CVE-2024-00003",
+            date_made_public=None,
+            date_notice_issued=None,
+            date_coordinated_release=None,
+            distro_packages=[],
+            series_packages=[],
+            upstream_packages=[],
+            ppa_packages=[
+                CVE.PPAPackage(
+                    target=self.esm_package_apps,
+                    package_name=self.esm_package_apps.sourcepackagename,
+                    importance=BugTaskImportance.MEDIUM,
+                    tags=set(),
+                ),
+            ],
+            ppa_series_packages=[
+                # jammy is in known_subprojects, it must export.
+                CVE.PPASeriesPackage(
+                    target=self.esm_ppa_asps_current,
+                    package_name=self.esm_package_apps.sourcepackagename,
+                    importance=BugTaskImportance.MEDIUM,
+                    status=BugTaskStatus.FIXRELEASED,
+                    status_explanation="fixed in jammy",
+                ),
+                # focal has no subproject key; this entry must be skipped with
+                # a warning.
+                CVE.PPASeriesPackage(
+                    target=ppa_apps_asps_focal,
+                    package_name=self.esm_package_apps.sourcepackagename,
+                    importance=BugTaskImportance.MEDIUM,
+                    status=BugTaskStatus.FIXRELEASED,
+                    status_explanation="fixed in focal",
+                ),
+            ],
+            importance=BugTaskImportance.MEDIUM,
+            importance_explanation="",
+            status=VulnerabilityStatus.ACTIVE,
+            assignee=None,
+            discovered_by="",
+            description="Test",
+            ubuntu_description="",
+            bug_urls=[],
+            references=[],
+            notes="",
+            mitigation="",
+            cvss={},
+            global_tags=set(),
+            break_fix_data=[],
+        )
+
+        with self.expectedLog(
+            f"No subproject mapping for archive"
+            f" '{self.ppa_apps.owner.name}/{self.ppa_apps.name}'"
+            f" series '{self.ubuntu_supported_series.name}';"
+            " skipping series entry."
+        ):
+            uct_record = cve.to_uct_record(subprojects=known_subprojects)
+
+        # The package must be present because the jammy entry was mapped.
+        pkg_names = [p.name for p in uct_record.packages]
+        self.assertIn(self.esm_package_apps.sourcepackagename.name, pkg_names)
+
+        # Only the jammy status entry must appear; focal must be absent.
+        pkg = next(
+            p
+            for p in uct_record.packages
+            if p.name == self.esm_package_apps.sourcepackagename.name
+        )
+        exported_series = [s.series for s in pkg.statuses]
+        self.assertIn("esm-apps/jammy", exported_series)
+        self.assertNotIn("esm-apps/focal", exported_series)
+        self.assertEqual(1, len(exported_series))
 
     def test_get_patch_urls_with_invalid_url(self):
         """Test that invalid URLs are logged and skipped."""

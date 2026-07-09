@@ -34,6 +34,11 @@
 
     ProxyPassReverse / balancer://launchpad-appserver-main/
     ProxyPassReverse / balancer://cached-launchpad-appserver-main/
+{%- if lui_routing_enabled and lui_endpoint %}
+    # Rewrite self-referential Location/Content-Location/URI headers
+    # emitted by the LUI back to this vhost.
+    ProxyPassReverse / {{ lui_endpoint.rstrip("/") }}/
+{%- endif %}
     ProxyPreserveHost on
 
     RewriteEngine on
@@ -62,6 +67,37 @@
 {% if internal_bzr_codebrowse_endpoint %}
     # https://portal.admin.canonical.com/C46608: Proxy requests to Loggerhead.
     RewriteRule ^/\+loggerhead/(.*)$ {{ internal_bzr_codebrowse_endpoint }}$1 [P,L,NE]
+{%- endif %}
+
+{% if lui_routing_enabled and lui_endpoint %}
+{%- set lui_host = (lui_endpoint.rstrip("/").split("://")[-1]).split("/")[0] %}
+    # TLS terminates here and the proxy hop to the LUI is plain HTTP; tell
+    # the LUI the original scheme so it reconstructs the correct origin
+    # (requires PROTOCOL_HEADER=x-forwarded-proto on the LUI side).
+    RequestHeader set X-Forwarded-Proto "https"
+
+    # The LUI's ingress routes on the LUI hostname, so rewrite Host on the
+    # outbound hop (LUI-proxied requests only) and pass the public host in
+    # X-Original-Host instead (requires HOST_HEADER=x-original-host on the
+    # LUI side; X-Forwarded-Host would be corrupted by the rewritten Host).
+    RequestHeader set X-Original-Host "%{LUI_PROXY}e" env=LUI_PROXY
+    RequestHeader set Host "{{ lui_host }}" env=LUI_PROXY
+
+    # SvelteKit assets and remote function endpoints, and data endpoints for
+    # client-side navigation (all LUI-only; "__data.json" and "_app" are
+    # never valid path segments on LC, whose names don't allow underscores).
+    RewriteRule ^(/_app/.*)$ {{ lui_endpoint.rstrip("/") }}$1 [P,L,NE,E=LUI_PROXY:%{HTTP_HOST}]
+    RewriteRule ^(.*/__data\.json)$ {{ lui_endpoint.rstrip("/") }}$1 [P,L,NE,E=LUI_PROXY:%{HTTP_HOST}]
+
+    # Distribution source package pages:
+    #   /{distro}/+source/{src_pkg_name}
+    #   /{distro}/+source/{src_pkg_name}/{version}
+    # Anchored on /+source/ as the second path segment to avoid bare
+    # /{pillar} ambiguity.  +-prefixed sub-pages (e.g. +subscribe) and the
+    # distroseries form (/{distro}/{series}/+source/...) are intentionally
+    # left on Launchpad Classic; distro/distroseries root routing is tracked
+    # as a follow-up.
+    RewriteRule ^(/[^/]+/\+source/[^/]+(?:/[^+/][^/]*)?)/?$ {{ lui_endpoint.rstrip("/") }}$1 [P,L,NE,E=LUI_PROXY:%{HTTP_HOST}]
 {%- endif %}
 
     # Most anonymous requests are cacheable.

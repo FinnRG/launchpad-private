@@ -871,43 +871,6 @@ class CVE:
             ppa_series_packages=ppa_series_packages,
         )
 
-    def _get_subproject_key(
-        self,
-        archive_name: str,
-        series_name: str,
-        archive_to_subproject: Dict[Tuple[str, str], str],
-    ) -> str:
-        """
-        Get the subproject key for an archive/series combination.
-
-        If the mapping doesn't exist in subprojects.json, logs a warning
-        and returns a fallback format. The fallback format may not round-trip
-        correctly on re-import.
-
-        Args:
-            archive_name: PPA archive name (e.g., "esm-infra-security")
-            series_name: Series name or "devel"
-            archive_to_subproject: Mapping from (archive, series) to subproject
-
-        Returns:
-            Subproject key from mapping, or fallback format "archive/series"
-        """
-        key = (archive_name, series_name)
-        if key in archive_to_subproject:
-            return archive_to_subproject[key]
-
-        # Fallback: create ad-hoc format
-        fallback = f"{archive_name}/{series_name}"
-        logger.warning(
-            "No subproject mapping found for archive '%s' series '%s'. "
-            "Using fallback format '%s'. This may not round-trip correctly "
-            "on re-import. Consider adding this mapping to subprojects.json.",
-            archive_name,
-            series_name,
-            fallback,
-        )
-        return fallback
-
     def to_uct_record(
         self, subprojects: Optional[Dict[str, SubProjectPPAs]] = None
     ) -> UCTRecord:
@@ -920,8 +883,9 @@ class CVE:
             subprojects: Optional mapping of subproject keys to PPA
                 configurations. If provided, PPA archive references will be
                 mapped back to their original subproject keys (e.g.,
-                "esm-infra/focal"). If None or if a mapping is missing, falls
-                back to "{archive_name}/{series_name}" format with a warning.
+                "esm-infra/focal"). PPA packages whose archive or
+                (archive, series) pair has no mapping are silently excluded.
+                If None, all PPA packages are excluded.
 
         Returns:
             UCTRecord suitable for export to UCT file format
@@ -929,20 +893,22 @@ class CVE:
         # Create reverse mapping from (archive_name, series_name) to subproject
         # key. This mapping is used to convert Launchpad PPA references back
         # to their original UCT subproject keys (e.g., "esm-infra/focal").
+        # PPA archives whose name does not appear in this map are silently
+        # excluded from the export.
         #
         # Type: Dict[Tuple[str, str], str]
         #   Key: (archive_name, series_name)
         #   Value: subproject key from UCT file e.g., "esm-infra/focal"
-        #
-        # Fallback behavior when no mapping exists:
-        #   - Uses format "{archive_name}/{series_name}"
-        #   - Logs a warning about potential round-trip issues
-        #   - May fail on re-import if the fallback format doesn't match any
-        #     subproject definition
         archive_to_subproject = (
             create_archive_to_subproject_map(subprojects)
             if subprojects
             else {}
+        )
+        # Set of (owner, archive_name) pairs that have at least one UCT
+        # subproject mapping. Used to skip tasks without touching the
+        # subproject-key lookup.
+        known_ppa_archives = frozenset(
+            (owner, archive) for owner, archive, _ in archive_to_subproject
         )
 
         series_packages_by_name: Dict[
@@ -959,6 +925,7 @@ class CVE:
         for ppa_series_package in self.ppa_series_packages:
             key = (
                 ppa_series_package.package_name,
+                ppa_series_package.target.archive.owner.name,
                 ppa_series_package.target.archive.name,
             )
             ppa_series_packages_by_key[key].append(ppa_series_package)
@@ -1013,9 +980,17 @@ class CVE:
 
         for ppa_package in self.ppa_packages:
             spn = ppa_package.package_name
+            archive_owner = ppa_package.target.archive.owner.name
             archive_name = ppa_package.target.archive.name
+            # Skip when no subprojects file was loaded, or the archive is not
+            # covered by any UCT subproject mapping
+            if (
+                not archive_to_subproject
+                or (archive_owner, archive_name) not in known_ppa_archives
+            ):
+                continue
             ppa_series_packages = ppa_series_packages_by_key.get(
-                (spn, archive_name), []
+                (spn, archive_owner, archive_name), []
             )
 
             statuses: List[UCTRecord.SeriesPackageStatus] = []
@@ -1028,10 +1003,19 @@ class CVE:
                 status = self.BUG_TASK_STATUS_MAP_REVERSE[
                     ppa_series_package.status
                 ]
-                # Use subproject key if available, otherwise use fallback
-                uct_series = self._get_subproject_key(
-                    archive_name, series_name, archive_to_subproject
+                # Skip series entries with no mapping
+                uct_series = archive_to_subproject.get(
+                    (archive_owner, archive_name, series_name)
                 )
+                if uct_series is None:
+                    logger.warning(
+                        "No subproject mapping for archive '%s/%s' series "
+                        "'%s'; skipping series entry.",
+                        archive_owner,
+                        archive_name,
+                        series_name,
+                    )
+                    continue
                 statuses.append(
                     UCTRecord.SeriesPackageStatus(
                         series=uct_series,
@@ -1046,6 +1030,13 @@ class CVE:
                         ),
                     )
                 )
+
+            # Skip packages that have no statuses, as they will create empty
+            # UCTRecord.Package entries that cannot be exported. If the package
+            # is already in packages_by_name however, then it will just be
+            # a status merging operation and can be allowed to continue.
+            if not statuses and spn.name not in packages_by_name:
+                continue
 
             if spn.name in packages_by_name:
                 existing = packages_by_name[spn.name]
