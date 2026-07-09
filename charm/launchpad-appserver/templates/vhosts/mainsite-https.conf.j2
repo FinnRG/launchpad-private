@@ -83,8 +83,11 @@
     RequestHeader set X-Original-Host "%{LUI_PROXY}e" env=LUI_PROXY
     RequestHeader set Host "{{ lui_host }}" env=LUI_PROXY
 
-    # SvelteKit remote function endpoints (LUI-only; never valid on LC).
-    RewriteRule ^(/_app/remote/[^/]+/[^/]+.*)$ {{ lui_endpoint.rstrip("/") }}$1 [P,L,NE,E=LUI_PROXY:%{HTTP_HOST}]
+    # SvelteKit assets and remote function endpoints, and data endpoints for
+    # client-side navigation (all LUI-only; "__data.json" and "_app" are
+    # never valid path segments on LC, whose names don't allow underscores).
+    RewriteRule ^(/_app/.*)$ {{ lui_endpoint.rstrip("/") }}$1 [P,L,NE,E=LUI_PROXY:%{HTTP_HOST}]
+    RewriteRule ^(.*/__data\.json)$ {{ lui_endpoint.rstrip("/") }}$1 [P,L,NE,E=LUI_PROXY:%{HTTP_HOST}]
 
     # Distribution source package pages:
     #   /{distro}/+source/{src_pkg_name}
