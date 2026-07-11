@@ -46,6 +46,15 @@ options:
     type: string
     description: YAML-encoded list of librarian frontend IP addresses
     default: "[]"
+  logparser_max_parsed_lines:
+    type: int
+    default: 2000000
+    description: >
+      Maximum number of log lines parsed per run by the librarian Apache
+      log parser.  Bounds each run's database transaction so that it commits
+      well within the long-transaction kill timeout, letting a backlog drain
+      incrementally across runs rather than a single unbounded run being
+      killed mid-transaction.
   mirror_prober_active:
     type: boolean
     description: Should the mirror prober be enabled?
