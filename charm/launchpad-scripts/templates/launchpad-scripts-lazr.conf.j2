@@ -19,6 +19,9 @@ xmlrpc_url: http://{{ domain_xmlrpc_private }}:{{ port_xmlrpc }}/bugs
 base_url: {{ commitment_tracker_base_url }}
 timeout: {{ commitment_tracker_timeout }}
 
+[launchpad]
+{{- opt("logparser_max_parsed_lines", logparser_max_parsed_lines) }}
+
 [launchpad_session]
 database: {{ db_session }}
 dbuser: {{ db_session_user }}

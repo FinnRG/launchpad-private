@@ -152,13 +152,13 @@ def parse_file(fd, start_position, logger, get_download_key, parsed_lines=0):
                 daily_downloads[country_code] = 0
             daily_downloads[country_code] += 1
         except Exception as e:
-            # We log an error here but leave the parsed_bytes
-            # unchanged so that in the next run, the remaining
-            # lines in the log file, if any, are parsed without
-            # getting stuck at the same broken line till the log
-            # file in question is rotated out.
+            # A single malformed line must not abort the whole run.  We've
+            # already advanced parsed_bytes past this line, so log it once
+            # and carry on parsing the rest of the file; the broken line is
+            # skipped permanently rather than blocking progress until the
+            # log file is rotated out.
             logger.error('Error (%s) while parsing "%s"' % (e, line_text))
-            break
+            continue
 
     if parsed_lines > 0:
         logger.info(
