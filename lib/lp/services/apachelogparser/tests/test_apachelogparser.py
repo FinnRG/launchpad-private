@@ -296,6 +296,41 @@ class TestLogFileParsing(TestCase):
         self.assertEqual(downloads, {})
         self.assertEqual(parsed_bytes, 9)
 
+    def test_error_on_one_line_does_not_abort_the_rest(self):
+        # A malformed line is logged and skipped, but the remaining lines in
+        # the file are still parsed during the same run, so a single broken
+        # line no longer costs a whole run's worth of progress.
+        line = (
+            '69.233.136.42 - - [13/Jun/2008:14:55:22 +0100] "GET %(path)s '
+            'HTTP/1.1" 200 2261 '
+            '"https://launchpad.net/~ubuntulite/+archive" "Mozilla/5.0 (X11; '
+            'U; Linux i686; en-US; rv:1.9b5) Gecko/2008041514 Firefox/3.0b5"'
+        )
+        fd = io.BytesIO(
+            "\n".join(
+                [
+                    line % dict(path="/1/before.png"),
+                    "Not a log",
+                    line % dict(path="/3/after.png"),
+                    # The last line is always skipped as possibly truncated.
+                    line % dict(path="/4/trailing.png"),
+                ]
+            ).encode("UTF-8")
+        )
+        downloads, parsed_bytes, parsed_lines = parse_file(
+            fd,
+            start_position=0,
+            logger=self.logger,
+            get_download_key=get_path_download_key,
+        )
+        # The malformed second line was reported...
+        self.assertIn('while parsing "Not a log', self.logger.getLogBuffer())
+        # ...but both surrounding valid lines were still counted, proving we
+        # continued past the error rather than breaking out of the file.
+        self.assertContentEqual(
+            ["/1/before.png", "/3/after.png"], downloads.keys()
+        )
+
     def _assertResponseWithGivenStatusIsIgnored(self, status):
         """Assert that responses with the given status are ignored."""
         fd = io.BytesIO(
