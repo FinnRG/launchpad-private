@@ -149,6 +149,7 @@ def configure_process_inbound_email(config):
     "launchpad.db.configured",
     "session-db.master.available",
     "memcache.available",
+    "launchpad.storage.available",
 )
 @when_not("service.configured")
 def configure():

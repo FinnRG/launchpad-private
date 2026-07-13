@@ -59,6 +59,7 @@ def configure_copy_publish_archives_cronjob(config):
 @when(
     "launchpad.db.configured",
     "launchpad.publisher-parts.configured",
+    "launchpad.storage.available",
 )
 @when_not("service.configured")
 def configure():

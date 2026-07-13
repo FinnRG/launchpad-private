@@ -13,3 +13,12 @@ tags:
 series:
   - focal
 subordinate: false
+
+storage:
+  data:
+    type: filesystem
+    location: "/srv/launchpad/mirror"
+    # XXX 2026-07-13 tushar5526: Drop the optional support after the cloud
+    # migration.
+    multiple:
+      range: 0-1

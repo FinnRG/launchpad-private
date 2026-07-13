@@ -19,3 +19,12 @@ requires:
     interface: pgsql
   memcache:
     interface: memcache
+
+storage:
+  data:
+    type: filesystem
+    location: "/srv/launchpad/var/debbugs-mirror"
+    # XXX 2026-07-13 tushar5526: Drop the optional support after the cloud
+    # migration.
+    multiple:
+      range: 0-1
