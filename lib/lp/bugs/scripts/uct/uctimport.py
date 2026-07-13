@@ -243,6 +243,7 @@ class UCTImporter(SVTImporter):
                     cve=lp_cve,
                     check_permissions=False,
                     check_ppa_source_package=False,
+                    include_eol_dist_package=True,
                 )
             )
         )
@@ -313,9 +314,10 @@ class UCTImporter(SVTImporter):
             # before creating the remaining tasks as usual.
             first_package = cve.distro_packages[0]
             ubuntu_fallback_task.transitionToTarget(
-                first_package.target, self.bug_importer
+                first_package.target,
+                self.bug_importer,
+                include_eol_dist_package=True,
             )
-
             # Reset the status to NEW so the task is equivalent to one created
             # from scratch.
             ubuntu_fallback_task.transitionToStatus(BugTaskStatus.NEW)
@@ -500,6 +502,7 @@ class UCTImporter(SVTImporter):
                 targets_to_create,
                 validate_target=False,
                 check_ppa_source_package=False,
+                include_eol_dist_package=True,
             )
 
     def _create_vulnerability(

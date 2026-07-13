@@ -5,12 +5,14 @@
 
 from zope.component import getUtility
 
-from lp.bugs.interfaces.bug import IBugSet
-from lp.bugs.interfaces.bugtask import IBugTaskSet
+from lp.app.interfaces.launchpad import ILaunchpadCelebrities
+from lp.bugs.interfaces.bug import CreateBugParams, IBugSet
+from lp.bugs.interfaces.bugtask import IBugTaskSet, IllegalTarget
 from lp.registry.interfaces.person import IPersonSet
 from lp.registry.interfaces.product import IProductSet
 from lp.services.webapp.interfaces import ILaunchBag
-from lp.testing import TestCase, login
+from lp.soyuz.enums import PackagePublishingStatus
+from lp.testing import TestCase, TestCaseWithFactory, login, person_logged_in
 from lp.testing.layers import DatabaseFunctionalLayer
 
 
@@ -95,3 +97,83 @@ class TestSortingBugTasks(TestCase):
                 "mozilla-firefox (Debian)",
             ],
         )
+
+
+class TestEolDistributionPackage(TestCaseWithFactory):
+    """Tests for bugtask operations that accept EOL distribution packages."""
+
+    layer = DatabaseFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        self.ubuntu = getUtility(ILaunchpadCelebrities).ubuntu
+        series = self.factory.makeDistroSeries(distribution=self.ubuntu)
+        self.eol_pkg = self.factory.makeDistributionSourcePackage(
+            distribution=self.ubuntu
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=series,
+            sourcepackagename=self.eol_pkg.sourcepackagename,
+            archive=self.ubuntu.main_archive,
+            status=PackagePublishingStatus.OBSOLETE,
+        )
+        self.owner = self.factory.makePerson()
+        product = self.factory.makeProduct()
+        with person_logged_in(self.owner):
+            params = CreateBugParams(
+                owner=self.owner,
+                title="Test bug",
+                comment="Test",
+                target=product,
+            )
+            self.bug = getUtility(IBugSet).createBug(params)
+
+    def test_createTask_accepts_eol_package_with_flag(self):
+        # createTask() succeeds for an EOL-only package when
+        # include_eol_dist_package=True is passed.
+        task = getUtility(IBugTaskSet).createTask(
+            self.bug,
+            self.owner,
+            self.eol_pkg,
+            include_eol_dist_package=True,
+        )
+        self.assertEqual(self.eol_pkg, task.target)
+
+    def test_createTask_rejects_eol_package_without_flag(self):
+        # createTask() raises IllegalTarget for an EOL-only package
+        # when include_eol_dist_package is not set.
+        self.assertRaises(
+            IllegalTarget,
+            getUtility(IBugTaskSet).createTask,
+            self.bug,
+            self.owner,
+            self.eol_pkg,
+        )
+
+    def test_transitionToTarget_accepts_eol_package_with_flag(self):
+        # transitionToTarget() accepts an EOL-only package when
+        # include_eol_dist_package=True is passed.
+        ubuntu_task = getUtility(IBugTaskSet).createTask(
+            self.bug, self.owner, self.ubuntu
+        )
+        with person_logged_in(self.owner):
+            ubuntu_task.transitionToTarget(
+                self.eol_pkg,
+                self.owner,
+                include_eol_dist_package=True,
+            )
+        self.assertEqual(self.eol_pkg, ubuntu_task.target)
+
+    def test_transitionToTarget_rejects_eol_package_without_flag(self):
+        # transitionToTarget() raises IllegalTarget for an EOL-only
+        # package when include_eol_dist_package is not set.
+        ubuntu_task = getUtility(IBugTaskSet).createTask(
+            self.bug, self.owner, self.ubuntu
+        )
+        with person_logged_in(self.owner):
+            self.assertRaises(
+                IllegalTarget,
+                ubuntu_task.transitionToTarget,
+                self.eol_pkg,
+                self.owner,
+            )
