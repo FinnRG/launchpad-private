@@ -18,7 +18,7 @@ from zope.security.management import endInteraction, newInteraction
 
 from lp.layers import FeedsLayer, WebServiceLayer, setFirstLayer
 from lp.registry.model.person import Person
-from lp.services.config import config
+from lp.services.config import config, dbconfig
 from lp.services.database.interfaces import (
     ALL_STORES,
     DEFAULT_FLAVOR,
@@ -38,6 +38,8 @@ from lp.services.database.policy import (
     StandbyDatabasePolicy,
     StandbyOnlyDatabasePolicy,
 )
+from lp.services.database.sqlbase import disconnect_stores
+from lp.services.propertycache import get_property_cache
 from lp.services.webapp.interfaces import ISession
 from lp.services.webapp.servers import LaunchpadTestRequest
 from lp.testing import TestCase
@@ -403,7 +405,7 @@ class TestFastDowntimeRollout(TestCase):
             return False
 
     def store_is_standby(self, store):
-        return store.get_database().name == "main-standby"
+        return store.get_database().name.startswith("main-standby")
 
     def store_is_primary(self, store):
         return not self.store_is_standby(store)
@@ -551,3 +553,73 @@ class TestFastDowntimeRollout(TestCase):
         standby_store = IStandbyStore(Person)
         self.assertTrue(self.store_is_standby(standby_store))
         self.assertTrue(self.store_is_working(standby_store))
+
+
+class TestStandbyConnectionName(TestCase):
+    """The specific standby that was chosen is reflected in its name.
+
+    This allows e.g. OOPS reports to distinguish between multiple standbys
+    ("SQL-main-standby-1", "SQL-main-standby-2", ...) rather than reporting
+    "SQL-main-standby" for all of them.
+    """
+
+    layer = DatabaseFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+
+        self.primary_dbname = DatabaseLayer._db_fixture.dbname
+        # In production, standbys are virtual databases defined in pgbouncer
+        # (e.g. "launchpad_prod_standby1 launchpad_prod_standby2"), listed in
+        # rw_main_standby as comma-separated connection strings. Mirror that
+        # here with two aliases that both point at the same working database.
+        self.standby1_dbname = self.primary_dbname + "_standby1"
+        self.standby2_dbname = self.primary_dbname + "_standby2"
+
+        self.pgbouncer_fixture = PGBouncerFixture()
+        self.pgbouncer_fixture.databases[self.standby1_dbname] = (
+            self.pgbouncer_fixture.databases[self.primary_dbname]
+        )
+        self.pgbouncer_fixture.databases[self.standby2_dbname] = (
+            self.pgbouncer_fixture.databases[self.primary_dbname]
+        )
+        self.useFixture(self.pgbouncer_fixture)
+
+        self.standbys = [
+            "dbname=%s host=localhost" % self.standby1_dbname,
+            "dbname=%s host=localhost" % self.standby2_dbname,
+        ]
+        config_key = "multiple-standbys"
+        config.push(
+            config_key,
+            dedent(
+                """\
+            [database]
+            rw_main_primary: dbname=%s host=localhost
+            rw_main_standby: %s
+            """
+                % (self.primary_dbname, ",".join(self.standbys))
+            ),
+        )
+        self.addCleanup(lambda: config.pop(config_key))
+
+        transaction.abort()
+
+    def connect_standby_named(self, chosen):
+        """Connect a standby store, forcing the given DSN to be selected."""
+        # Force the (normally random) standby selection to be deterministic,
+        # and drop existing connections so the new config takes effect.
+        disconnect_stores()
+        get_property_cache(dbconfig).main_standby = chosen
+        store = IStandbyStore(Person)
+        # This triggers the raw_connect(), which seeds the main_standby DSN
+        store.execute("SELECT TRUE")
+        return store
+
+    def test_first_standby_is_numbered_one(self):
+        store = self.connect_standby_named(self.standbys[0])
+        self.assertEqual("main-standby-1", store.get_database().name)
+
+    def test_second_standby_is_numbered_two(self):
+        store = self.connect_standby_named(self.standbys[1])
+        self.assertEqual("main-standby-2", store.get_database().name)

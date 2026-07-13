@@ -482,6 +482,16 @@ class LaunchpadDatabase(Postgres):
             )
             # Make the altered session setting stick.
             raw_connection.commit()
+            # Reflect the specific standby that was chosen in the connection
+            # name, so that e.g. OOPS reports can tell standbys apart. The
+            # standbys are numbered in config order, starting at 1
+            # ("main-standby-1", "main-standby-2", ...).
+            standbys = dbconfig.rw_main_standby.split(",")
+            try:
+                index = standbys.index(connection_string)
+            except ValueError:
+                index = 0
+            self.name = "%s-%d" % (self._uri.database, index + 1)
         elif not config_entry.endswith(("_master", "_primary")):
             raise AssertionError(
                 "DB connection URL %s does not meet naming convention."
