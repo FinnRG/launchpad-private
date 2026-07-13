@@ -180,12 +180,12 @@ class CPPAExporter(SVTExporter):
         if record is None:
             return []
 
-        saved_paths = self._write_record_to_dir(record, output_dir)
+        saved_paths = self.write_record_to_dir(record, output_dir)
         for path in saved_paths:
             logger.info("[CPPAExporter] Bug %s exported to %s", bug_id, path)
         return saved_paths
 
-    def _write_record_to_dir(
+    def write_record_to_dir(
         self, record: CPPARecord, output_dir: Path
     ) -> List[Path]:
         """Split *record* by project and write one file per project subdir.
