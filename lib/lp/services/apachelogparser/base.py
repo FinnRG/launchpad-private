@@ -17,6 +17,15 @@ from lp.services.database.interfaces import IStore
 from lp.services.geoip.interfaces import IGeoIP
 
 parser = apachelog.parser(apachelog.formats["extended"])
+# Launchpad's archive frontends (ppa.launchpad.net, *.launchpadcontent.net,
+# etc.) log in the extended format with four extra trailing fields appended
+# (request times, X-Forwarded-For, and the served virtual host).  The strict
+# extended parser rejects those lines, so fall back to a parser that also
+# accounts for the trailing fields.  Unknown format codes map to "(\\S*)",
+# which is enough to reach the fields we actually read.
+parser_with_vhost = apachelog.parser(
+    apachelog.formats["extended"] + r" %D %T %O %v"
+)
 
 
 def get_files_to_parse(file_paths):
@@ -196,7 +205,11 @@ def get_day(date):
 def get_host_date_status_and_request(line):
     """Extract the host, date, status and request from the given line."""
     # The keys in the 'data' dictionary below are the Apache log format codes.
-    data = parser.parse(line)
+    try:
+        data = parser.parse(line)
+    except apachelog.ApacheLogParserError:
+        # Frontend logs carry extra trailing fields (see parser_with_vhost).
+        data = parser_with_vhost.parse(line)
     return data["%h"], data["%t"], data["%>s"], data["%r"]
 
 

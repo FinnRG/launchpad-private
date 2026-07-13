@@ -101,6 +101,49 @@ class TestLineParsing(TestCase):
             request, "GET /10133748/cramfsswap_1.4.1.tar.gz HTTP/1.0"
         )
 
+    def test_parsing_frontend_line_with_trailing_fields(self):
+        # The archive frontends (ppa.launchpad.net, *.launchpadcontent.net)
+        # log the extended format with extra trailing fields (request times,
+        # X-Forwarded-For, and the served virtual host).  These are parsed by
+        # falling back to a second parser; the fields we care about are still
+        # extracted and the trailing fields are ignored.
+        line = (
+            r"10.0.0.1 80 - [01/Jan/2024:00:00:00 +0000] "
+            r'"GET /exampleowner/exampleppa/ubuntu/dists/jammy/main/'
+            r'binary-i386/Packages.xz HTTP/1.1" 200 2411 "-" '
+            r'"Example-Agent/1.0 (+https://example.com)" '
+            r"126 595 - ppa.launchpadcontent.net"
+        )
+        host, date, status, request = get_host_date_status_and_request(line)
+        self.assertEqual(host, "10.0.0.1")
+        self.assertEqual(date, "[01/Jan/2024:00:00:00 +0000]")
+        self.assertEqual(status, "200")
+        self.assertEqual(
+            request,
+            "GET /exampleowner/exampleppa/ubuntu/dists/jammy/main/"
+            "binary-i386/Packages.xz HTTP/1.1",
+        )
+
+    def test_parsing_frontend_line_with_authenticated_user(self):
+        # Private archive frontend lines have an authenticated user in the
+        # place of the "-" ident field as well as the trailing fields.
+        line = (
+            r"10.0.0.1 80 exampleuser [01/Jan/2024:00:00:00 +0000] "
+            r'"GET /exampleowner/exampleppa/ubuntu/dists/noble/'
+            r'InRelease HTTP/1.1" 200 18103 "-" '
+            r'"Example-Agent/1.0" '
+            r"772977 549 - private-ppa.launchpadcontent.net"
+        )
+        host, date, status, request = get_host_date_status_and_request(line)
+        self.assertEqual(host, "10.0.0.1")
+        self.assertEqual(date, "[01/Jan/2024:00:00:00 +0000]")
+        self.assertEqual(status, "200")
+        self.assertEqual(
+            request,
+            "GET /exampleowner/exampleppa/ubuntu/dists/noble/"
+            "InRelease HTTP/1.1",
+        )
+
     def test_day_extraction(self):
         date = "[13/Jun/2008:18:38:57 +0100]"
         self.assertEqual(get_day(date), datetime(2008, 6, 13))
