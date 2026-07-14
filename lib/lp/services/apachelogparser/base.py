@@ -3,6 +3,7 @@
 
 import gzip
 import os
+import re
 import struct
 from datetime import datetime, timezone
 
@@ -17,14 +18,15 @@ from lp.services.database.interfaces import IStore
 from lp.services.geoip.interfaces import IGeoIP
 
 parser = apachelog.parser(apachelog.formats["extended"])
-# Launchpad's archive frontends (ppa.launchpad.net, *.launchpadcontent.net,
-# etc.) log in the extended format with four extra trailing fields appended
-# (request times, X-Forwarded-For, and the served virtual host).  The strict
-# extended parser rejects those lines, so fall back to a parser that also
-# accounts for the trailing fields.  Unknown format codes map to "(\\S*)",
-# which is enough to reach the fields we actually read.
-parser_with_vhost = apachelog.parser(
-    apachelog.formats["extended"] + r" %D %T %O %v"
+
+# Fallback for archive-frontend logs (ppa.launchpad.net, *.launchpadcontent.net
+# and friends), which append extra fields after those the extended format
+# defines -- request times, X-Forwarded-For, the served virtual host (absent on
+# some malformed requests), and potentially more in future.  We match only the
+# leading fields we actually use (host, date, request, status) and ignore
+# everything past them, so changes to the tail of the line don't break parsing.
+_leading_fields_re = re.compile(
+    r"^(\S*) \S* .+? (\[[^\]]+\]) " r'"([^"\\]*(?:\\.[^"\\]*)*)" ' r"(\S*)"
 )
 
 
@@ -207,10 +209,17 @@ def get_host_date_status_and_request(line):
     # The keys in the 'data' dictionary below are the Apache log format codes.
     try:
         data = parser.parse(line)
+        return data["%h"], data["%t"], data["%>s"], data["%r"]
     except apachelog.ApacheLogParserError:
-        # Frontend logs carry extra trailing fields (see parser_with_vhost).
-        data = parser_with_vhost.parse(line)
-    return data["%h"], data["%t"], data["%>s"], data["%r"]
+        # Archive-frontend lines append extra fields past the ones the extended
+        # format defines; match only the leading fields we use and ignore the
+        # rest.  Re-raise if even those are absent, so genuinely broken lines
+        # are still reported.
+        match = _leading_fields_re.match(line)
+        if match is None:
+            raise
+        host, date, request, status = match.groups()
+        return host, date, status, request
 
 
 def get_method_and_path(request):
