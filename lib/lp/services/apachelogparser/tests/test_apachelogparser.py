@@ -104,9 +104,8 @@ class TestLineParsing(TestCase):
     def test_parsing_frontend_line_with_trailing_fields(self):
         # The archive frontends (ppa.launchpad.net, *.launchpadcontent.net)
         # log the extended format with extra trailing fields (request times,
-        # X-Forwarded-For, and the served virtual host).  These are parsed by
-        # falling back to a second parser; the fields we care about are still
-        # extracted and the trailing fields are ignored.
+        # X-Forwarded-For, and the served virtual host).  We still extract the
+        # fields we care about and ignore everything past them.
         line = (
             r"10.0.0.1 80 - [01/Jan/2024:00:00:00 +0000] "
             r'"GET /exampleowner/exampleppa/ubuntu/dists/jammy/main/'
@@ -142,6 +141,37 @@ class TestLineParsing(TestCase):
             request,
             "GET /exampleowner/exampleppa/ubuntu/dists/noble/"
             "InRelease HTTP/1.1",
+        )
+
+    def test_parsing_frontend_line_with_missing_vhost(self):
+        # Some malformed requests (e.g. a 400 with no Host header) are logged
+        # with the trailing vhost field absent, so the tail is shorter than
+        # usual.  These must still parse.
+        line = (
+            r"10.0.0.1 80 - [01/Jan/2024:00:00:00 +0000] "
+            r'"GET / HTTP/1.1" 400 408 "-" "-" 60 26 -'
+        )
+        host, date, status, request = get_host_date_status_and_request(line)
+        self.assertEqual(host, "10.0.0.1")
+        self.assertEqual(date, "[01/Jan/2024:00:00:00 +0000]")
+        self.assertEqual(status, "400")
+        self.assertEqual(request, "GET / HTTP/1.1")
+
+    def test_parsing_frontend_line_ignores_unknown_trailing_fields(self):
+        # Anything past the fields we use is ignored, so future additions to
+        # the tail of the log format do not break parsing.
+        line = (
+            r"10.0.0.1 80 - [01/Jan/2024:00:00:00 +0000] "
+            r'"GET /exampleowner/exampleppa/pool/main/e/ex/ex.deb HTTP/1.1" '
+            r'200 42 "-" "Example-Agent/1.0" '
+            r"1 2 - ppa.launchpadcontent.net future1 future2"
+        )
+        host, date, status, request = get_host_date_status_and_request(line)
+        self.assertEqual(host, "10.0.0.1")
+        self.assertEqual(status, "200")
+        self.assertEqual(
+            request,
+            "GET /exampleowner/exampleppa/pool/main/e/ex/ex.deb HTTP/1.1",
         )
 
     def test_day_extraction(self):
