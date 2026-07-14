@@ -254,6 +254,7 @@ def snapshot_bug_params(bug_params):
             "metadata",
             "check_permissions",
             "check_ppa_source_package",
+            "include_eol_dist_package",
         ],
     )
 
@@ -3359,6 +3360,7 @@ class BugSet:
             status=params.status,
             metadata=params.metadata,
             check_ppa_source_package=params.check_ppa_source_package,
+            include_eol_dist_package=params.include_eol_dist_package,
         )
 
         if params.subscribe_owner:
