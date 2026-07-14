@@ -225,8 +225,6 @@ class TestPublishDistro(WithScenarios, TestNativePublishingBase):
             shutil.rmtree(tmp_path)
         os.makedirs(tmp_path)
         myargs = ["-R", tmp_path]
-        if archive.purpose == ArchivePurpose.PARTNER:
-            myargs.append("--partner")
         self.runPublishDistro(myargs)
         return tmp_path, pubconf.distsroot
 
@@ -238,23 +236,6 @@ class TestPublishDistro(WithScenarios, TestNativePublishingBase):
         main_archive = getUtility(IDistributionSet)["ubuntutest"].main_archive
         tmp_path, distsroot = self.publishToArchiveWithOverriddenDistsroot(
             main_archive
-        )
-        distroseries = "breezy-autotest"
-        self.assertExists(os.path.join(tmp_path, distroseries, "Release"))
-        self.assertNotExists(
-            os.path.join("%s" % distsroot, distroseries, "Release")
-        )
-        shutil.rmtree(tmp_path)
-
-    def testDistsrootOverridePartnerArchive(self):
-        """Test the -R option to publish-distro.
-
-        Make sure the -R option affects the partner archive.
-        """
-        ubuntu = getUtility(IDistributionSet)["ubuntutest"]
-        partner_archive = ubuntu.getArchiveByComponent("partner")
-        tmp_path, distsroot = self.publishToArchiveWithOverriddenDistsroot(
-            partner_archive
         )
         distroseries = "breezy-autotest"
         self.assertExists(os.path.join(tmp_path, distroseries, "Release"))
@@ -1235,12 +1216,6 @@ class TestPublishDistroMethods(TestCaseWithFactory):
         # counts zero.
         self.assertEqual(0, self.makeScript().countExclusiveOptions())
 
-    def test_countExclusiveOptions_counts_partner(self):
-        # countExclusiveOptions includes the "partner" option.
-        self.assertEqual(
-            1, self.makeScript(args=["--partner"]).countExclusiveOptions()
-        )
-
     def test_countExclusiveOptions_counts_ppa(self):
         # countExclusiveOptions includes the "ppa" option.
         self.assertEqual(
@@ -1268,7 +1243,7 @@ class TestPublishDistroMethods(TestCaseWithFactory):
     def test_countExclusiveOptions_detects_conflict(self):
         # If more than one of the exclusive options has been set, that
         # raises the result from countExclusiveOptions above 1.
-        script = self.makeScript(args=["--ppa", "--partner"])
+        script = self.makeScript(args=["--ppa", "--private-ppa"])
         self.assertEqual(2, script.countExclusiveOptions())
 
     def test_validateOptions_rejects_nonoption_arguments(self):
@@ -1411,22 +1386,15 @@ class TestPublishDistroMethods(TestCaseWithFactory):
         )
 
     def test_findArchives_warns_for_non_ppa_references(self):
-        partner = self.factory.makeArchive(purpose=ArchivePurpose.PARTNER)
         copy = self.factory.makeArchive(purpose=ArchivePurpose.COPY)
         primary = self.factory.makeArchive(purpose=ArchivePurpose.PRIMARY)
         archive_references = [
-            partner.reference,
             copy.reference,
             primary.reference,
         ]
         self.assertContentEqual(
             [],
             self.makeScript().findArchives(archive_references),
-        )
-        self.assertIn(
-            f"WARNING Skipping '{partner.reference}'. Archive reference of "
-            "type 'PARTNER' specified. Only PPAs are allowed",
-            self.logger.getLogBuffer(),
         )
         self.assertIn(
             f"WARNING Skipping '{copy.reference}'. Archive reference of type "
@@ -1523,7 +1491,7 @@ class TestPublishDistroMethods(TestCaseWithFactory):
         # archives.
         distro = self.makeDistro()
         script = self.makeScript(distro)
-        self.factory.makeArchive(distro, purpose=ArchivePurpose.PARTNER)
+        self.factory.makeArchive(distro, purpose=ArchivePurpose.PPA)
         self.assertRaises(
             LaunchpadScriptFailure, script.getCopyArchives, distro
         )
@@ -1592,16 +1560,6 @@ class TestPublishDistroMethods(TestCaseWithFactory):
         # an empty sequence.
         distro = self.makeDistro()
         self.assertContentEqual([], self.makeScript(distro).getPPAs(distro))
-
-    def test_getTargetArchives_gets_partner_archive(self):
-        # If the selected exclusive option is "partner,"
-        # getTargetArchives looks for a partner archive.
-        distro = self.makeDistro()
-        partner = self.factory.makeArchive(
-            distro, purpose=ArchivePurpose.PARTNER
-        )
-        script = self.makeScript(distro, ["--partner"])
-        self.assertContentEqual([partner], script.getTargetArchives(distro))
 
     def test_getTargetArchives_ignores_public_ppas_if_private(self):
         # If the selected exclusive option is "private-ppa,"
@@ -1803,9 +1761,7 @@ class TestPublishDistroMethods(TestCaseWithFactory):
         # If fed an archive that's not a PPA, deleteArchive will do
         # nothing and return False to indicate the fact.
         distro = self.makeDistro()
-        archive = self.factory.makeArchive(
-            distro, purpose=ArchivePurpose.PARTNER
-        )
+        archive = self.factory.makeArchive(distro, purpose=ArchivePurpose.COPY)
         script = self.makeScript(distro)
         deletion_done = script.deleteArchive(archive, None)
         self.assertFalse(deletion_done)
