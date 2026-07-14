@@ -89,15 +89,12 @@
     RewriteRule ^(/_app/.*)$ {{ lui_endpoint.rstrip("/") }}$1 [P,L,NE,E=LUI_PROXY:%{HTTP_HOST}]
     RewriteRule ^(.*/__data\.json)$ {{ lui_endpoint.rstrip("/") }}$1 [P,L,NE,E=LUI_PROXY:%{HTTP_HOST}]
 
-    # Distribution source package pages:
-    #   /{distro}/+source/{src_pkg_name}
-    #   /{distro}/+source/{src_pkg_name}/{version}
-    # Anchored on /+source/ as the second path segment to avoid bare
-    # /{pillar} ambiguity.  +-prefixed sub-pages (e.g. +subscribe) and the
-    # distroseries form (/{distro}/{series}/+source/...) are intentionally
-    # left on Launchpad Classic; distro/distroseries root routing is tracked
-    # as a follow-up.
-    RewriteRule ^(/[^/]+/\+source/[^/]+(?:/[^+/][^/]*)?)/?$ {{ lui_endpoint.rstrip("/") }}$1 [P,L,NE,E=LUI_PROXY:%{HTTP_HOST}]
+    # Distribution source package pages, anchored on /+source with optional
+    # {src_pkg_name} and {version} segments:
+    #   /{distro}/+source[/{src_pkg_name}[/{version}]]
+    # +-prefixed sub-pages (e.g. +subscribe) and the distroseries form
+    # (/{distro}/{series}/+source/...) are left on Launchpad Classic.
+    RewriteRule ^(/[^/]+/\+source(?:/[^/]+(?:/[^+/][^/]*)?)?)/?$ {{ lui_endpoint.rstrip("/") }}$1 [P,L,NE,E=LUI_PROXY:%{HTTP_HOST}]
 {%- endif %}
 
     # Most anonymous requests are cacheable.
