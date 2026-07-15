@@ -5521,6 +5521,81 @@ class TestArtifactoryPublishing(TestPublisherBase):
             binary_path.properties,
         )
 
+    def test_update_properties_skips_unmappable_artifact(self):
+        """A stale artifact doesn't abort the rest of the run.
+
+        If an artifact's launchpad.release-id maps to a release that owns no
+        file resolving to that artifact's path (as happens with duplicate
+        per-architecture source packages whose upload was rejected as a
+        pool-file overwrite), we skip it with a warning rather than aborting
+        the whole run and leaving every later artifact's properties unset.
+        """
+        self.setUpArtifactory(ArchiveRepositoryFormat.DEBIAN)
+        logger = BufferLogger()
+        publisher = Publisher(
+            logger, self.config, self.disk_pool, self.archive
+        )
+        source = self.getPubSource(
+            sourcename="hello",
+            version="1.0",
+            archive=self.archive,
+            architecturehintlist="i386",
+        )
+
+        publisher.A_publish(False)
+        publisher.C_updateArtifactoryProperties(False)
+
+        source_path = self.disk_pool.rootpath / "h" / "hello" / "hello_1.0.dsc"
+        self.assertEqual(
+            ["breezy-autotest"], source_path.properties["deb.distribution"]
+        )
+
+        # Inject a stale artifact carrying a launchpad.release-id pointing at
+        # the published source's release but at a path (hello_0.9.dsc) that
+        # release owns no file for.
+
+        [real_key] = [
+            key
+            for key in self.artifactory._fs
+            if key.endswith("hello_1.0.dsc")
+        ]
+        stale_key = real_key.replace("hello_1.0.dsc", "hello_0.9.dsc")
+        self.artifactory._fs[stale_key] = {
+            "size": "4",
+            "checksums": {"sha1": hashlib.sha1(b"junk").hexdigest()},
+            "body": b"junk",
+            "properties": {
+                "launchpad.release-id": [
+                    "source:%d" % source.sourcepackagerelease_id
+                ],
+                "launchpad.source-name": ["hello"],
+                "launchpad.source-version": ["0.9"],
+            },
+        }
+
+        # Change the real artifact's context so that a successful property
+        # update produces an observable change.
+        source.copyTo(
+            archive=self.archive,
+            distroseries=self.archive.distribution["hoary-test"],
+            pocket=PackagePublishingPocket.RELEASE,
+        )
+
+        publisher.A_publish(False)
+        publisher.C_updateArtifactoryProperties(False)
+
+        # The stale artifact was skipped with a warning, and the real
+        # artifact's properties were still updated.
+        self.assertRegex(
+            logger.getLogBuffer(),
+            r"No publication file for \S+hello_0\.9\.dsc \(source:\d+\); "
+            r"skipping property update\.",
+        )
+        self.assertEqual(
+            ["breezy-autotest", "hoary-test"],
+            source_path.properties["deb.distribution"],
+        )
+
 
 class TestPublisherDirtyPockets(TestPublisherBase):
     """Test the A2_markPocketsWithDeletionsDirty method."""
