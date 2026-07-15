@@ -17,7 +17,10 @@ from lp.services.database.stormbase import StormBase
 from lp.snappy.interfaces.snapbase import ISnapBase
 from lp.soyuz.adapters.archivedependencies import get_components_for_context
 from lp.soyuz.interfaces.archive import IArchive
-from lp.soyuz.interfaces.archivedependency import IArchiveDependency
+from lp.soyuz.interfaces.archivedependency import (
+    IArchiveDependency,
+    validate_pin_priority,
+)
 
 
 @implementer(IArchiveDependency)
@@ -52,12 +55,21 @@ class ArchiveDependency(StormBase):
     component_id = Int(name="component", allow_none=True)
     component = Reference(component_id, "Component.id")
 
-    def __init__(self, parent, dependency, pocket, component=None):
+    pin_priority = pin_priority = Int(
+        name="pin_priority",
+        allow_none=False,
+        validator=validate_pin_priority,
+    )
+
+    def __init__(
+        self, parent, dependency, pocket, component=None, pin_priority=500
+    ):
         super().__init__()
         self.parent = parent
         self.dependency = dependency
         self.pocket = pocket
         self.component = component
+        self.pin_priority = pin_priority
 
     @property
     def parent(self):

@@ -1665,7 +1665,9 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             raise AssertionError("This dependency does not exist.")
         dependency.destroySelf()
 
-    def addArchiveDependency(self, dependency, pocket, component=None):
+    def addArchiveDependency(
+        self, dependency, pocket, component=None, pin_priority=500
+    ):
         """See `IArchive`."""
         if dependency == self:
             raise ArchiveDependencyError(
@@ -1705,21 +1707,33 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                     "Non-primary archives only support the '%s' component."
                     % dependency.default_component.name
                 )
+        if pin_priority < -100 or pin_priority > 2000:
+            raise ArchiveDependencyError("Pin Priority must be in [-100;2000]")
+        if dependency.purpose != ArchivePurpose.PPA and pin_priority != 500:
+            raise ArchiveDependencyError(
+                "Pin priorities are only supported for PPA dependencies."
+            )
+
         return ArchiveDependency(
             parent=self,
             dependency=dependency,
             pocket=pocket,
             component=component,
+            pin_priority=pin_priority,
         )
 
-    def _addArchiveDependency(self, dependency, pocket, component=None):
+    def _addArchiveDependency(
+        self, dependency, pocket, component=None, pin_priority=500
+    ):
         """See `IArchive`."""
         if isinstance(component, str):
             try:
                 component = getUtility(IComponentSet)[component]
             except NotFoundError as e:
                 raise ComponentNotFound(e)
-        return self.addArchiveDependency(dependency, pocket, component)
+        return self.addArchiveDependency(
+            dependency, pocket, component, pin_priority
+        )
 
     def getPermissions(self, user, item, perm_type, distroseries=None):
         """See `IArchive`."""

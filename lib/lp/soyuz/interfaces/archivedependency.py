@@ -3,9 +3,7 @@
 
 """ArchiveDependency interface."""
 
-__all__ = [
-    "IArchiveDependency",
-]
+__all__ = ["IArchiveDependency", "validate_pin_priority"]
 
 from lazr.restful.declarations import exported, exported_as_webservice_entry
 from lazr.restful.fields import Reference
@@ -14,7 +12,8 @@ from zope.schema import Choice, Datetime, Int, TextLine
 
 from lp import _
 from lp.registry.interfaces.pocket import PackagePublishingPocket
-from lp.soyuz.interfaces.archive import IArchive
+from lp.soyuz.enums import ArchivePurpose
+from lp.soyuz.interfaces.archive import ArchiveDependencyError, IArchive
 
 
 @exported_as_webservice_entry(as_of="beta", publish_web_link=False)
@@ -90,3 +89,38 @@ class IArchiveDependency(Interface):
     title = exported(
         TextLine(title=_("Archive dependency title."), readonly=True)
     )
+    title = exported(
+        TextLine(title=_("Archive dependency title."), readonly=True)
+    )
+
+    pin_priority = exported(
+        Int(
+            title=_("Pin priority"),
+            description=_(
+                "The pin priority determining package installation priority."
+            ),
+            required=False,
+            readonly=False,
+            min=-100,
+            max=2000,
+        )
+    )
+
+
+def validate_pin_priority(archive_dependency, attr, value):
+    """Validate an archive dependency pin priority."""
+
+    if not -100 <= value <= 2000:
+        raise ArchiveDependencyError(
+            "Pin priority must be in the range [-100, 2000]."
+        )
+
+    if (
+        value != 500
+        and archive_dependency.dependency.purpose != ArchivePurpose.PPA
+    ):
+        raise ArchiveDependencyError(
+            "Custom pin priorities are only supported for PPA dependencies."
+        )
+
+    return value

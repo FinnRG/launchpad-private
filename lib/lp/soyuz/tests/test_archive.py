@@ -125,6 +125,7 @@ from lp.soyuz.model.archive import (
     CannotSetMetadataOverrides,
     validate_ppa,
 )
+from lp.soyuz.model.archivedependency import ArchiveDependency
 from lp.soyuz.model.archivepermission import (
     ArchivePermission,
     ArchivePermissionSet,
@@ -2304,6 +2305,133 @@ class TestArchiveDependencies(TestCaseWithFactory):
             "external_dependencies",
             "Malformed format string here --> %(series)",
         )
+
+    def test_pin_priority_defaults_to_500(self):
+        archive = self.factory.makeArchive()
+        dependency = self.factory.makeArchive(
+            distribution=archive.distribution,
+            owner=archive.owner,
+            purpose=ArchivePurpose.PPA,
+        )
+
+        archive_dependency = archive.addArchiveDependency(
+            dependency,
+            PackagePublishingPocket.RELEASE,
+        )
+
+        self.assertEqual(500, archive_dependency.pin_priority)
+
+    def test_custom_pin_priority_is_stored(self):
+        archive = self.factory.makeArchive()
+        dependency = self.factory.makeArchive(
+            distribution=archive.distribution,
+            owner=archive.owner,
+            purpose=ArchivePurpose.PPA,
+        )
+
+        archive_dependency = archive.addArchiveDependency(
+            dependency,
+            PackagePublishingPocket.RELEASE,
+            pin_priority=1001,
+        )
+
+        self.assertEqual(1001, archive_dependency.pin_priority)
+
+    def test_out_of_range_pin_priority_is_rejected(self):
+        archive = self.factory.makeArchive()
+        dependency = self.factory.makeArchive(
+            distribution=archive.distribution,
+            owner=archive.owner,
+            purpose=ArchivePurpose.PPA,
+        )
+
+        with ExpectedException(
+            ArchiveDependencyError, r"Pin Priority must be in \[-100;2000\]"
+        ):
+            archive.addArchiveDependency(
+                dependency,
+                PackagePublishingPocket.RELEASE,
+                pin_priority=2001,
+            )
+
+    def test_custom_pin_priority_for_non_ppa_is_rejected(self):
+        archive = self.factory.makeArchive()
+        dependency = self.factory.makeArchive(
+            distribution=archive.distribution,
+            owner=archive.owner,
+            purpose=ArchivePurpose.PRIMARY,
+        )
+
+        with ExpectedException(
+            ArchiveDependencyError,
+            "Pin priorities are only supported for PPA dependencies.",
+        ):
+            archive.addArchiveDependency(
+                dependency,
+                PackagePublishingPocket.RELEASE,
+                pin_priority=1001,
+            )
+
+    def test_duplicate_dependency_with_conflicting_priority_is_rejected(self):
+        archive = self.factory.makeArchive()
+        dependency = self.factory.makeArchive(
+            distribution=archive.distribution,
+            owner=archive.owner,
+            purpose=ArchivePurpose.PPA,
+        )
+        archive.addArchiveDependency(
+            dependency,
+            PackagePublishingPocket.RELEASE,
+            pin_priority=1001,
+        )
+
+        with ExpectedException(
+            ArchiveDependencyError,
+            "This dependency is already registered.",
+        ):
+            archive.addArchiveDependency(
+                dependency,
+                PackagePublishingPocket.RELEASE,
+                pin_priority=500,
+            )
+
+    def test_constructor_rejects_out_of_range_pin_priority(self):
+        archive = self.factory.makeArchive()
+        dependency = self.factory.makeArchive(
+            distribution=archive.distribution,
+            owner=archive.owner,
+            purpose=ArchivePurpose.PPA,
+        )
+
+        with ExpectedException(
+            ArchiveDependencyError,
+            "Pin priority must be in the range \\[-100, 2000\\].",
+        ):
+            ArchiveDependency(
+                parent=archive,
+                dependency=dependency,
+                pocket=PackagePublishingPocket.RELEASE,
+                pin_priority=2001,
+            )
+
+    def test_constructor_rejects_custom_priority_for_non_ppa(self):
+        archive = self.factory.makeArchive()
+        dependency = self.factory.makeArchive(
+            distribution=archive.distribution,
+            owner=archive.owner,
+            purpose=ArchivePurpose.PRIMARY,
+        )
+
+        with ExpectedException(
+            ArchiveDependencyError,
+            "Custom pin priorities are only supported for PPA dependencies.",
+        ):
+            ArchiveDependency(
+                parent=archive,
+                dependency=dependency,
+                pocket=PackagePublishingPocket.RELEASE,
+                pin_priority=1001,
+            )
 
 
 class TestFindDepCandidates(TestCaseWithFactory):

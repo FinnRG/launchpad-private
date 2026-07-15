@@ -2657,7 +2657,9 @@ class IArchiveEdit(IWebhookTarget):
     def disable():
         """Disable the archive."""
 
-    def addArchiveDependency(dependency, pocket, component=None):
+    def addArchiveDependency(
+        dependency, pocket, component=None, pin_priority=500
+    ):
         """Record an archive dependency record for the context archive.
 
         :param dependency: is an `IArchive` object.
@@ -2665,6 +2667,9 @@ class IArchiveEdit(IWebhookTarget):
         :param component: is an optional `IComponent` object, if not given
             the archive dependency will be tied to the component used
             for a corresponding source in primary archive.
+        :param pin_priority: is an optional integer, sets the priority
+             of the dependency. If not given the archive dependency
+             will default to a priority of 500.
 
         :raise: `ArchiveDependencyError` if given 'dependency' does not fit
             the context archive.
@@ -2682,12 +2687,20 @@ class IArchiveEdit(IWebhookTarget):
             required=True,
         ),
         component=TextLine(title=_("Component"), required=False),
+        pin_priority=Int(
+            title=_("Pin priority"),
+            required=False,
+            min=-100,
+            max=2000,
+        ),
     )
     @export_operation_as("addArchiveDependency")
     # Really IArchive, patched in lp.soyuz.interfaces.webservice.
     @export_factory_operation(Interface, [])
     @operation_for_version("devel")
-    def _addArchiveDependency(dependency, pocket, component=None):
+    def _addArchiveDependency(
+        dependency, pocket, component=None, pin_priority=500
+    ):
         """Record an archive dependency record for the context archive.
 
         :param dependency: is an `IArchive` object.
@@ -2695,6 +2708,9 @@ class IArchiveEdit(IWebhookTarget):
         :param component: is the name of a component.  If not given,
             the archive dependency will be tied to the component used
             for a corresponding source in primary archive.
+        :param pin_priority: is an optional integer, sets the priority
+             of the dependency. If not given the archive dependency
+             will default to a priority of 500.
 
         :raise: `ArchiveDependencyError` if given 'dependency' does not fit
             the context archive.
