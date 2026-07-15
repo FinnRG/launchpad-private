@@ -89,9 +89,6 @@ class IArchiveDependency(Interface):
     title = exported(
         TextLine(title=_("Archive dependency title."), readonly=True)
     )
-    title = exported(
-        TextLine(title=_("Archive dependency title."), readonly=True)
-    )
 
     pin_priority = exported(
         Int(
@@ -107,20 +104,17 @@ class IArchiveDependency(Interface):
     )
 
 
-def validate_pin_priority(archive_dependency, attr, value):
-    """Validate an archive dependency pin priority."""
+def validate_pin_priority(dependency, value):
+    """Validate a pin priority for an archive dependency."""
 
     if not -100 <= value <= 2000:
         raise ArchiveDependencyError(
             "Pin priority must be in the range [-100, 2000]."
         )
 
-    if (
-        value != 500
-        and archive_dependency.dependency.purpose != ArchivePurpose.PPA
-    ):
+    if value != 500 and dependency.purpose != ArchivePurpose.PPA:
         raise ArchiveDependencyError(
-            "Custom pin priorities are only supported for PPA dependencies."
+            "Pin priorities are only supported for PPA dependencies."
         )
 
     return value

@@ -170,6 +170,7 @@ from lp.soyuz.interfaces.archive import (
     validate_external_dependencies,
 )
 from lp.soyuz.interfaces.archiveauthtoken import IArchiveAuthTokenSet
+from lp.soyuz.interfaces.archivedependency import validate_pin_priority
 from lp.soyuz.interfaces.archivejob import ICIBuildUploadJobSource
 from lp.soyuz.interfaces.archivepermission import IArchivePermissionSet
 from lp.soyuz.interfaces.archivesubscriber import (
@@ -1707,12 +1708,8 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                     "Non-primary archives only support the '%s' component."
                     % dependency.default_component.name
                 )
-        if pin_priority < -100 or pin_priority > 2000:
-            raise ArchiveDependencyError("Pin Priority must be in [-100;2000]")
-        if dependency.purpose != ArchivePurpose.PPA and pin_priority != 500:
-            raise ArchiveDependencyError(
-                "Pin priorities are only supported for PPA dependencies."
-            )
+
+        validate_pin_priority(dependency, pin_priority)
 
         return ArchiveDependency(
             parent=self,

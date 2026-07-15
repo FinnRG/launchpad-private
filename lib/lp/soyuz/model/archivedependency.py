@@ -23,6 +23,11 @@ from lp.soyuz.interfaces.archivedependency import (
 )
 
 
+def storm_validate_pin_priority(archive_dependency, attr, value):
+    """Storm validator for pin_priority."""
+    return validate_pin_priority(archive_dependency.dependency, value)
+
+
 @implementer(IArchiveDependency)
 class ArchiveDependency(StormBase):
     """See `IArchiveDependency`."""
@@ -55,10 +60,10 @@ class ArchiveDependency(StormBase):
     component_id = Int(name="component", allow_none=True)
     component = Reference(component_id, "Component.id")
 
-    pin_priority = pin_priority = Int(
+    pin_priority = Int(
         name="pin_priority",
         allow_none=False,
-        validator=validate_pin_priority,
+        validator=storm_validate_pin_priority,
     )
 
     def __init__(
