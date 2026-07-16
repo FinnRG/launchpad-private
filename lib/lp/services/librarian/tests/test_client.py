@@ -223,6 +223,105 @@ class TimingOutServer(EchoServer):
         self.socket.close()
 
 
+class RecordingServer(EchoServer):
+    """Fake TCP server that records the bytes sent to it.
+
+    It replies "200" once `expected` payload bytes have arrived, or once the
+    client has gone quiet, so that an upload which lost bytes fails an
+    assertion rather than blocking forever.
+    """
+
+    def __init__(self, expected):
+        super().__init__()
+        self.expected = expected
+        self.received = b""
+
+    def _payload_complete(self):
+        head, sep, payload = self.received.partition(b"\r\n\r\n")
+        return bool(sep) and len(payload) >= self.expected
+
+    def run(self):
+        while not self.should_stop:
+            try:
+                conn, addr = self.socket.accept()
+            except socket.timeout:
+                continue
+            self.connections.append(conn)
+            conn.settimeout(30)
+            while not self._payload_complete():
+                try:
+                    chunk = conn.recv(65536)
+                except socket.timeout:
+                    break
+                if not chunk:
+                    break
+                self.received += chunk
+            try:
+                conn.sendall(b"200\r\n")
+            except OSError:
+                pass
+        for conn in self.connections:
+            conn.close()
+        self.connections = []
+        self.socket.close()
+
+
+class ShortWriteSocket:
+    """Socket wrapper whose send() transmits at most `limit` bytes.
+
+    A blocking send() copies as much as it can and reports that by returning
+    a count, which is smaller than len(data) if a signal arrives once some
+    bytes have already been copied.
+    """
+
+    def __init__(self, sock, limit):
+        self._sock = sock
+        self._limit = limit
+
+    def send(self, data):
+        return self._sock.send(bytes(data[: self._limit]))
+
+    def sendall(self, data):
+        view = memoryview(data)
+        while view:
+            view = view[self.send(view) :]
+
+    def __getattr__(self, name):
+        return getattr(self._sock, name)
+
+
+class ShortWriteFile:
+    """Stand-in for socket.makefile("rwb", 0) over a `ShortWriteSocket`."""
+
+    def __init__(self, sock, real_socket):
+        self._sock = sock
+        self._reader = real_socket.makefile("rwb", 0)
+
+    def write(self, data):
+        return self._sock.send(data)
+
+    def readline(self, *args):
+        return self._reader.readline(*args)
+
+    def flush(self):
+        pass
+
+    def close(self):
+        self._reader.close()
+
+
+class ShortWriteLibrarianClient(LibrarianClient):
+    """Client whose socket accepts at most `send_limit` bytes per send()."""
+
+    send_limit = 1024
+
+    def _connect(self):
+        super()._connect()
+        real_socket = self.state.s
+        self.state.s = ShortWriteSocket(real_socket, self.send_limit)
+        self.state.f = ShortWriteFile(self.state.s, real_socket)
+
+
 class LibrarianClientTestCase(TestCase):
     layer = LaunchpadFunctionalLayer
 
@@ -298,6 +397,37 @@ class LibrarianClientTestCase(TestCase):
             io.BytesIO(b"sample"),
             "text/plain",
         )
+
+    def test_addFile_sends_whole_file_when_sends_are_short(self):
+        # A send() that transmits only part of the buffer must not be
+        # counted as having sent all of it.
+        data = bytes(range(256)) * 800
+
+        server = RecordingServer(len(data))
+        server.start()
+        self.addCleanup(server.join)
+
+        upload_host, upload_port = server.socket.getsockname()
+        self.pushConfig(
+            "librarian", upload_host=upload_host, upload_port=upload_port
+        )
+
+        client = ShortWriteLibrarianClient()
+
+        @with_timeout(timeout=60)
+        def add_file():
+            client.addFile(
+                "sample.bin",
+                len(data),
+                io.BytesIO(data),
+                "application/octet-stream",
+            )
+
+        add_file()
+
+        payload = server.received.partition(b"\r\n\r\n")[2]
+        self.assertEqual(len(data), len(payload))
+        self.assertEqual(data, payload)
 
     def test_addFile_fails_when_server_times_out(self):
         server = TimingOutServer()
