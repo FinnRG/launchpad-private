@@ -2415,6 +2415,78 @@ class TestGitRepositoryRefs(TestCaseWithFactory):
         removeSecurityProxy(ref.repository)._default_branch = ref.path
         self.assertEqual(ref.commit_sha1, ref_HEAD.commit_sha1)
 
+    def test_getCommitChanges(self):
+        # getCommitChanges returns the diff of a commit against its first
+        # parent, reshaping the hosting service's commit list into named
+        # 'commit' and 'parent' fields.
+        commit_info = {"sha1": "2" * 40, "parents": ["1" * 40]}
+        parent_info = {"sha1": "1" * 40, "parents": ["0" * 40]}
+        diff = {
+            "commits": [parent_info, commit_info],
+            "patch": "fake diff",
+        }
+        hosting_fixture = self.useFixture(GitHostingFixture(diff=diff))
+        repository = self.factory.makeGitRepository()
+        result = repository.getCommitChanges("2" * 40)
+        self.assertEqual(
+            {
+                "commit": commit_info,
+                "parent": parent_info,
+                "patch": "fake diff",
+            },
+            result,
+        )
+        self.assertEqual(
+            [
+                (
+                    (repository.getInternalPath(), "2" * 40 + "^", "2" * 40),
+                    {"context_lines": None},
+                )
+            ],
+            hosting_fixture.getDiff.calls,
+        )
+
+    def test_getCommitChanges_abbreviated_sha(self):
+        # The requested commit can be abbreviated; the full SHA-1 returned by
+        # the hosting service is still matched to the 'commit' field.
+        commit_info = {"sha1": "abcdef01" + "0" * 32, "parents": ["1" * 40]}
+        parent_info = {"sha1": "1" * 40, "parents": []}
+        diff = {
+            "commits": [parent_info, commit_info],
+            "patch": "fake diff",
+        }
+        self.useFixture(GitHostingFixture(diff=diff))
+        repository = self.factory.makeGitRepository()
+        result = repository.getCommitChanges("abcdef01")
+        self.assertEqual(commit_info, result["commit"])
+        self.assertEqual(parent_info, result["parent"])
+
+    def test_getCommitChanges_no_parent(self):
+        # If the commit has no parent in the returned range, 'parent' is None.
+        commit_info = {"sha1": "2" * 40, "parents": []}
+        diff = {"commits": [commit_info], "patch": "fake diff"}
+        self.useFixture(GitHostingFixture(diff=diff))
+        repository = self.factory.makeGitRepository()
+        result = repository.getCommitChanges("2" * 40)
+        self.assertEqual(commit_info, result["commit"])
+        self.assertIsNone(result["parent"])
+
+    def test_getCommitChanges_context_lines(self):
+        # getCommitChanges passes context_lines through to the hosting
+        # service.
+        hosting_fixture = self.useFixture(GitHostingFixture(diff={}))
+        repository = self.factory.makeGitRepository()
+        repository.getCommitChanges("1234", context_lines=3)
+        self.assertEqual(
+            [
+                (
+                    (repository.getInternalPath(), "1234^", "1234"),
+                    {"context_lines": 3},
+                )
+            ],
+            hosting_fixture.getDiff.calls,
+        )
+
     def test_planRefChanges(self):
         # planRefChanges copes with planning changes to refs in a repository
         # where some refs have been created, some deleted, and some changed.
@@ -6266,6 +6338,35 @@ class TestGitRepositoryWebservice(TestCaseWithFactory):
             ref = repository_db.getRefByPath("master")
             self.assertEqual(ref_dbs[1], ref)
             self.assertEqual(1, recorder.count)
+
+    def test_getCommitChanges(self):
+        # getCommitChanges returns the diff of a single commit over the
+        # webservice, with named 'commit' and 'parent' fields.
+        commit_info = {"sha1": "2" * 40, "parents": ["1" * 40]}
+        parent_info = {"sha1": "1" * 40, "parents": ["0" * 40]}
+        diff = {
+            "commits": [parent_info, commit_info],
+            "patch": "fake diff",
+        }
+        self.useFixture(GitHostingFixture(diff=diff))
+        repository_db = self.factory.makeGitRepository()
+        repository_url = api_url(repository_db)
+        webservice = webservice_for_person(
+            repository_db.owner, permission=OAuthPermission.READ_PUBLIC
+        )
+        webservice.default_api_version = "devel"
+        response = webservice.named_get(
+            repository_url, "getCommitChanges", commit="2" * 40
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual(
+            {
+                "commit": commit_info,
+                "parent": parent_info,
+                "patch": "fake diff",
+            },
+            response.jsonBody(),
+        )
 
     def test_subscribe(self):
         # A user can subscribe to a repository.
