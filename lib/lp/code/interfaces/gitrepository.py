@@ -466,14 +466,11 @@ class IGitRepositoryView(IHasRecipes, IAccessTokenTarget):
         :param commit: The OID (SHA-1) of the commit.
         :param context_lines: If given, include this number of lines of
             context around each hunk.
-        :return: A dict with three keys:
-            'commit': metadata for the requested commit (formatted as by
-                `getCommits`).
-            'parent': metadata for the commit's first parent, i.e. the base
-                that the diff is taken against (formatted as by
-                `getCommits`), or None if it could not be determined.
-            'patch': the text of the unified diff between the parent and the
-                commit.
+        :return: A dict containing ``commit`` metadata for the requested
+            commit, ``parent`` metadata for its first parent, and ``patch``
+            containing the unified diff.  The commit metadata is formatted
+            as by ``getCommits``, and ``parent`` is None if it could not be
+            determined.
         """
 
     def createOrUpdateRefs(refs_info, get_objects=False, logger=None):
