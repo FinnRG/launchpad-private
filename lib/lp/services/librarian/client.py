@@ -234,7 +234,6 @@ class FileUploadClient:
                 size,
                 bytesWritten,
             )
-            self.state.f.flush()
 
             # Read response
             response = six.ensure_str(
@@ -313,7 +312,6 @@ class FileUploadClient:
                 size,
                 bytesWritten,
             )
-            self.state.f.flush()
 
             # Read response
             response = six.ensure_str(
