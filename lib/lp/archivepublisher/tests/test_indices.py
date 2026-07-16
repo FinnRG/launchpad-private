@@ -706,7 +706,7 @@ class TestIndexStanzaFieldsHelper(unittest.TestCase):
 class TestDirectSourcesIndex(TestNativePublishingBase):
     """Tests for SQL-based direct Sources index generation."""
 
-    def _generate(self, pub_source, overrides=None):
+    def _generate(self, pub_source, overrides=None, allowed_hashes=None):
         """Helper to call generate_sources_index for a given SPPH."""
         store = IStore(SourcePackagePublishingHistory)
         return generate_sources_index(
@@ -716,6 +716,7 @@ class TestDirectSourcesIndex(TestNativePublishingBase):
             pocket=pub_source.pocket.value,
             component_id=pub_source.component_id,
             overrides=overrides,
+            allowed_hashes=allowed_hashes,
         )
 
     def _expected_with_priority(self, pub_source, priority="extra"):
@@ -910,6 +911,53 @@ class TestDirectSourcesIndex(TestNativePublishingBase):
         decoded = content.decode("utf-8")
         self.assertEqual(1, decoded.count("Package:"))
         self.assertIn("Package: %s" % package_name, decoded)
+
+    def _null_sha512(self, spr, filenames=None):
+        """Set sha512 to None on the LibraryFileContent of source files."""
+        switch_dbuser("testadmin")
+        for spf in spr.files:
+            if filenames is None or spf.libraryfile.filename in filenames:
+                lfc = removeSecurityProxy(spf.libraryfile.content)
+                lfc.sha512 = None
+        switch_dbuser("launchpad")
+        self.layer.commit()
+
+    def test_null_sha512_falls_back_to_sha256(self):
+        """A source whose only file lacks sha512 still gets Checksums-Sha256."""
+        pub_source = self.getPubSource(
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        self._null_sha512(pub_source.sourcepackagerelease)
+
+        content = self._generate(pub_source).decode("utf-8")
+        self.assertNotIn("None", content)
+        self.assertNotIn("Checksums-Sha512:", content)
+        self.assertIn("Checksums-Sha256:", content)
+
+    def test_sha256_fallback_when_not_in_allowed_hashes(self):
+        """sha256 is emitted as a fallback even if excluded by allowed_hashes."""
+        pub_source = self.getPubSource(
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        self._null_sha512(pub_source.sourcepackagerelease)
+
+        content = self._generate(pub_source, allowed_hashes=["sha512"]).decode(
+            "utf-8"
+        )
+        self.assertNotIn("Checksums-Sha512:", content)
+        self.assertIn("Checksums-Sha256:", content)
+
+    def test_sha512_only_when_backfilled_and_allowed(self):
+        """With allowed_hashes=["sha512"] and complete sha512, drop sha256."""
+        pub_source = self.getPubSource(
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+
+        content = self._generate(pub_source, allowed_hashes=["sha512"]).decode(
+            "utf-8"
+        )
+        self.assertIn("Checksums-Sha512:", content)
+        self.assertNotIn("Checksums-Sha256:", content)
 
 
 class TestDirectPackagesIndex(TestNativePublishingBase):

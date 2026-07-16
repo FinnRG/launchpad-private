@@ -1494,7 +1494,11 @@ class BugTask(StormBase):
         self.assignee = assignee
 
     def validateTransitionToTarget(
-        self, target, check_source_package=True, check_ppa_source_package=True
+        self,
+        target,
+        check_source_package=True,
+        check_ppa_source_package=True,
+        include_eol_dist_package=False,
     ):
         """See `IBugTask`."""
         from lp.registry.model.distroseries import DistroSeries
@@ -1571,10 +1575,16 @@ class BugTask(StormBase):
             target,
             check_source_package=check_source_package,
             check_ppa_source_package=check_ppa_source_package,
+            include_eol_distribution_package=include_eol_dist_package,
         )
 
     def transitionToTarget(
-        self, target, user, validate=True, _sync_sourcepackages=True
+        self,
+        target,
+        user,
+        validate=True,
+        _sync_sourcepackages=True,
+        include_eol_dist_package=False,
     ):
         """See `IBugTask`.
 
@@ -1591,7 +1601,10 @@ class BugTask(StormBase):
             return
 
         if validate:
-            self.validateTransitionToTarget(target)
+            self.validateTransitionToTarget(
+                target,
+                include_eol_dist_package=include_eol_dist_package,
+            )
 
         target_before_change = self.target
 
@@ -2165,6 +2178,7 @@ class BugTaskSet:
         milestone=None,
         metadata=None,
         check_ppa_source_package=True,
+        include_eol_dist_package=False,
     ):
         """See `IBugTaskSet`."""
         if status is None:
@@ -2180,6 +2194,7 @@ class BugTaskSet:
                     bug,
                     target,
                     check_ppa_source_package=check_ppa_source_package,
+                    include_eol_distribution_package=include_eol_dist_package,
                 )
             bug_target_parents.add(target.bug_target_parent)
             target_keys.append(bug_target_to_key(target))
@@ -2253,6 +2268,7 @@ class BugTaskSet:
         milestone=None,
         metadata=None,
         check_ppa_source_package=True,
+        include_eol_dist_package=False,
     ):
         """See `IBugTaskSet`."""
         # Create tasks for accepted nominations if this is a source
@@ -2313,6 +2329,7 @@ class BugTaskSet:
             milestone=milestone,
             metadata=metadata,
             check_ppa_source_package=check_ppa_source_package,
+            include_eol_dist_package=include_eol_dist_package,
         )
         return [task for task in tasks if task.target == target][0]
 

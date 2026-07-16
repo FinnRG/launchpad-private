@@ -2002,6 +2002,139 @@ class TestUCTImporterExporter(TestCaseWithFactory):
         # The never-published package has no task.
         self.assertNotIn(never_published, bug_task_targets)
 
+    def test_create_bug_eol_only_first_package(self):
+        # When the first (and only) distro package is EOL-only,
+        # create_bug() should still succeed because createBug() is called
+        # with include_eol_dist_package=True.
+        eol_only = self.factory.makeDistributionSourcePackage(
+            distribution=self.ubuntu
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=self.ubuntu_supported_series,
+            sourcepackagename=eol_only.sourcepackagename,
+            archive=self.ubuntu.main_archive,
+            status=PackagePublishingStatus.OBSOLETE,
+        )
+        lp_cve = self.factory.makeCVE(sequence="2022-9999")
+        cve = CVE(
+            sequence="CVE-2022-9999",
+            date_made_public=datetime(2022, 1, 1, tzinfo=timezone.utc),
+            date_notice_issued=None,
+            date_coordinated_release=None,
+            distro_packages=[
+                CVE.DistroPackage(
+                    target=eol_only,
+                    importance=BugTaskImportance.MEDIUM,
+                    package_name=eol_only.sourcepackagename,
+                    tags=set(),
+                ),
+            ],
+            series_packages=[],
+            upstream_packages=[],
+            importance=BugTaskImportance.MEDIUM,
+            status=VulnerabilityStatus.ACTIVE,
+            assignee=None,
+            discovered_by="",
+            description="description",
+            ubuntu_description="",
+            bug_urls=[],
+            references=[],
+            notes="",
+            mitigation="",
+            cvss={},
+            patch_urls=[],
+            break_fix_data=[],
+            global_tags=set(),
+            ppa_packages=[],
+            ppa_series_packages=[],
+        )
+        bug, _ = self.importer.create_bug(cve, lp_cve)
+        bug_task_targets = {t.target for t in bug.bugtasks}
+        self.assertIn(eol_only, bug_task_targets)
+
+    def test_update_bug_transitions_fallback_to_eol_package(self):
+        # update_bug() correctly transitions an Ubuntu fallback task
+        # (created when all distro packages were DNE) to an EOL-only
+        # distro package via transitionToTarget(include_eol_dist_package=True).
+        eol_only = self.factory.makeDistributionSourcePackage(
+            distribution=self.ubuntu
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=self.ubuntu_supported_series,
+            sourcepackagename=eol_only.sourcepackagename,
+            archive=self.ubuntu.main_archive,
+            status=PackagePublishingStatus.OBSOLETE,
+        )
+        lp_cve = self.factory.makeCVE(sequence="2022-8888")
+        # Create a bug with no distro packages (all-DNE), so it gets
+        # the Ubuntu distribution as its initial fallback target.
+        cve_no_distro = CVE(
+            sequence="CVE-2022-8888",
+            date_made_public=datetime(2022, 1, 1, tzinfo=timezone.utc),
+            date_notice_issued=None,
+            date_coordinated_release=None,
+            distro_packages=[],
+            series_packages=[],
+            upstream_packages=[],
+            importance=BugTaskImportance.MEDIUM,
+            status=VulnerabilityStatus.ACTIVE,
+            assignee=None,
+            discovered_by="",
+            description="description",
+            ubuntu_description="",
+            bug_urls=[],
+            references=[],
+            notes="",
+            mitigation="",
+            cvss={},
+            patch_urls=[],
+            break_fix_data=[],
+            global_tags=set(),
+            ppa_packages=[],
+            ppa_series_packages=[],
+        )
+        bug, _ = self.importer.create_bug(cve_no_distro, lp_cve)
+        # The bug was created targeting Ubuntu (plain distribution).
+        self.assertEqual(self.ubuntu, bug.default_bugtask.target)
+        # Now update the CVE with the EOL-only package.
+        cve_with_eol = CVE(
+            sequence="CVE-2022-8888",
+            date_made_public=datetime(2022, 1, 1, tzinfo=timezone.utc),
+            date_notice_issued=None,
+            date_coordinated_release=None,
+            distro_packages=[
+                CVE.DistroPackage(
+                    target=eol_only,
+                    importance=BugTaskImportance.MEDIUM,
+                    package_name=eol_only.sourcepackagename,
+                    tags=set(),
+                ),
+            ],
+            series_packages=[],
+            upstream_packages=[],
+            importance=BugTaskImportance.MEDIUM,
+            status=VulnerabilityStatus.ACTIVE,
+            assignee=None,
+            discovered_by="",
+            description="description",
+            ubuntu_description="",
+            bug_urls=[],
+            references=[],
+            notes="",
+            mitigation="",
+            cvss={},
+            patch_urls=[],
+            break_fix_data=[],
+            global_tags=set(),
+            ppa_packages=[],
+            ppa_series_packages=[],
+        )
+        bug, _ = self.importer.update_bug(bug, cve_with_eol, lp_cve)
+        bug_task_targets = {t.target for t in bug.bugtasks}
+        # The Ubuntu fallback task was retargeted to the EOL package.
+        self.assertIn(eol_only, bug_task_targets)
+        self.assertNotIn(self.ubuntu, bug_task_targets)
+
     def test_update_bug_new_package(self):
         package = self.factory.makeDistributionSourcePackage(
             distribution=self.ubuntu

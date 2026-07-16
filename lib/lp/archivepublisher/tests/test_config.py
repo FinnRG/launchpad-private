@@ -81,50 +81,6 @@ class TestGetPubConfig(TestCaseWithFactory):
         self.assertEqual(root + "/ubuntutest", primary_config.archiveroot)
         self.assertEqual(root + "/ubuntutest-temp", primary_config.temproot)
 
-    def test_partner_config(self):
-        # Partner archive configuration is correct.
-        # The publisher config for PARTNER contains only 'partner' in its
-        # components.  This prevents non-partner being published in the
-        # partner archive.
-        partner_archive = getUtility(IArchiveSet).getByDistroAndName(
-            self.ubuntutest, "partner"
-        )
-        partner_config = getPubConfig(partner_archive)
-        self.root = "/var/tmp/archive"
-        self.assertEqual(self.root, partner_config.distroroot)
-        archiveroot = self.root + "/ubuntutest-partner"
-        self.assertEqual(archiveroot, partner_config.archiveroot)
-        self.assertEqual(archiveroot + "/pool", partner_config.poolroot)
-        self.assertEqual(archiveroot + "/dists", partner_config.distsroot)
-        self.assertIsNone(partner_config.overrideroot)
-        self.assertIsNone(partner_config.cacheroot)
-        self.assertIsNone(partner_config.miscroot)
-        self.assertEqual(
-            self.root + "/ubuntutest-temp", partner_config.temproot
-        )
-        self.assertEqual(archiveroot + "-signing", partner_config.signingroot)
-        self.assertFalse(partner_config.signingautokey)
-        self.assertIs(None, partner_config.metaroot)
-        self.assertEqual(archiveroot + "-staging", partner_config.stagingroot)
-
-    def test_partner_config_relative_root_dir(self):
-        self.pushConfig(
-            "archivepublisher", archives_dir="/srv/launchpad/archives"
-        )
-        getUtility(IPublisherConfigSet).getByDistribution(
-            self.ubuntutest
-        ).root_dir = "relative-ubuntutest"
-        partner_archive = getUtility(IArchiveSet).getByDistroAndName(
-            self.ubuntutest, "partner"
-        )
-        partner_config = getPubConfig(partner_archive)
-        root = "/srv/launchpad/archives/relative-ubuntutest"
-        self.assertEqual(root, partner_config.distroroot)
-        self.assertEqual(
-            root + "/ubuntutest-partner", partner_config.archiveroot
-        )
-        self.assertEqual(root + "/ubuntutest-temp", partner_config.temproot)
-
     def test_copy_config(self):
         # In the case of copy archives (used for rebuild testing) the
         # archiveroot is of the form

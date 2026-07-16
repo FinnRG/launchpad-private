@@ -529,7 +529,12 @@ def generate_sources_index(
         fields.append("Files", format_file_list(files_list))
         if _hash_allowed("sha1", allowed_hashes):
             fields.append("Checksums-Sha1", format_file_list(sha1_list))
-        if _hash_allowed("sha256", allowed_hashes):
+        # XXX: Always emit sha256 if sha512 hasn't been backfilled for every
+        # file, so that apt always has a strong hash to verify each file
+        # against during the SHA-512 backfill transition.
+        if _hash_allowed("sha256", allowed_hashes) or len(sha512_list) != len(
+            raw_files
+        ):
             fields.append("Checksums-Sha256", format_file_list(sha256_list))
         if _hash_allowed("sha512", allowed_hashes) and len(sha512_list) == len(
             raw_files

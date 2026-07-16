@@ -21,7 +21,10 @@ def configure_logrotate(config):
     )
 
 
-@when("launchpad.db.configured")
+@when(
+    "launchpad.db.configured",
+    "launchpad.storage.available",
+)
 @when_not("service.configured")
 def configure():
     config = get_service_config()

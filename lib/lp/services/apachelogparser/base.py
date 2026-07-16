@@ -3,6 +3,7 @@
 
 import gzip
 import os
+import re
 import struct
 from datetime import datetime, timezone
 
@@ -17,6 +18,16 @@ from lp.services.database.interfaces import IStore
 from lp.services.geoip.interfaces import IGeoIP
 
 parser = apachelog.parser(apachelog.formats["extended"])
+
+# Fallback for archive-frontend logs (ppa.launchpad.net, *.launchpadcontent.net
+# and friends), which append extra fields after those the extended format
+# defines -- request times, X-Forwarded-For, the served virtual host (absent on
+# some malformed requests), and potentially more in future.  We match only the
+# leading fields we actually use (host, date, request, status) and ignore
+# everything past them, so changes to the tail of the line don't break parsing.
+_leading_fields_re = re.compile(
+    r"^(\S*) \S* .+? (\[[^\]]+\]) " r'"([^"\\]*(?:\\.[^"\\]*)*)" ' r"(\S*)"
+)
 
 
 def get_files_to_parse(file_paths):
@@ -196,8 +207,19 @@ def get_day(date):
 def get_host_date_status_and_request(line):
     """Extract the host, date, status and request from the given line."""
     # The keys in the 'data' dictionary below are the Apache log format codes.
-    data = parser.parse(line)
-    return data["%h"], data["%t"], data["%>s"], data["%r"]
+    try:
+        data = parser.parse(line)
+        return data["%h"], data["%t"], data["%>s"], data["%r"]
+    except apachelog.ApacheLogParserError:
+        # Archive-frontend lines append extra fields past the ones the extended
+        # format defines; match only the leading fields we use and ignore the
+        # rest.  Re-raise if even those are absent, so genuinely broken lines
+        # are still reported.
+        match = _leading_fields_re.match(line)
+        if match is None:
+            raise
+        host, date, request, status = match.groups()
+        return host, date, status, request
 
 
 def get_method_and_path(request):

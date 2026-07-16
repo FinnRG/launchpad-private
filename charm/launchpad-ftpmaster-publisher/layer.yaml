@@ -1,5 +1,6 @@
 includes:
   - layer:launchpad-db
+  - layer:launchpad-storage
   - layer:launchpad-publisher-parts
   - interface:apache-website
 repo: https://git.launchpad.net/launchpad

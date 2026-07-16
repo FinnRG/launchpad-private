@@ -120,6 +120,7 @@ class CreateBugParams:
         metadata=None,
         check_permissions=True,
         check_ppa_source_package=True,
+        include_eol_dist_package=False,
     ):
         self.owner = owner
         self.title = title
@@ -143,6 +144,7 @@ class CreateBugParams:
         self.metadata = metadata
         self.check_permissions = check_permissions
         self.check_ppa_source_package = check_ppa_source_package
+        self.include_eol_dist_package = include_eol_dist_package
 
 
 class BugNameField(ContentNameField):

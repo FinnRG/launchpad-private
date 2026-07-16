@@ -279,9 +279,6 @@ class TestPublishFTPMasterScript(
         self.factory.makeComponentSelection(
             distroseries=distroseries, component="main"
         )
-        self.factory.makeArchive(
-            distribution=distro, purpose=ArchivePurpose.PARTNER
-        )
         test_publisher.getPubSource()
 
         self.setUpForScriptRun(distro)
@@ -295,9 +292,6 @@ class TestPublishFTPMasterScript(
         pub_config = get_pub_config(distro)
         self.factory.makeComponentSelection(
             distroseries=distroseries, component="main"
-        )
-        self.factory.makeArchive(
-            distribution=distro, purpose=ArchivePurpose.PARTNER
         )
         test_publisher.getPubSource()
 
@@ -602,8 +596,7 @@ class TestPublishFTPMasterScript(
             ContainsDict(
                 {
                     "ARCHIVEROOTS": Equals(
-                        "%(root)s %(root)s-partner"
-                        % {"root": get_archive_root(distro_config)}
+                        "%(root)s" % {"root": get_archive_root(distro_config)}
                     ),
                     "SECURITY_UPLOAD_ONLY": Equals("no"),
                     "SITE_NAME": Equals("launchpad.test"),
@@ -637,9 +630,6 @@ class TestPublishFTPMasterScript(
     def test_publishDistroUploads_publishes_all_distro_archives(self):
         distro = self.makeDistroWithPublishDirectory()
         distroseries = self.factory.makeDistroSeries(distribution=distro)
-        partner_archive = self.factory.makeArchive(
-            distribution=distro, purpose=ArchivePurpose.PARTNER
-        )
         for archive in distro.all_distro_archives:
             self.factory.makeSourcePackagePublishingHistory(
                 distroseries=distroseries, archive=archive
@@ -655,7 +645,6 @@ class TestPublishFTPMasterScript(
 
         self.assertContentEqual(distro.all_distro_archives, published_archives)
         self.assertIn(distro.main_archive, published_archives)
-        self.assertIn(partner_archive, published_archives)
 
     def test_recoverWorkingDists_is_quiet_normally(self):
         script = self.makeScript()
@@ -715,9 +704,6 @@ class TestPublishFTPMasterScript(
 
     def test_publishDistroUploads_processes_all_archives(self):
         distro = self.makeDistroWithPublishDirectory()
-        partner_archive = self.factory.makeArchive(
-            distribution=distro, purpose=ArchivePurpose.PARTNER
-        )
         script = self.makeScript(distro)
         script.publishDistroArchive = FakeMethod()
         script.setUp()
@@ -725,9 +711,7 @@ class TestPublishFTPMasterScript(
         published_archives = [
             args[1] for args, kwargs in script.publishDistroArchive.calls
         ]
-        self.assertContentEqual(
-            [distro.main_archive, partner_archive], published_archives
-        )
+        self.assertContentEqual([distro.main_archive], published_archives)
 
     def test_runFinalizeParts_passes_archiveroots_correctly(self):
         # The ARCHIVEROOTS environment variable may contain spaces, and
@@ -735,9 +719,6 @@ class TestPublishFTPMasterScript(
         # configured archive root contains whitespace, but works with
         # Unix-sensible paths.
         distro = self.makeDistroWithPublishDirectory()
-        self.factory.makeArchive(
-            distribution=distro, purpose=ArchivePurpose.PARTNER
-        )
         script = self.makeScript(distro)
         script.setUp()
         script.setUpDirs()
@@ -770,7 +751,7 @@ class TestPublishFTPMasterScript(
 
         script.runFinalizeParts(distro)
 
-        for archive in [distro.main_archive, distro.getArchive("partner")]:
+        for archive in [distro.main_archive]:
             archive_root = getPubConfig(archive).archiveroot
             self.assertEqual(
                 "This is an archive root.",
@@ -946,38 +927,6 @@ class TestPublishFTPMasterScript(
         )
         script.updateStagedFiles(distro)
         self.assertEqual([distroseries.name], distro.main_archive.dirty_suites)
-
-    def test_updateStagedFiles_considers_partner_archive(self):
-        # updateStagedFiles considers the partner archive as well as the
-        # primary archive.
-        distro = self.makeDistroWithPublishDirectory()
-        self.factory.makeArchive(
-            distribution=distro,
-            owner=distro.owner,
-            purpose=ArchivePurpose.PARTNER,
-        )
-        distroseries = self.factory.makeDistroSeries(
-            distribution=distro, status=SeriesStatus.DEVELOPMENT
-        )
-        script = self.makeScript(distro)
-        script.setUp()
-        script.setUpDirs()
-        script.updateStagedFilesForSuite = FakeMethod()
-        script.updateStagedFiles(distro)
-        expected_args = []
-        for purpose in ArchivePurpose.PRIMARY, ArchivePurpose.PARTNER:
-            expected_args.extend(
-                [
-                    (
-                        script.configs[distro][purpose],
-                        distroseries.getSuite(pocket),
-                    )
-                    for pocket in PackagePublishingPocket.items
-                ]
-            )
-        self.assertEqual(
-            expected_args, script.updateStagedFilesForSuite.extract_args()
-        )
 
     def test_updateStagedFiles_skips_immutable_suites(self):
         # updateStagedFiles does not update files for immutable suites.

@@ -949,7 +949,10 @@ class IBugTask(IHasBug, IBugTaskDelete):
         """
 
     def validateTransitionToTarget(
-        target, check_source_package=True, check_ppa_source_package=True
+        target,
+        check_source_package=True,
+        check_ppa_source_package=True,
+        include_eol_dist_package=False,
     ):
         """Check whether a transition to this target is legal.
 
@@ -1206,6 +1209,7 @@ class IBugTaskSet(Interface):
         milestone=None,
         metadata=None,
         check_ppa_source_package=True,
+        include_eol_dist_package=False,
     ):
         """Create a series of bug tasks and return them."""
 
@@ -1220,6 +1224,7 @@ class IBugTaskSet(Interface):
         milestone=None,
         metadata=None,
         check_ppa_source_package=True,
+        include_eol_dist_package=False,
     ):
         """Create a bug task on a bug and return it.
 

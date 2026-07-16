@@ -15,6 +15,7 @@ from zope.interface import providedBy
 from zope.security.management import checkPermission
 from zope.security.proxy import removeSecurityProxy
 
+from lp.app.interfaces.launchpad import ILaunchpadCelebrities
 from lp.bugs.enums import BugLockStatus, BugNotificationLevel
 from lp.bugs.interfaces.bug import CreateBugParams, IBugSet
 from lp.bugs.interfaces.bugtask import (
@@ -28,6 +29,7 @@ from lp.bugs.interfaces.bugtask import (
 from lp.bugs.model.bug import CannotLockBug, CannotSetLockReason
 from lp.registry.tests.test_person import KarmaTestMixin
 from lp.services.webapp.interfaces import OAuthPermission
+from lp.soyuz.enums import PackagePublishingStatus
 from lp.testing import (
     ANONYMOUS,
     StormStatementRecorder,
@@ -380,6 +382,53 @@ class TestBugCreation(TestCaseWithFactory):
         target = self.factory.makeProduct()
         bug = self.createBug(owner=person, target=target)
         self.assertContentEqual([person], bug.getDirectSubscribers())
+
+    def test_CreateBugParams_include_eol_dist_package_allows_eol_target(
+        self,
+    ):
+        # createBug() accepts a package that is only published with
+        # OBSOLETE status when include_eol_dist_package=True.
+        ubuntu = getUtility(ILaunchpadCelebrities).ubuntu
+        series = self.factory.makeDistroSeries(distribution=ubuntu)
+        eol_pkg = self.factory.makeDistributionSourcePackage(
+            distribution=ubuntu
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=series,
+            sourcepackagename=eol_pkg.sourcepackagename,
+            archive=ubuntu.main_archive,
+            status=PackagePublishingStatus.OBSOLETE,
+        )
+        owner = self.factory.makePerson()
+        bug = self.createBug(
+            owner=owner,
+            target=eol_pkg,
+            include_eol_dist_package=True,
+        )
+        self.assertEqual(eol_pkg, bug.default_bugtask.target)
+
+    def test_CreateBugParams_default_rejects_eol_only_target(self):
+        # createBug() raises IllegalTarget for a package whose only
+        # publication is OBSOLETE when include_eol_dist_package is
+        # not set (defaults to False).
+        ubuntu = getUtility(ILaunchpadCelebrities).ubuntu
+        series = self.factory.makeDistroSeries(distribution=ubuntu)
+        eol_pkg = self.factory.makeDistributionSourcePackage(
+            distribution=ubuntu
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=series,
+            sourcepackagename=eol_pkg.sourcepackagename,
+            archive=ubuntu.main_archive,
+            status=PackagePublishingStatus.OBSOLETE,
+        )
+        owner = self.factory.makePerson()
+        self.assertRaises(
+            IllegalTarget,
+            self.createBug,
+            owner=owner,
+            target=eol_pkg,
+        )
 
 
 class TestBugPermissions(TestCaseWithFactory, KarmaTestMixin):

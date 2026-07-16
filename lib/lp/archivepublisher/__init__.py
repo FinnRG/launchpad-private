@@ -11,5 +11,4 @@ HARDCODED_COMPONENT_ORDER = [
     "restricted",
     "universe",
     "multiverse",
-    "partner",
 ]

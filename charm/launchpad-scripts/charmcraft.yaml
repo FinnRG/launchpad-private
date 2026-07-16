@@ -35,7 +35,7 @@ parts:
     after:
       - ols-layers
     source: https://git.launchpad.net/launchpad-layers
-    source-commit: "46bf7e80bfe20305206ca29f2c934f1b852c580b"
+    source-commit: "237fa26fcd6cfe24bdaf89e411cfc35eb31c0a4f"
     source-submodules: []
     source-type: git
     plugin: dump
@@ -43,6 +43,7 @@ parts:
       launchpad-base: layers/layer/launchpad-base
       launchpad-db: layers/layer/launchpad-db
       launchpad-payload: layers/layer/launchpad-payload
+      launchpad-storage: layers/layer/launchpad-storage
     stage:
       - layers
     prime:
