@@ -421,6 +421,19 @@ class ErrorReportingUtility:
             was_http = report.get("url", "").lower().startswith("http")
             if was_http:
                 req_vars = report.get("req_vars", {})
+                # The Sec-Fetch-Site metadata header is set by the browser
+                # itself and, unlike Referer, cannot be forged from page
+                # content.  "none" (no initiating page: typed URL, bookmark)
+                # and "cross-site" both mean the navigation did not come from
+                # a Launchpad page, so this is not a sign of a broken
+                # url-generator in LP: ignore it.  An absent header
+                # (non-browser clients) falls through to the Referer
+                # heuristic below.
+                sec_fetch_site = (
+                    req_vars.get("HTTP_SEC_FETCH_SITE") or ""
+                ).lower()
+                if sec_fetch_site in ("none", "cross-site"):
+                    return True
                 referer = req_vars.get("HTTP_REFERER")
                 # If there is no referrer then either the user has refer
                 # disabled, or its someone coming from offsite or from some
@@ -428,9 +441,19 @@ class ErrorReportingUtility:
                 # broken-url-generator in LP: ignore it.
                 if referer is None:
                     return True
-                referer_parts = urlparse(referer)
-                root_parts = urlparse(allvhosts.configs["mainsite"].rooturl)
-                if root_parts.netloc not in referer_parts.netloc:
+                referer_netloc = urlparse(referer).netloc
+                root_netloc = urlparse(
+                    allvhosts.configs["mainsite"].rooturl
+                ).netloc
+                # Match the mainsite netloc exactly or as a dotted suffix so
+                # that a lookalike such as "launchpad.net.evil.example" is not
+                # mistaken for an onsite referer (the old substring test would
+                # wrongly accept it).
+                onsite = (
+                    referer_netloc == root_netloc
+                    or referer_netloc.endswith("." + root_netloc)
+                )
+                if not onsite:
                     return True
         return False
 
