@@ -200,7 +200,13 @@ class CveSet:
             sequence = "CVE-" + sequence
         if not valid_vulnerability_id(sequence):
             return None
-        return IStore(Cve).find(Cve, sequence=sequence).one()
+        cve = IStore(Cve).find(Cve, sequence=sequence).one()
+        # TODO: remove once the DB migration to prefixed sequences is complete.
+        # Fall back to the bare YYYY-NNNN form for CVE/CAN records not yet
+        # migrated.
+        if cve is None and sequence.startswith(("CVE-", "CAN-")):
+            cve = IStore(Cve).find(Cve, Cve.sequence == sequence[4:]).one()
+        return cve
 
     def getAll(self):
         """See ICveSet."""
@@ -221,6 +227,15 @@ class CveSet:
         metadata=None,
     ):
         """See ICveSet."""
+        # TODO: remove once the DB migration to prefixed sequences is complete.
+        # Legacy records may still be stored as bare YYYY-NNNN sequences.
+        # If a bare equivalent already exists, return it to avoid a duplicate.
+        if sequence.startswith(("CVE-", "CAN-")):
+            bare = sequence[4:]  # strip the 4-char "CVE-" / "CAN-" prefix
+            existing = IStore(Cve).find(Cve, Cve.sequence == bare).one()
+            if existing is not None:
+                return existing
+
         cve = Cve(
             sequence=sequence,
             status=status,
@@ -351,7 +366,6 @@ class CveSet:
     def inText(self, text):
         """See ICveSet."""
         # let's look for matching entries
-        store = IStore(Cve)
         cves = set()
 
         for match in VULNERABILITY_TEXT_PATTERN.finditer(text):
@@ -361,7 +375,7 @@ class CveSet:
             # not, then create it
             cve = self[sequence]
             if cve is None:
-                cve = Cve(
+                cve = self.new(
                     sequence=sequence,
                     status=CveStatus.DEPRECATED,
                     description="This CVE was automatically created from "
@@ -370,7 +384,6 @@ class CveSet:
                     "erroneous, since this text should be replaced by "
                     "the official CVE description automatically.",
                 )
-                store.add(cve)
             cves.add(cve)
 
         return sorted(cves, key=lambda a: a.sequence)
