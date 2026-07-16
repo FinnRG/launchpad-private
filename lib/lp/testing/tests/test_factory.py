@@ -664,7 +664,7 @@ class TestFactory(TestCaseWithFactory):
 
     def test_makeCVE_uses_sequence(self):
         cve = self.factory.makeCVE(sequence="2000-1234")
-        self.assertEqual("2000-1234", cve.sequence)
+        self.assertEqual("CVE-2000-1234", cve.sequence)
 
     def test_makeCVE_uses_description(self):
         cve = self.factory.makeCVE(sequence="2000-1234", description="foo")

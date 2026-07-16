@@ -85,7 +85,7 @@ class CPPAExporter(SVTExporter):
                 f"Vulnerability {vulnerability.id} has no linked CVE"
             )
 
-        cve_sequence = f"CVE-{vulnerability.cve.sequence}"
+        cve_sequence = vulnerability.cve.sequence
 
         # packages_by_name: package_name to list[SeriesPackageStatus]
         packages_by_name: Dict[str, list] = defaultdict(list)

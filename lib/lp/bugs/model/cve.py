@@ -15,7 +15,12 @@ from zope.component import getUtility
 from zope.interface import implementer
 from zope.security.interfaces import Unauthorized
 
-from lp.app.validators.cve import CVEREF_PATTERN, valid_cve
+from lp.app.validators.cve import (
+    VULNERABILITY_TEXT_PATTERN,
+    VULNERABILITY_URL_PREFIXES,
+    valid_cve,
+    valid_vulnerability_id,
+)
 from lp.bugs.interfaces.buglink import IBugLinkTarget
 from lp.bugs.interfaces.cve import CveStatus, ICve, ICveSet
 from lp.bugs.model.bug import Bug
@@ -90,15 +95,21 @@ class Cve(StormBase, BugLinkTargetMixin):
     @property
     def url(self):
         """See ICve."""
-        return "https://cve.org/CVERecord?id=CVE-%s" % self.sequence
+        for prefix, template in VULNERABILITY_URL_PREFIXES.items():
+            if self.sequence.startswith(prefix):
+                return template.format(seq=self.sequence)
+        # For other advisory schemes there is no known canonical URL.
+        return None
 
     @property
     def displayname(self):
-        return "CVE-%s" % self.sequence
+        # sequence always includes its prefix (e.g. "CVE-2024-1234",
+        # "GHSA-2c6m-6gqh-6qg3", "ABD-...")
+        return self.sequence
 
     @property
     def title(self):
-        return "CVE-%s (%s)" % (self.sequence, self.status.title)
+        return "%s (%s)" % (self.displayname, self.status.title)
 
     @property
     def bugs(self):
@@ -183,9 +194,11 @@ class CveSet:
 
     def __getitem__(self, sequence):
         """See ICveSet."""
-        if sequence[:4] in ["CVE-", "CAN-"]:
-            sequence = sequence[4:]
-        if not valid_cve(sequence):
+        # Normalise bare CVE sequences typed by users (e.g. "1999-1717")
+        # to their full prefixed form for backward compatibility.
+        if valid_cve(sequence):
+            sequence = "CVE-" + sequence
+        if not valid_vulnerability_id(sequence):
             return None
         return IStore(Cve).find(Cve, sequence=sequence).one()
 
@@ -340,9 +353,10 @@ class CveSet:
         # let's look for matching entries
         store = IStore(Cve)
         cves = set()
-        for match in CVEREF_PATTERN.finditer(text):
+
+        for match in VULNERABILITY_TEXT_PATTERN.finditer(text):
             # let's get the core CVE data
-            sequence = match.group(2)
+            sequence = match.group(0)
             # see if there is already a matching CVE ref in the db, and if
             # not, then create it
             cve = self[sequence]

@@ -371,7 +371,7 @@ class UCTExporter(SVTExporter):
         lp_cve = vulnerability.cve
 
         return CVE(
-            sequence=f"CVE-{lp_cve.sequence}",
+            sequence=lp_cve.sequence,
             date_made_public=vulnerability.date_made_public,
             date_notice_issued=vulnerability.date_notice_issued,
             date_coordinated_release=vulnerability.date_coordinated_release,
