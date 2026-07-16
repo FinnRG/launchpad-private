@@ -705,6 +705,85 @@ class TestOopsIgnoring(testtools.TestCase):
         }
         self.assertEqual(None, utility._oops_config.publish(report))
 
+    def test_forged_onsite_referer_with_sec_fetch_none_ignored(self):
+        # Observed in production: a crawler forges a bare-origin onsite
+        # Referer, but the browser-set Sec-Fetch-Site: none reveals the
+        # navigation did not come from a Launchpad page, so the 404 is
+        # ignored.  This is the exact signature behind the bulk of this OOPS
+        # class.
+        utility = ErrorReportingUtility()
+        utility._oops_config.publisher = None
+        report = {
+            "type": "NotFound",
+            "url": "http://example.com",
+            "req_vars": {
+                "HTTP_REFERER": "http://launchpad.test/",
+                "HTTP_SEC_FETCH_SITE": "none",
+            },
+        }
+        self.assertEqual(None, utility._oops_config.publish(report))
+
+    def test_onsite_referer_with_sec_fetch_cross_site_ignored(self):
+        # Sec-Fetch-Site: cross-site likewise means the navigation did not
+        # originate from Launchpad, so an onsite-looking Referer is ignored.
+        utility = ErrorReportingUtility()
+        utility._oops_config.publisher = None
+        report = {
+            "type": "NotFound",
+            "url": "http://example.com",
+            "req_vars": {
+                "HTTP_REFERER": "http://launchpad.test/",
+                "HTTP_SEC_FETCH_SITE": "cross-site",
+            },
+        }
+        self.assertEqual(None, utility._oops_config.publish(report))
+
+    def test_cross_vhost_referer_with_sec_fetch_same_site_not_ignored(self):
+        # A genuine cross-vhost Launchpad link sends Sec-Fetch-Site: same-site
+        # (and, under the default referrer policy, only a bare-origin
+        # Referer).  This is a real broken LP link and produces an OOPS.
+        utility = ErrorReportingUtility()
+        utility._oops_config.publisher = None
+        report = {
+            "type": "NotFound",
+            "url": "http://example.com",
+            "req_vars": {
+                "HTTP_REFERER": "http://bugs.launchpad.test",
+                "HTTP_SEC_FETCH_SITE": "same-site",
+            },
+        }
+        self.assertNotEqual(None, utility._oops_config.publish(report))
+
+    def test_onsite_referer_with_sec_fetch_same_origin_not_ignored(self):
+        # Sec-Fetch-Site: same-origin is a real Launchpad-generated
+        # navigation and produces an OOPS.
+        utility = ErrorReportingUtility()
+        utility._oops_config.publisher = None
+        report = {
+            "type": "NotFound",
+            "url": "http://example.com",
+            "req_vars": {
+                "HTTP_REFERER": "http://launchpad.test/",
+                "HTTP_SEC_FETCH_SITE": "same-origin",
+            },
+        }
+        self.assertNotEqual(None, utility._oops_config.publish(report))
+
+    def test_lookalike_suffix_referer_ignored(self):
+        # The onsite check matches the mainsite netloc exactly or as a dotted
+        # suffix; a lookalike that merely contains it as a substring (e.g.
+        # "launchpad.test.evil.example") is treated as offsite.
+        utility = ErrorReportingUtility()
+        utility._oops_config.publisher = None
+        report = {
+            "type": "NotFound",
+            "url": "http://example.com",
+            "req_vars": {
+                "HTTP_REFERER": "http://launchpad.test.evil.example/",
+            },
+        }
+        self.assertEqual(None, utility._oops_config.publish(report))
+
     def test_ignored_report_filtered(self):
         utility = ErrorReportingUtility()
         utility._oops_config.publisher = None
