@@ -125,7 +125,7 @@ class FileUploadClient:
             raise UploadFailed("Server said early: " + response)
 
     def _sendLine(self, line, check_for_error_responses=True):
-        self.state.f.write(line + b"\r\n")
+        self.state.s.sendall(line + b"\r\n")
         if check_for_error_responses:
             self._checkError()
 
@@ -221,7 +221,7 @@ class FileUploadClient:
             # form of iter (see
             # /usr/share/doc/python/html/library/functions.html#iter).
             for chunk in iter(lambda: file.read(1024 * 64), b""):
-                self.state.f.write(chunk)
+                self.state.s.sendall(chunk)
                 bytesWritten += len(chunk)
                 md5_digester.update(chunk)
                 sha1_digester.update(chunk)
@@ -234,7 +234,6 @@ class FileUploadClient:
                 size,
                 bytesWritten,
             )
-            self.state.f.flush()
 
             # Read response
             response = six.ensure_str(
@@ -304,7 +303,7 @@ class FileUploadClient:
             # form of iter (see
             # /usr/share/doc/python/html/library/functions.html#iter).
             for chunk in iter(lambda: file.read(1024 * 64), b""):
-                self.state.f.write(chunk)
+                self.state.s.sendall(chunk)
                 bytesWritten += len(chunk)
 
             assert (
@@ -313,7 +312,6 @@ class FileUploadClient:
                 size,
                 bytesWritten,
             )
-            self.state.f.flush()
 
             # Read response
             response = six.ensure_str(
