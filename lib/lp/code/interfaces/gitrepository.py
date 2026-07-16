@@ -445,6 +445,37 @@ class IGitRepositoryView(IHasRecipes, IAccessTokenTarget):
         :return: An `IGitRef`, or None.
         """
 
+    @operation_parameters(
+        commit=TextLine(
+            title=_("The commit OID to get changes for."), required=True
+        ),
+        context_lines=Int(
+            title=_("Number of context lines around each hunk."),
+            required=False,
+        ),
+    )
+    @export_read_operation()
+    @operation_for_version("devel")
+    def getCommitChanges(commit, context_lines=None):
+        """Return the changes introduced by a single commit.
+
+        This is equivalent to the view shown by the code browser's commit
+        page: the commit metadata plus the unified diff against its first
+        parent.
+
+        :param commit: The OID (SHA-1) of the commit.
+        :param context_lines: If given, include this number of lines of
+            context around each hunk.
+        :return: A dict with three keys:
+            'commit': metadata for the requested commit (formatted as by
+                `getCommits`).
+            'parent': metadata for the commit's first parent, i.e. the base
+                that the diff is taken against (formatted as by
+                `getCommits`), or None if it could not be determined.
+            'patch': the text of the unified diff between the parent and the
+                commit.
+        """
+
     def createOrUpdateRefs(refs_info, get_objects=False, logger=None):
         """Create or update a set of references in this repository.
 

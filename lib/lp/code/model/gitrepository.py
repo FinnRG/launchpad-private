@@ -62,6 +62,7 @@ from lp.code.errors import (
     CannotDeleteGitRepository,
     CannotModifyNonHostedGitRepository,
     GitDefaultConflict,
+    GitRepositoryScanFault,
     GitTargetError,
     NoSuchGitReference,
 )
@@ -153,6 +154,7 @@ from lp.services.macaroons.interfaces import IMacaroonIssuer
 from lp.services.macaroons.model import MacaroonIssuerBase
 from lp.services.mail.notificationrecipientset import NotificationRecipientSet
 from lp.services.propertycache import cachedproperty, get_property_cache
+from lp.services.timeout import TimeoutError, reduced_timeout
 from lp.services.webapp.authorization import check_permission
 from lp.services.webapp.interfaces import ILaunchBag
 from lp.services.webhooks.interfaces import IWebhookSet
@@ -1605,6 +1607,48 @@ class GitRepository(
         hosting_client = getUtility(IGitHostingClient)
         diff = hosting_client.getDiff(self.getInternalPath(), old, new)
         return diff["patch"]
+
+    def getCommitChanges(self, commit, context_lines=None):
+        """See `IGitRepository`."""
+        hosting_client = getUtility(IGitHostingClient)
+        with reduced_timeout(1.0, webapp_max=5.0):
+            try:
+                diff = hosting_client.getDiff(
+                    self.getInternalPath(),
+                    commit + "^",
+                    commit,
+                    context_lines=context_lines,
+                )
+            except TimeoutError:
+                raise GitRepositoryScanFault(
+                    "Timeout fetching changes for commit %s" % commit
+                )
+        # Turnip returns the commits spanning the compared range
+        # (`commit^..commit`) as an unordered-looking list.  Reshape this
+        # into named fields so that callers don't have to match SHA-1s or
+        # rely on list ordering to tell the requested commit apart from its
+        # parent.
+        diff_commits = diff.get("commits", [])
+        commits_by_sha = {entry["sha1"]: entry for entry in diff_commits}
+        prefix = commit.lower()
+        commit_info = next(
+            (
+                entry
+                for entry in diff_commits
+                if entry["sha1"].lower().startswith(prefix)
+            ),
+            None,
+        )
+        parent_info = None
+        if commit_info is not None:
+            parents = commit_info.get("parents") or []
+            if parents:
+                parent_info = commits_by_sha.get(parents[0])
+        return {
+            "commit": commit_info,
+            "parent": parent_info,
+            "patch": diff.get("patch"),
+        }
 
     @cachedproperty
     def code_import(self):
