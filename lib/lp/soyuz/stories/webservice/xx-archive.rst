@@ -1835,6 +1835,7 @@ attributes.
     component_name: 'universe'
     date_created: ...
     dependency_link: 'http://.../ubuntu/+archive/primary'
+    pin_priority: 500
     pocket: 'Release'
     resource_type_link: 'http://.../#archive_dependency'
     self_link: 'http://.../~cprov/+archive/ubuntu/ppa/+dependency/1'

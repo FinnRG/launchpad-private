@@ -435,7 +435,6 @@ class TestSourcesList(TestCaseWithFactory):
         upper_ppa.addArchiveDependency(
             self.ubuntu.main_archive,
             PackagePublishingPocket.RELEASE,
-            pin_priority=700,
         )
 
         self.assertEqual(
@@ -495,8 +494,8 @@ class TestSourcesList(TestCaseWithFactory):
 
         self.assertEqual(
             [
-                "LP-PPA-test-owner-testing:800",
                 "LP-PPA-test-owner:700",
+                "LP-PPA-test-owner-testing:800",
             ],
             get_pins_for_building(upper_ppa.dependencies),
         )
