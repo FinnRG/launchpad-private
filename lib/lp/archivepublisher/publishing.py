@@ -1239,15 +1239,31 @@ class Publisher:
                     )
 
         root_path = ArtifactoryPath(self._config.archiveroot)
-        for source_name, source_version, _, path, properties in plan:
+        for (
+            source_name,
+            source_version,
+            artifactory_release_id,
+            path,
+            properties,
+        ) in plan:
             full_path = root_path / path
             # For now, any of the possible publication files matching this
             # path should do just as well; it's only used to work out the
             # artifact path.  Just to make sure things are deterministic,
             # use the one with the lowest ID.
-            pub_file = sorted(
-                pub_files_by_path[full_path], key=attrgetter("id")
-            )[0]
+            pub_files = sorted(
+                pub_files_by_path.get(full_path, set()),
+                key=attrgetter("id"),
+            )
+            if not pub_files:
+                self.log.warning(
+                    "No publication file for %s (%s); skipping property "
+                    "update.",
+                    path,
+                    artifactory_release_id,
+                )
+                continue
+            pub_file = pub_files[0]
             # Tell the pool about all the publications that refer to this
             # file, since it may set some properties to describe the union
             # of all of them.
