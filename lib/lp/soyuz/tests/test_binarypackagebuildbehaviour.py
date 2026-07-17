@@ -21,6 +21,7 @@ from zope.security.proxy import removeSecurityProxy
 from lp.archivepublisher.interfaces.archivegpgsigningkey import (
     IArchiveGPGSigningKey,
 )
+from lp.archivepublisher.utils import get_ppa_reference
 from lp.buildmaster.enums import BuilderCleanStatus, BuildStatus
 from lp.buildmaster.interactor import BuilderInteractor, extract_vitals_from_db
 from lp.buildmaster.interfaces.builder import CannotBuild
@@ -177,6 +178,7 @@ class TestBinaryBuildPackageBehaviour(StatsMixin, TestCaseWithFactory):
             "launchpad_instance": "devel",
             "launchpad_server_url": "launchpad.test",
             "ogrecomponent": component,
+            "pins": [],
             "series": ds_name,
             "suite": suite,
             "trusted_keys": trusted_keys,
@@ -589,6 +591,31 @@ class TestBinaryBuildPackageBehaviour(StatsMixin, TestCaseWithFactory):
         ]
         extra_args = yield behaviour.extraBuildArgs()
         self.assertEqual(expected_archives, extra_args["archives"])
+
+    @defer.inlineCallbacks
+    def test_extraBuildArgs_pins(self):
+        archive = self.factory.makeArchive()
+        dependency_ppa = self.factory.makeArchive(name="dependency")
+        builder = self.factory.makeBuilder()
+
+        archive.addArchiveDependency(
+            dependency_ppa,
+            PackagePublishingPocket.RELEASE,
+            pin_priority=700,
+        )
+
+        build = self.factory.makeBinaryPackageBuild(archive=archive)
+        behaviour = IBuildFarmJobBehaviour(build)
+        behaviour.setBuilder(builder, None)
+
+        extra_args = yield behaviour.extraBuildArgs()
+
+        self.assertEqual(
+            [
+                "LP-PPA-%s:700" % get_ppa_reference(dependency_ppa),
+            ],
+            extra_args["pins"],
+        )
 
     @defer.inlineCallbacks
     def test_extraBuildArgs_archives_ppa(self):

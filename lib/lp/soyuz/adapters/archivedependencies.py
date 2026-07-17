@@ -22,6 +22,9 @@ Auxiliary functions exposed for testing purposes:
  * get_sources_list_for_building: return a list of `sources_list` lines
        that should be used to build the given `IBuild`.
 
+*  get_pins_for_building: return an list of
+       ppa-reference/pin_priority key-value pairs.
+
 """
 
 __all__ = [
@@ -30,6 +33,7 @@ __all__ = [
     "expand_dependencies",
     "get_components_for_context",
     "get_primary_current_component",
+    "get_pins_for_building",
     "get_sources_list_for_building",
     "pocket_dependencies",
 ]
@@ -45,6 +49,7 @@ from zope.component import getUtility
 from zope.security.proxy import removeSecurityProxy
 
 from lp.app.errors import NotFoundError
+from lp.archivepublisher.utils import get_ppa_reference
 from lp.registry.interfaces.distroseriesparent import IDistroSeriesParentSet
 from lp.registry.interfaces.pocket import PackagePublishingPocket, pocketsuffix
 from lp.services.gpg.interfaces import GPGKeyNotFoundError, IGPGHandler
@@ -117,6 +122,23 @@ def get_components_for_context(component, distroseries, pocket):
     if not distroseries.strict_supported_component_dependencies:
         component_name = lax_component_map.get(component_name, component_name)
     return component_dependencies[component_name]
+
+
+def get_pins_for_building(archive_dependencies):
+    """Return pin-priority entries for active PPA dependencies."""
+
+    return [
+        "LP-PPA-%s:%d"
+        % (
+            get_ppa_reference(archive_dependency.dependency),
+            archive_dependency.pin_priority,
+        )
+        for archive_dependency in archive_dependencies
+        if (
+            archive_dependency.dependency.enabled
+            and archive_dependency.dependency.purpose == ArchivePurpose.PPA
+        )
+    ]
 
 
 def get_primary_current_component(archive, distroseries, sourcepackagename):

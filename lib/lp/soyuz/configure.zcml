@@ -274,6 +274,9 @@
         class="lp.soyuz.model.archivedependency.ArchiveDependency">
         <allow
             interface="lp.soyuz.interfaces.archivedependency.IArchiveDependency"/>
+            <require
+            permission="launchpad.Edit"
+            set_attributes="pin_priority"/>
     </class>
 
     <!-- PackageDiff -->

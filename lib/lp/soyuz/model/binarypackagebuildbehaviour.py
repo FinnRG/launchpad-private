@@ -25,6 +25,7 @@ from lp.registry.interfaces.pocket import PackagePublishingPocket
 from lp.services.config import config
 from lp.services.twistedsupport import cancel_on_timeout
 from lp.soyuz.adapters.archivedependencies import (
+    get_pins_for_building,
     get_primary_current_component,
     get_sources_list_for_building,
 )
@@ -186,12 +187,18 @@ class BinaryPackageBuildBehaviour(BuildFarmJobBehaviourBase):
             args["archive_purpose"] = archive_purpose.name
             args["ogrecomponent"] = build.current_component.name
 
+        archive_dependencies = list(build.archive.dependencies)
         (
             args["archives"],
             args["trusted_keys"],
         ) = yield get_sources_list_for_building(
-            self, das, build.source_package_release.name, logger=logger
+            self,
+            das,
+            build.source_package_release.name,
+            archive_dependencies=archive_dependencies,
+            logger=logger,
         )
+        args["pins"] = get_pins_for_building(archive_dependencies)
         args["build_debug_symbols"] = build.archive.build_debug_symbols
 
         return args

@@ -25,6 +25,7 @@ from lp.security import (
 from lp.services.database.interfaces import IStore
 from lp.soyuz.interfaces.archive import IArchive, IArchiveSet
 from lp.soyuz.interfaces.archiveauthtoken import IArchiveAuthToken
+from lp.soyuz.interfaces.archivedependency import IArchiveDependency
 from lp.soyuz.interfaces.archivepermission import IArchivePermissionSet
 from lp.soyuz.interfaces.archivesubscriber import (
     IArchiveSubscriber,
@@ -438,6 +439,15 @@ class AdminArchive(AuthorizationBase):
         return user.in_ppa_self_admins and EditArchive(
             self.obj
         ).checkAuthenticated(user)
+
+
+class EditArchiveDependency(DelegatedAuthorization):
+
+    permission = "launchpad.Edit"
+    usedfor = IArchiveDependency
+
+    def __init__(self, obj):
+        super().__init__(obj, obj.parent)
 
 
 class ViewArchiveAuthToken(AuthorizationBase):
