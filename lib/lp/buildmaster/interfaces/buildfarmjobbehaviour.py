@@ -115,6 +115,8 @@ class BuildArgs(TypedDict, total=False):
     ogrecomponent: str
     # A list of sources.list lines for the CI build runner to use [ci].
     package_repositories: List[str]
+    # A list of PPA_Reference-pin_priority key value pairs
+    pins: List[str]
     # A dictionary of plugin settings to pass to the CI build runner
     # [ci].
     plugin_settings: Dict[str, str]

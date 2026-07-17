@@ -170,6 +170,7 @@ from lp.soyuz.interfaces.archive import (
     validate_external_dependencies,
 )
 from lp.soyuz.interfaces.archiveauthtoken import IArchiveAuthTokenSet
+from lp.soyuz.interfaces.archivedependency import validate_pin_priority
 from lp.soyuz.interfaces.archivejob import ICIBuildUploadJobSource
 from lp.soyuz.interfaces.archivepermission import IArchivePermissionSet
 from lp.soyuz.interfaces.archivesubscriber import (
@@ -1665,7 +1666,9 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             raise AssertionError("This dependency does not exist.")
         dependency.destroySelf()
 
-    def addArchiveDependency(self, dependency, pocket, component=None):
+    def addArchiveDependency(
+        self, dependency, pocket, component=None, pin_priority=500
+    ):
         """See `IArchive`."""
         if dependency == self:
             raise ArchiveDependencyError(
@@ -1705,21 +1708,29 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                     "Non-primary archives only support the '%s' component."
                     % dependency.default_component.name
                 )
+
+        validate_pin_priority(dependency, pin_priority)
+
         return ArchiveDependency(
             parent=self,
             dependency=dependency,
             pocket=pocket,
             component=component,
+            pin_priority=pin_priority,
         )
 
-    def _addArchiveDependency(self, dependency, pocket, component=None):
+    def _addArchiveDependency(
+        self, dependency, pocket, component=None, pin_priority=500
+    ):
         """See `IArchive`."""
         if isinstance(component, str):
             try:
                 component = getUtility(IComponentSet)[component]
             except NotFoundError as e:
                 raise ComponentNotFound(e)
-        return self.addArchiveDependency(dependency, pocket, component)
+        return self.addArchiveDependency(
+            dependency, pocket, component, pin_priority
+        )
 
     def getPermissions(self, user, item, perm_type, distroseries=None):
         """See `IArchive`."""

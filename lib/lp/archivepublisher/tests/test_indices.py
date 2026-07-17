@@ -923,7 +923,9 @@ class TestDirectSourcesIndex(TestNativePublishingBase):
         self.layer.commit()
 
     def test_null_sha512_falls_back_to_sha256(self):
-        """A source whose only file lacks sha512 still gets Checksums-Sha256."""
+        """A source whose only file lacks sha512 still gets
+        Checksums-Sha256.
+        """
         pub_source = self.getPubSource(
             status=PackagePublishingStatus.PUBLISHED,
         )
@@ -935,7 +937,9 @@ class TestDirectSourcesIndex(TestNativePublishingBase):
         self.assertIn("Checksums-Sha256:", content)
 
     def test_sha256_fallback_when_not_in_allowed_hashes(self):
-        """sha256 is emitted as a fallback even if excluded by allowed_hashes."""
+        """sha256 is emitted as a fallback even if excluded by
+        allowed_hashes.
+        """
         pub_source = self.getPubSource(
             status=PackagePublishingStatus.PUBLISHED,
         )

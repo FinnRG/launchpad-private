@@ -28,6 +28,7 @@ from lp.soyuz.adapters.archivedependencies import (
     default_component_dependency_name,
     default_pocket_dependency,
     get_components_for_context,
+    get_pins_for_building,
     get_primary_current_component,
     get_sources_list_for_building,
     pocket_dependencies,
@@ -425,6 +426,78 @@ class TestSourcesList(TestCaseWithFactory):
             ],
             [],
             build,
+        )
+
+    def test_get_pins_for_building_ignores_primary_archive(self):
+        # Pins list should only include PPA dependencies
+        upper_ppa = self.factory.makeArchive(distribution=self.ubuntu)
+
+        upper_ppa.addArchiveDependency(
+            self.ubuntu.main_archive,
+            PackagePublishingPocket.RELEASE,
+        )
+
+        self.assertEqual(
+            [],
+            get_pins_for_building(upper_ppa.dependencies),
+        )
+
+    def test_get_pins_for_building_ignores_disabled_ppas(self):
+        # Disabled ppas should be filtered out of the pin list
+        upper_ppa = self.factory.makeArchive(distribution=self.ubuntu)
+        dependency_ppa = self.factory.makeArchive(
+            distribution=self.ubuntu,
+            name="dependency",
+        )
+
+        upper_ppa.addArchiveDependency(
+            dependency_ppa,
+            PackagePublishingPocket.RELEASE,
+            pin_priority=700,
+        )
+        dependency_ppa.disable()
+
+        self.assertEqual(
+            [],
+            get_pins_for_building(upper_ppa.dependencies),
+        )
+
+    def test_get_pins_for_building_uses_ppa_references(self):
+        # Distinguishes between default ppas and named ppas
+        owner = self.factory.makePerson(name="test-owner")
+        upper_ppa = self.factory.makeArchive(
+            distribution=self.ubuntu,
+            owner=owner,
+            name="upper",
+        )
+        default_ppa = self.factory.makeArchive(
+            distribution=self.ubuntu,
+            owner=owner,
+            name="ppa",
+        )
+        named_ppa = self.factory.makeArchive(
+            distribution=self.ubuntu,
+            owner=owner,
+            name="testing",
+        )
+
+        upper_ppa.addArchiveDependency(
+            default_ppa,
+            PackagePublishingPocket.RELEASE,
+            pin_priority=700,
+        )
+        upper_ppa.addArchiveDependency(
+            named_ppa,
+            PackagePublishingPocket.RELEASE,
+            pin_priority=800,
+        )
+
+        self.assertEqual(
+            [
+                "LP-PPA-test-owner:700",
+                "LP-PPA-test-owner-testing:800",
+            ],
+            get_pins_for_building(upper_ppa.dependencies),
         )
 
     @defer.inlineCallbacks
