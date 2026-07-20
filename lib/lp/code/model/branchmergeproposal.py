@@ -7,12 +7,11 @@ __all__ = [
     "BranchMergeProposal",
     "BranchMergeProposalGetter",
     "is_valid_transition",
-    "PROPOSAL_MERGE_ENABLED_FEATURE_FLAG",
 ]
 
 import sys
 from collections import defaultdict
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import make_msgid
 from operator import attrgetter
 
@@ -65,6 +64,7 @@ from lp.code.interfaces.branchmergeproposal import (
     BRANCH_MERGE_PROPOSAL_FINAL_STATES as FINAL_STATES,
 )
 from lp.code.interfaces.branchmergeproposal import (
+    PROPOSAL_MERGE_ENABLED_FEATURE_FLAG,
     IBranchMergeProposal,
     IBranchMergeProposalGetter,
 )
@@ -108,7 +108,12 @@ from lp.services.webapp.errorlog import ScriptRequest
 from lp.services.xref.interfaces import IXRefSet
 from lp.soyuz.enums import re_bug_numbers, re_lp_closes
 
-PROPOSAL_MERGE_ENABLED_FEATURE_FLAG = "merge_proposal.merge.enabled"
+# How long a queued merge request is considered to be in progress.  Turnip
+# performs the merge asynchronously and does not report failures back to
+# Launchpad, so a request that expires without the proposal being confirmed
+# merged is reported as neither pending nor merged (it is never assumed to
+# have succeeded), allowing a new request to be made.
+MERGE_REQUEST_PENDING_WINDOW = timedelta(minutes=15)
 
 
 def is_valid_transition(proposal, from_state, next_state, user=None):
@@ -383,6 +388,20 @@ class BranchMergeProposal(StormBase, BugLinkTargetMixin):
         default=None,
     )
     merge_reporter = Reference(merge_reporter_id, "Person.id")
+
+    merger_id = Int(
+        name="merger",
+        validator=validate_public_person,
+        allow_none=True,
+        default=None,
+    )
+    merger = Reference(merger_id, "Person.id")
+
+    # Reuses the legacy date_merge_started column; records when a merge
+    # was last requested through the merge API.
+    date_merge_requested = DateTime(
+        name="date_merge_started", default=None, tzinfo=timezone.utc
+    )
 
     def __init__(
         self,
@@ -1078,6 +1097,8 @@ class BranchMergeProposal(StormBase, BugLinkTargetMixin):
             )
 
         if response["queued"]:
+            self.merger = person
+            self.date_merge_requested = UTC_NOW
             return "Merge successfully queued"
 
         if not response["already_merged"]:
@@ -1090,6 +1111,26 @@ class BranchMergeProposal(StormBase, BugLinkTargetMixin):
         # Force a rescan in that case.
         self.target_git_repository.rescan()
         return "Proposal already merged, waiting for rescan"
+
+    def getMergeRequestStatus(self):
+        """See `IBranchMergeProposal`."""
+        date_requested = self.date_merge_requested
+        pending = (
+            date_requested is not None
+            and self.queue_status != BranchMergeProposalStatus.MERGED
+            and datetime.now(timezone.utc)
+            < date_requested + MERGE_REQUEST_PENDING_WINDOW
+        )
+        return {
+            "pending": pending,
+            "merged": (self.queue_status == BranchMergeProposalStatus.MERGED),
+            "date_requested": (
+                date_requested.isoformat()
+                if date_requested is not None
+                else None
+            ),
+            "requested_by": self.merger.name if self.merger else None,
+        }
 
     def merge(self, person, commit_message=None, force=False):
         """See `IBranchMergeProposal`.
