@@ -1135,6 +1135,21 @@ class IBranchMergeProposalGetter(Interface):
             the branch, and to LP admins.
         """
 
+    def getProposalsForReviewer(reviewer, status=None, visible_by_user=None):
+        """Return BranchMergeProposals that `reviewer` is reviewing.
+
+        :param reviewer: An `IPerson` who is a reviewer.
+        :param status: An iterable of queue_status of the proposals to return.
+            If None is specified, all the proposals of all possible states
+            are returned.
+        :param visible_by_user: If a person is not supplied, only merge
+            proposals based on public branches are returned.  If a person is
+            supplied, merge proposals based on both public branches, and the
+            private branches that the person is entitled to see are returned.
+            Private branches are only visible to the owner and subscribers of
+            the branch, and to LP admins.
+        """
+
     def getVotesForProposals(proposals):
         """Return a dict containing a mapping of proposals to vote references.
 

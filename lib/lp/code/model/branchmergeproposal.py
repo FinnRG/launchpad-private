@@ -25,6 +25,7 @@ from zope.error.interfaces import IErrorReportingUtility
 from zope.event import notify
 from zope.interface import implementer
 from zope.security.interfaces import Unauthorized
+from zope.security.proxy import removeSecurityProxy
 
 from lp.app.enums import PRIVATE_INFORMATION_TYPES
 from lp.app.errors import NotFoundError
@@ -73,6 +74,7 @@ from lp.code.interfaces.codereviewcomment import ICodeReviewComment
 from lp.code.interfaces.codereviewinlinecomment import (
     ICodeReviewInlineCommentSet,
 )
+from lp.code.interfaces.gitcollection import IAllGitRepositories
 from lp.code.interfaces.githosting import IGitHostingClient
 from lp.code.interfaces.gitref import IGitRef
 from lp.code.mail.branch import RecipientReason
@@ -2047,6 +2049,53 @@ class BranchMergeProposalGetter:
             ),
         )
         return query
+
+    @staticmethod
+    def getProposalsForReviewer(reviewer, status=None, visible_by_user=None):
+        """See `IBranchMergeProposalGetter`."""
+        # Merge proposals for both Bazaar and Git are stored in the same
+        # table, so we combine the per-collection restrictions with OR rather
+        # than UNIONing two result sets.  This lets us preserve the ordering
+        # by CodeReviewComment.vote, which a UNION would drop because that
+        # column is not part of the result set.
+        bzr_collection = removeSecurityProxy(
+            getUtility(IAllBranches).visibleByUser(visible_by_user)
+        )
+        git_collection = removeSecurityProxy(
+            getUtility(IAllGitRepositories).visibleByUser(visible_by_user)
+        )
+        tables = [
+            BranchMergeProposal,
+            Join(
+                CodeReviewVoteReference,
+                CodeReviewVoteReference.branch_merge_proposal
+                == BranchMergeProposal.id,
+            ),
+            LeftJoin(
+                CodeReviewComment,
+                CodeReviewVoteReference.comment == CodeReviewComment.id,
+            ),
+        ]
+        expressions = [
+            CodeReviewVoteReference.reviewer == reviewer,
+            Or(
+                And(
+                    *bzr_collection._getMergeProposalsForReviewerExpressions()
+                ),
+                And(
+                    *git_collection._getMergeProposalsForReviewerExpressions()
+                ),
+            ),
+        ]
+        if status is not None:
+            expressions.append(BranchMergeProposal.queue_status.is_in(status))
+        proposals = (
+            IStore(BranchMergeProposal)
+            .using(*tables)
+            .find(BranchMergeProposal, *expressions)
+        )
+        proposals.order_by(Desc(CodeReviewComment.vote))
+        return proposals
 
     @staticmethod
     def getVotesForProposals(proposals):

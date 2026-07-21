@@ -569,6 +569,22 @@ class GenericBranchCollection:
             )
             return DecoratedResultSet(resultset, pre_iter_hook=loader)
 
+    def _getMergeProposalsForReviewerExpressions(self):
+        """Restrict merge proposals to those reviewable in this collection."""
+        expressions = [
+            BranchMergeProposal.source_branch_id.is_in(
+                self._getBranchSelect()
+            ),
+        ]
+        visibility = self._getBranchVisibilityExpression()
+        if visibility:
+            expressions.append(
+                BranchMergeProposal.target_branch_id.is_in(
+                    Select(Branch.id, visibility)
+                )
+            )
+        return expressions
+
     def getMergeProposalsForReviewer(self, reviewer, status=None):
         """See `IBranchCollection`."""
         tables = [
@@ -586,17 +602,8 @@ class GenericBranchCollection:
 
         expressions = [
             CodeReviewVoteReference.reviewer == reviewer,
-            BranchMergeProposal.source_branch_id.is_in(
-                self._getBranchSelect()
-            ),
         ]
-        visibility = self._getBranchVisibilityExpression()
-        if visibility:
-            expressions.append(
-                BranchMergeProposal.target_branch_id.is_in(
-                    Select(Branch.id, visibility)
-                )
-            )
+        expressions.extend(self._getMergeProposalsForReviewerExpressions())
         if status is not None:
             expressions.append(BranchMergeProposal.queue_status.is_in(status))
         proposals = self.store.using(*tables).find(

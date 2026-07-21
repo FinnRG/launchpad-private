@@ -507,6 +507,22 @@ class GenericGitCollection:
             )
             return DecoratedResultSet(resultset, pre_iter_hook=loader)
 
+    def _getMergeProposalsForReviewerExpressions(self):
+        """Restrict merge proposals to those reviewable in this collection."""
+        expressions = [
+            BranchMergeProposal.source_git_repository_id.is_in(
+                self._getRepositorySelect()
+            ),
+        ]
+        visibility = self._getRepositoryVisibilityExpression()
+        if visibility:
+            expressions.append(
+                BranchMergeProposal.target_git_repository_id.is_in(
+                    Select(GitRepository.id, visibility)
+                )
+            )
+        return expressions
+
     def getMergeProposalsForReviewer(self, reviewer, status=None):
         """See `IGitCollection`."""
         tables = [
@@ -524,17 +540,8 @@ class GenericGitCollection:
 
         expressions = [
             CodeReviewVoteReference.reviewer == reviewer,
-            BranchMergeProposal.source_git_repository_id.is_in(
-                self._getRepositorySelect()
-            ),
         ]
-        visibility = self._getRepositoryVisibilityExpression()
-        if visibility:
-            expressions.append(
-                BranchMergeProposal.target_git_repository_id.is_in(
-                    Select(GitRepository.id, visibility)
-                )
-            )
+        expressions.extend(self._getMergeProposalsForReviewerExpressions())
         if status is not None:
             expressions.append(BranchMergeProposal.queue_status.is_in(status))
         proposals = self.store.using(*tables).find(
