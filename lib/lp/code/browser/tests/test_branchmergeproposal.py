@@ -49,6 +49,8 @@ from lp.code.browser.codereviewcomment import CodeReviewDisplayComment
 from lp.code.browser.gitref import GitRefRegisterMergeProposalView
 from lp.code.enums import (
     BranchMergeProposalStatus,
+    BranchSubscriptionNotificationLevel,
+    CodeReviewNotificationLevel,
     CodeReviewVote,
     RevisionStatusResult,
 )
@@ -550,6 +552,200 @@ class TestBranchMergeProposalVoteView(TestCaseWithFactory):
         )
         # We just test that rendering does not raise.
         view.render()
+
+
+class TestBranchMergeProposalSubscribersView(TestCaseWithFactory):
+    """Tests for the subscribers pagelet on the merge proposal page."""
+
+    layer = DatabaseFunctionalLayer
+
+    def setUp(self):
+        TestCaseWithFactory.setUp(self, user="admin@canonical.com")
+
+    def test_private_subscriber_hidden_from_anonymous(self):
+        # A private team subscribed to a repository is not shown in the
+        # merge proposal subscribers list for anonymous users.
+        private_team = self.factory.makeTeam(
+            visibility=PersonVisibility.PRIVATE,
+            membership_policy=TeamMembershipPolicy.MODERATED,
+        )
+        bmp = self.factory.makeBranchMergeProposalForGit()
+        repository = bmp.source_git_repository
+        with person_logged_in(repository.owner):
+            repository.subscribe(
+                removeSecurityProxy(private_team),
+                BranchSubscriptionNotificationLevel.NOEMAIL,
+                None,
+                CodeReviewNotificationLevel.FULL,
+                repository.owner,
+            )
+        # Anonymous view should not include the private subscriber.
+        view = create_initialized_view(
+            bmp, "+pagelet-subscribers", current_request=True
+        )
+
+        # The source and target repository owners are automatically
+        # subscribed. Their presence here is expected and intentional.
+        self.assertIn(bmp.source_git_repository.owner, view.full_subscribers)
+        self.assertIn(bmp.target_git_repository.owner, view.full_subscribers)
+
+        # Private subscribers should not be visible to anonymous users.
+        self.assertNotIn(private_team, view.full_subscribers)
+        self.assertNotIn(private_team, view.status_subscribers)
+
+        # Only the source and target repository owners.
+        self.assertEqual(len(view.full_subscribers), 2)
+        self.assertEqual(len(view.status_subscribers), 0)
+
+    def test_public_subscriber_visible_to_anonymous(self):
+        # A public subscriber is visible to anonymous users.
+        public_person = self.factory.makePerson(displayname="Public Person")
+        bmp = self.factory.makeBranchMergeProposalForGit()
+        repository = bmp.source_git_repository
+        with person_logged_in(repository.owner):
+            repository.subscribe(
+                removeSecurityProxy(public_person),
+                BranchSubscriptionNotificationLevel.NOEMAIL,
+                None,
+                CodeReviewNotificationLevel.FULL,
+                repository.owner,
+            )
+        # Anonymous view should include the public subscriber.
+        view = create_initialized_view(
+            bmp, "+pagelet-subscribers", current_request=True
+        )
+        self.assertIn(public_person, view.full_subscribers)
+
+    def test_private_subscriber_hidden_from_non_member(self):
+        # A logged-in user who is not a member of the private team
+        # should not see the private team subscriber.
+        private_team = self.factory.makeTeam(
+            visibility=PersonVisibility.PRIVATE,
+            membership_policy=TeamMembershipPolicy.MODERATED,
+        )
+        bmp = self.factory.makeBranchMergeProposalForGit()
+        repository = bmp.source_git_repository
+        with person_logged_in(repository.owner):
+            repository.subscribe(
+                removeSecurityProxy(private_team),
+                BranchSubscriptionNotificationLevel.NOEMAIL,
+                None,
+                CodeReviewNotificationLevel.FULL,
+                repository.owner,
+            )
+        other_user = self.factory.makePerson()
+        login_person(other_user)
+        view = create_initialized_view(bmp, "+pagelet-subscribers")
+        self.assertNotIn(private_team, view.full_subscribers)
+
+    def test_private_subscriber_visible_to_member(self):
+        # A member of the private team can see the team in the
+        # subscribers list when logged in.
+        private_team = self.factory.makeTeam(
+            visibility=PersonVisibility.PRIVATE,
+            membership_policy=TeamMembershipPolicy.MODERATED,
+        )
+        bmp = self.factory.makeBranchMergeProposalForGit()
+        repository = bmp.source_git_repository
+        with person_logged_in(repository.owner):
+            repository.subscribe(
+                removeSecurityProxy(private_team),
+                BranchSubscriptionNotificationLevel.NOEMAIL,
+                None,
+                CodeReviewNotificationLevel.FULL,
+                repository.owner,
+            )
+        login_person(private_team.teamowner)
+        view = create_initialized_view(bmp, "+pagelet-subscribers")
+        self.assertIn(private_team, view.full_subscribers)
+
+    def test_mixed_subscribers_only_visible_shown_to_anonymous(self):
+        # With a mix of public and private subscribers, only public ones
+        # are visible to anonymous users.
+        private_team = self.factory.makeTeam(
+            visibility=PersonVisibility.PRIVATE,
+            membership_policy=TeamMembershipPolicy.MODERATED,
+        )
+        public_person = self.factory.makePerson(displayname="Public Person")
+        bmp = self.factory.makeBranchMergeProposalForGit()
+        repository = bmp.source_git_repository
+        with person_logged_in(repository.owner):
+            repository.subscribe(
+                removeSecurityProxy(private_team),
+                BranchSubscriptionNotificationLevel.NOEMAIL,
+                None,
+                CodeReviewNotificationLevel.FULL,
+                repository.owner,
+            )
+            repository.subscribe(
+                removeSecurityProxy(public_person),
+                BranchSubscriptionNotificationLevel.NOEMAIL,
+                None,
+                CodeReviewNotificationLevel.FULL,
+                repository.owner,
+            )
+        # Anonymous view should include the public subscriber but not the
+        # private team. The source and target repository owners are also
+        # present as auto-subscribers.
+        view = create_initialized_view(
+            bmp, "+pagelet-subscribers", current_request=True
+        )
+        self.assertIn(public_person, view.full_subscribers)
+        self.assertIn(bmp.source_git_repository.owner, view.full_subscribers)
+        self.assertIn(bmp.target_git_repository.owner, view.full_subscribers)
+        self.assertNotIn(private_team, view.full_subscribers)
+
+        self.assertEqual(len(view.full_subscribers), 3)
+        self.assertEqual(len(view.status_subscribers), 0)
+
+    def test_logged_in_user_sees_own_team_not_other_private_team(self):
+        # A logged-in user sees a private team they belong to, does not see
+        # a private team they are not a member of, and sees public subscribers.
+        # regardless of the type of subscription being "full" or "status".
+        their_team = self.factory.makeTeam(
+            visibility=PersonVisibility.PRIVATE,
+            membership_policy=TeamMembershipPolicy.MODERATED,
+        )
+        other_private_team = self.factory.makeTeam(
+            visibility=PersonVisibility.PRIVATE,
+            membership_policy=TeamMembershipPolicy.MODERATED,
+        )
+        public_person = self.factory.makePerson(displayname="Public Person")
+        bmp = self.factory.makeBranchMergeProposalForGit()
+        repository = bmp.source_git_repository
+        with person_logged_in(repository.owner):
+            repository.subscribe(
+                removeSecurityProxy(their_team),
+                BranchSubscriptionNotificationLevel.NOEMAIL,
+                None,
+                CodeReviewNotificationLevel.FULL,
+                repository.owner,
+            )
+            repository.subscribe(
+                removeSecurityProxy(other_private_team),
+                BranchSubscriptionNotificationLevel.NOEMAIL,
+                None,
+                CodeReviewNotificationLevel.FULL,
+                repository.owner,
+            )
+            repository.subscribe(
+                removeSecurityProxy(public_person),
+                BranchSubscriptionNotificationLevel.NOEMAIL,
+                None,
+                CodeReviewNotificationLevel.STATUS,
+                repository.owner,
+            )
+        login_person(their_team.teamowner)
+        view = create_initialized_view(bmp, "+pagelet-subscribers")
+        self.assertIn(their_team, view.full_subscribers)
+        self.assertNotIn(other_private_team, view.full_subscribers)
+        self.assertIn(public_person, view.status_subscribers)
+
+        # their_team + 2 repo owners
+        self.assertEqual(len(view.full_subscribers), 3)
+
+        # Only the public_person
+        self.assertEqual(len(view.status_subscribers), 1)
 
 
 class TestRegisterBranchMergeProposalViewMixin:
