@@ -67,6 +67,7 @@ Branch merge proposals can be created through the API.
         'http://api.launchpad.test/devel/~.../+merge/.../bugs'
     commit_message: 'It was merged!\n'
     date_created: '...'
+    date_merge_requested: None
     date_merged: None
     date_review_requested: '...'
     date_reviewed: None
@@ -74,6 +75,7 @@ Branch merge proposals can be created through the API.
     merge_reporter_link: None
     merged_revision_id: None
     merged_revno: None
+    merger_link: None
     prerequisite_branch_link: 'http://api.launchpad.test/devel/~...'
     prerequisite_git_path: None
     prerequisite_git_repository_link: None
@@ -189,6 +191,7 @@ We use the webservice as an unrelated, unprivileged user.
     bugs_collection_link: 'http://.../~source/fooix/fix-it/+merge/.../bugs'
     commit_message: None
     date_created: ...
+    date_merge_requested: None
     date_merged: None
     date_review_requested: None
     date_reviewed: None
@@ -196,6 +199,7 @@ We use the webservice as an unrelated, unprivileged user.
     merge_reporter_link: None
     merged_revision_id: None
     merged_revno: None
+    merger_link: None
     prerequisite_branch_link: None
     prerequisite_git_path: None
     prerequisite_git_repository_link: None
