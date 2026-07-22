@@ -99,7 +99,10 @@ from lp.services.webapp import (
     enabled_with_permission,
     stepthrough,
 )
-from lp.services.webapp.authorization import check_permission
+from lp.services.webapp.authorization import (
+    check_permission,
+    precache_permission_for_objects,
+)
 from lp.services.webapp.breadcrumb import Breadcrumb
 from lp.services.webapp.escaping import structured
 from lp.services.webapp.interfaces import ILaunchBag
@@ -1385,6 +1388,22 @@ class BranchMergeProposalSubscribersView(LaunchpadView):
         self._status_subscribers = (
             self._status_subscribers - self._full_subscribers
         )
+        # Cache permissions so private subscribers can be filtered out
+        # without running expensive SQL queries for each one.
+        all_subscribers = self._full_subscribers | self._status_subscribers
+        if all_subscribers:
+            person_ids = [person.id for person in all_subscribers]
+            list(
+                getUtility(IPersonSet).getPrecachedPersonsFromIDs(
+                    person_ids, need_validity=True
+                )
+            )
+            if self.user is not None:
+                precache_permission_for_objects(
+                    self.request,
+                    "launchpad.LimitedView",
+                    list(all_subscribers),
+                )
 
     def _add_subscribers_for_branch(self, branch):
         """Add the subscribers to the subscription sets for the branch."""
@@ -1399,18 +1418,28 @@ class BranchMergeProposalSubscribersView(LaunchpadView):
                 # don't want to see anything.
                 pass
 
+    def _visible_subscribers(self, subscribers):
+        """Filter subscribers to only those visible to the current user."""
+        return [
+            person
+            for person in subscribers
+            if check_permission("launchpad.LimitedView", person)
+        ]
+
     @cachedproperty
     def full_subscribers(self):
         """A list of full subscribers ordered by displayname."""
         return sorted(
-            self._full_subscribers, key=operator.attrgetter("displayname")
+            self._visible_subscribers(self._full_subscribers),
+            key=operator.attrgetter("displayname"),
         )
 
     @cachedproperty
     def status_subscribers(self):
-        """A list of full subscribers ordered by displayname."""
+        """A list of status subscribers ordered by displayname."""
         return sorted(
-            self._status_subscribers, key=operator.attrgetter("displayname")
+            self._visible_subscribers(self._status_subscribers),
+            key=operator.attrgetter("displayname"),
         )
 
     @property
