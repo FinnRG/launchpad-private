@@ -59,12 +59,12 @@ from lp.code.interfaces.branchmergeproposal import (
     BRANCH_MERGE_PROPOSAL_OBSOLETE_STATES as OBSOLETE_STATES,
 )
 from lp.code.interfaces.branchmergeproposal import (
+    PROPOSAL_MERGE_ENABLED_FEATURE_FLAG,
     IBranchMergeProposal,
     IBranchMergeProposalGetter,
     IBranchMergeProposalJobSource,
 )
 from lp.code.model.branchmergeproposal import (
-    PROPOSAL_MERGE_ENABLED_FEATURE_FLAG,
     BranchMergeProposal,
     BranchMergeProposalGetter,
     is_valid_transition,
@@ -4417,6 +4417,18 @@ class TestBranchMergeProposalRequestMerge(TestCaseWithFactory):
             rule=rule, grantee=self.person, can_create=True, can_push=True
         )
 
+    def _requestMerge(self):
+        self.proposal.createComment(
+            owner=self.reviewer,
+            vote=CodeReviewVote.APPROVE,
+        )
+        self.proposal.next_preview_diff_job.start()
+        self.proposal.next_preview_diff_job.complete()
+        with person_logged_in(self.person):
+            result = self.proposal.requestMerge(self.person)
+        Store.of(self.proposal).flush()
+        return result
+
     def test_requestMerge_feature_flag(self):
         self.useFixture(
             FeatureFixture({PROPOSAL_MERGE_ENABLED_FEATURE_FLAG: ""})
@@ -4426,6 +4438,69 @@ class TestBranchMergeProposalRequestMerge(TestCaseWithFactory):
             self.proposal.requestMerge,
             self.person,
         )
+
+    def test_getMergeRequestStatus_no_request(self):
+        self.assertEqual(
+            {
+                "pending": False,
+                "merged": False,
+                "date_requested": None,
+                "requested_by": None,
+            },
+            self.proposal.getMergeRequestStatus(),
+        )
+
+    def test_requestMerge_records_pending_request(self):
+        self.assertEqual("Merge successfully queued", self._requestMerge())
+
+        status = self.proposal.getMergeRequestStatus()
+        self.assertTrue(status["pending"])
+        self.assertFalse(status["merged"])
+        self.assertIsNotNone(status["date_requested"])
+        self.assertEqual(self.person.name, status["requested_by"])
+        self.assertEqual(self.person, self.proposal.merger)
+        self.assertIsNotNone(self.proposal.date_merge_requested)
+
+    def test_getMergeRequestStatus_exported(self):
+        self._requestMerge()
+        person_name = self.person.name
+        webservice = webservice_for_person(
+            self.person, permission=OAuthPermission.WRITE_PUBLIC
+        )
+        with person_logged_in(self.person):
+            proposal_url = api_url(self.proposal)
+
+        response = webservice.named_get(
+            proposal_url,
+            "getMergeRequestStatus",
+            api_version="devel",
+        )
+
+        self.assertEqual(200, response.status)
+        status = response.jsonBody()
+        self.assertTrue(status["pending"])
+        self.assertFalse(status["merged"])
+        self.assertIsNotNone(status["date_requested"])
+        self.assertEqual(person_name, status["requested_by"])
+
+    def test_getMergeRequestStatus_expired(self):
+        self._requestMerge()
+        self.proposal.date_merge_requested = datetime.now(
+            timezone.utc
+        ) - timedelta(minutes=16)
+
+        self.assertFalse(self.proposal.getMergeRequestStatus()["pending"])
+        self.assertFalse(self.proposal.getMergeRequestStatus()["merged"])
+
+    def test_getMergeRequestStatus_merged(self):
+        self._requestMerge()
+        self.proposal.markAsMerged(merge_reporter=self.person)
+
+        status = self.proposal.getMergeRequestStatus()
+        self.assertFalse(status["pending"])
+        self.assertTrue(status["merged"])
+        self.assertIsNotNone(status["date_requested"])
+        self.assertEqual(self.person.name, status["requested_by"])
 
     def test_requestMerge_success(self):
         repository = self.proposal.target_git_repository
@@ -4553,6 +4628,8 @@ class TestBranchMergeProposalRequestMerge(TestCaseWithFactory):
                 self.proposal.requestMerge,
                 self.person,
             )
+        self.assertIsNone(self.proposal.merger)
+        self.assertIsNone(self.proposal.date_merge_requested)
 
     def test_requestMerge_already_merged(self):
         self.proposal.createComment(

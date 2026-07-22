@@ -6,6 +6,7 @@
 __all__ = [
     "BRANCH_MERGE_PROPOSAL_FINAL_STATES",
     "BRANCH_MERGE_PROPOSAL_OBSOLETE_STATES",
+    "PROPOSAL_MERGE_ENABLED_FEATURE_FLAG",
     "IBranchMergeProposal",
     "IBranchMergeProposalGetter",
     "IBranchMergeProposalJob",
@@ -72,6 +73,9 @@ from lp.services.fields import (
 from lp.services.job.interfaces.job import IJob, IJobSource, IRunnableJob
 from lp.services.webapp.interfaces import ITableBatchNavigator
 from lp.services.webservice.apihelpers import patch_reference_property
+
+PROPOSAL_MERGE_ENABLED_FEATURE_FLAG = "merge_proposal.merge.enabled"
+
 
 BRANCH_MERGE_PROPOSAL_FINAL_STATES = (
     BranchMergeProposalStatus.REJECTED,
@@ -318,6 +322,33 @@ class IBranchMergeProposalView(Interface):
             required=True,
             readonly=True,
             description=_("The current state of the proposal."),
+        )
+    )
+
+    merger = exported(
+        PublicPersonChoice(
+            title=_("Merger"),
+            required=False,
+            readonly=True,
+            vocabulary="ValidPersonOrTeam",
+            description=_(
+                "The person who last requested that this proposal be "
+                "merged through the merge API."
+            ),
+        )
+    )
+
+    date_merge_requested = exported(
+        Datetime(
+            title=_("Date merge requested"),
+            required=False,
+            readonly=True,
+            description=_(
+                "When a merge of this proposal was last requested "
+                "through the merge API.  The merge itself is performed "
+                "asynchronously by the code hosting service after this "
+                "time."
+            ),
         )
     )
 
@@ -634,6 +665,20 @@ class IBranchMergeProposalView(Interface):
         :return: A dictionary containing the status of merge criteria checks.
             The 'can_be_merged' key indicates if all criteria passed, and the
             'criteria' key contains details about each check."
+        """
+
+    @export_read_operation()
+    @operation_for_version("devel")
+    def getMergeRequestStatus():
+        """Get the status of any merge requested through the merge API.
+
+        :return: A dictionary with keys: `pending` (True if a merge request
+            was made and has neither been confirmed merged nor expired),
+            `merged` (True if the proposal has been merged), `date_requested`
+            (ISO timestamp of the last request, or None), and `requested_by`
+            (name of the requesting person, or None).  An expired request
+            that never reached the merged state is reported as neither
+            pending nor merged; it is never assumed to have succeeded.
         """
 
     def checkMergeCriteria():
