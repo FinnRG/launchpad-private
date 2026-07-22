@@ -542,6 +542,74 @@ class TestAsyncCIBuildBehaviour(StatsMixin, TestCIBuildBehaviourBase):
         self.assertTrue(args["scan_malware"])
 
     @defer.inlineCallbacks
+    def test_extraBuildArgs_channels(self):
+        # For repositories that do not target a distribution source package
+        # (e.g. project-targeted ones), channels are read from the section
+        # for the distribution being built against.
+        job = self.makeJob(stages=[[("test", 0)]])
+        self.pushConfig(
+            "cibuild." + job.build.distribution.name,
+            channels=json.dumps({"lpci": "edge"}),
+        )
+        with dbuser(config.builddmaster.dbuser):
+            args = yield job.extraBuildArgs()
+        self.assertEqual({"lpci": "edge"}, args["channels"])
+
+    @defer.inlineCallbacks
+    def test_extraBuildArgs_channels_distribution_source_package(self):
+        # A repository that targets a distribution source package can
+        # override individual channels of the distribution being built
+        # against, while inheriting any that it does not specify.
+        package = self.factory.makeDistributionSourcePackage(
+            distribution=self.factory.makeDistribution(name="soss")
+        )
+        git_repository = self.factory.makeGitRepository(target=package)
+        job = self.makeJob(
+            stages=[[("test", 0)]], git_repository=git_repository
+        )
+        self.pushConfig(
+            "cibuild." + job.build.distribution.name,
+            channels=json.dumps({"lpci": "edge", "lxd": "5.21/stable"}),
+        )
+        self.pushConfig(
+            "cibuild.soss", channels=json.dumps({"lpci": "stable"})
+        )
+        with dbuser(config.builddmaster.dbuser):
+            args = yield job.extraBuildArgs()
+        self.assertEqual(
+            {"lpci": "stable", "lxd": "5.21/stable"}, args["channels"]
+        )
+
+    @defer.inlineCallbacks
+    def test_extraBuildArgs_channels_default_to_build_distribution(self):
+        # If a repository that targets a distribution source package does
+        # not configure channels, they default to those of the
+        # distribution being built against.
+        package = self.factory.makeDistributionSourcePackage(
+            distribution=self.factory.makeDistribution(name="soss")
+        )
+        git_repository = self.factory.makeGitRepository(target=package)
+        job = self.makeJob(
+            stages=[[("test", 0)]], git_repository=git_repository
+        )
+        self.pushConfig(
+            "cibuild." + job.build.distribution.name,
+            channels=json.dumps({"lpci": "edge"}),
+        )
+        with dbuser(config.builddmaster.dbuser):
+            args = yield job.extraBuildArgs()
+        self.assertEqual({"lpci": "edge"}, args["channels"])
+
+    @defer.inlineCallbacks
+    def test_extraBuildArgs_channels_not_configured(self):
+        # If no channels are configured, none are dispatched, so that
+        # builders install snaps from their default channels.
+        job = self.makeJob(stages=[[("test", 0)]])
+        with dbuser(config.builddmaster.dbuser):
+            args = yield job.extraBuildArgs()
+        self.assertNotIn("channels", args)
+
+    @defer.inlineCallbacks
     def test_extraBuildArgs_archive_trusted_keys(self):
         # If the archive has a signing key, extraBuildArgs sends it.
         yield self.useFixture(InProcessKeyServerFixture()).start()
