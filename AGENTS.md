@@ -163,6 +163,33 @@ filename order on top of the `launchpad-2211-00-0.sql` baseline.
 - Imports must be absolute (`flake8-absolute-import`).
 - Storm models inherit from `lp.services.database.stormbase.StormBase`, **not**
   `storm.base.Storm` / `storm.locals.Storm` (flake8 rejects the latter).
+- For YUI JavaScript modules, follow
+  `lib/lp/code/javascript/branchmergeproposal.requestmerge.js` (and its
+  tests in `lib/lp/code/javascript/tests/`) as the reference example of
+  code style — arrow functions, `const`/`let`, JSDoc typedefs with
+  references to the Python source of the payloads, and a header comment
+  plus section comments describing the module's states — rather than the
+  older modules in the tree.
+  - Shared editor types for YUI and Launchpad globals live in
+    `lib/lp/app/javascript/yui.d.ts`. Import them at the top of JavaScript
+    modules with JSDoc `@import`, adjusting the relative path, for example:
+
+    ```javascript
+    /** @import {LaunchpadClient, YuiNode} from "../../app/javascript/yui" */
+    ```
+
+    Extend the shared declaration when another module needs a common YUI API;
+    keep payload types that are specific to one module beside that module.
+  - Avoid ES6 template literals (backtick strings, including `${...}`
+    interpolation) in these modules for now; a bug in the `jsbuild`
+    pipeline mangles them. Use single-quoted strings with `+`
+    concatenation until that is fixed.
+  - When you touch an older JavaScript module for another change,
+    opportunistically modernize the parts you edit toward this style
+    (arrow functions, `const`/`let`, JSDoc typedefs, header/section
+    comments) so the tree improves gradually. Keep the refactor scoped
+    to what you are already changing — do not rewrite whole unrelated
+    files in one pass.
 - Web-facing changes usually require matching `.zcml` registration and a
   `security.py` entry.
 - `configs/+*` directories are throwaway local configs and are ignored; do not
