@@ -1993,6 +1993,165 @@ class TestBranchMergeProposalGetterGetProposals(TestCaseWithFactory):
         )
         self.assertEqual(beave_proposals.count(), 1)
 
+    def test_getProposalsForReviewer(self):
+        # getProposalsForReviewer returns merge proposals, both Bazaar and
+        # Git, that the given person has been asked to review.
+        reviewer = self.factory.makePerson()
+        bzr_bmp = self.factory.makeBranchMergeProposal(
+            set_state=BranchMergeProposalStatus.NEEDS_REVIEW
+        )
+        bzr_bmp.nominateReviewer(reviewer, bzr_bmp.registrant)
+        git_bmp = self.factory.makeBranchMergeProposalForGit(
+            set_state=BranchMergeProposalStatus.NEEDS_REVIEW
+        )
+        git_bmp.nominateReviewer(reviewer, git_bmp.registrant)
+        # Proposals that the reviewer hasn't been asked to review are not
+        # returned.
+        self.factory.makeBranchMergeProposal(
+            set_state=BranchMergeProposalStatus.NEEDS_REVIEW
+        )
+        self.factory.makeBranchMergeProposalForGit(
+            set_state=BranchMergeProposalStatus.NEEDS_REVIEW
+        )
+
+        getter = BranchMergeProposalGetter
+        self.assertContentEqual(
+            [bzr_bmp, git_bmp],
+            getter.getProposalsForReviewer(
+                reviewer, [BranchMergeProposalStatus.NEEDS_REVIEW]
+            ),
+        )
+        # The status filter is honoured.
+        self.assertContentEqual(
+            [],
+            getter.getProposalsForReviewer(
+                reviewer, [BranchMergeProposalStatus.MERGED]
+            ),
+        )
+
+    def test_getProposalsForReviewer_orders_by_vote(self):
+        # getProposalsForReviewer sorts by the reviewer's vote, descending.
+        # Bazaar and Git proposals are sorted together
+        reviewer = self.factory.makePerson()
+
+        def make_proposal(factory_method, vote):
+            bmp = factory_method(
+                set_state=BranchMergeProposalStatus.NEEDS_REVIEW
+            )
+            bmp.nominateReviewer(reviewer, bmp.registrant)
+            bmp.createComment(reviewer, vote=vote)
+            return bmp
+
+        bzr_disapprove = make_proposal(
+            self.factory.makeBranchMergeProposal, CodeReviewVote.DISAPPROVE
+        )
+        git_abstain = make_proposal(
+            self.factory.makeBranchMergeProposalForGit, CodeReviewVote.ABSTAIN
+        )
+        bzr_approve = make_proposal(
+            self.factory.makeBranchMergeProposal, CodeReviewVote.APPROVE
+        )
+        git_needs_fixing = make_proposal(
+            self.factory.makeBranchMergeProposalForGit,
+            CodeReviewVote.NEEDS_FIXING,
+        )
+
+        proposals = list(
+            BranchMergeProposalGetter.getProposalsForReviewer(
+                reviewer, [BranchMergeProposalStatus.NEEDS_REVIEW]
+            )
+        )
+        self.assertEqual(
+            [
+                CodeReviewVote.NEEDS_FIXING,
+                CodeReviewVote.APPROVE,
+                CodeReviewVote.ABSTAIN,
+                CodeReviewVote.DISAPPROVE,
+            ],
+            [
+                proposal.getUsersVoteReference(reviewer).comment.vote
+                for proposal in proposals
+            ],
+        )
+        self.assertEqual(
+            [git_needs_fixing, bzr_approve, git_abstain, bzr_disapprove],
+            proposals,
+        )
+
+    def test_getProposalsForReviewer_respects_visibility_bzr(self):
+        # getProposalsForReviewer only returns Bazaar proposals whose source
+        # branch is visible to the requesting user.
+        reviewer = self.factory.makePerson()
+        owner = self.factory.makePerson()
+        product = self.factory.makeProduct()
+        source_branch = self.factory.makeProductBranch(
+            product=product,
+            owner=owner,
+            information_type=InformationType.USERDATA,
+        )
+        target_branch = self.factory.makeProductBranch(product=product)
+        bzr_bmp = self.factory.makeBranchMergeProposal(
+            source_branch=source_branch,
+            target_branch=target_branch,
+            set_state=BranchMergeProposalStatus.NEEDS_REVIEW,
+        )
+        bzr_bmp.nominateReviewer(reviewer, bzr_bmp.registrant)
+
+        getter = BranchMergeProposalGetter
+        # The owner can see it.
+        self.assertContentEqual(
+            [bzr_bmp],
+            getter.getProposalsForReviewer(
+                reviewer,
+                [BranchMergeProposalStatus.NEEDS_REVIEW],
+                visible_by_user=owner,
+            ),
+        )
+        # An anonymous request cannot.
+        self.assertContentEqual(
+            [],
+            getter.getProposalsForReviewer(
+                reviewer, [BranchMergeProposalStatus.NEEDS_REVIEW]
+            ),
+        )
+
+    def test_getProposalsForReviewer_respects_visibility_git(self):
+        # getProposalsForReviewer only returns Git proposals whose source
+        # repository is visible to the requesting user.
+        reviewer = self.factory.makePerson()
+        owner = self.factory.makePerson()
+        project = self.factory.makeProduct()
+        [source_ref] = self.factory.makeGitRefs(
+            owner=owner,
+            target=project,
+            information_type=InformationType.USERDATA,
+        )
+        [target_ref] = self.factory.makeGitRefs(target=project)
+        git_bmp = self.factory.makeBranchMergeProposalForGit(
+            source_ref=source_ref,
+            target_ref=target_ref,
+            set_state=BranchMergeProposalStatus.NEEDS_REVIEW,
+        )
+        git_bmp.nominateReviewer(reviewer, git_bmp.registrant)
+
+        getter = BranchMergeProposalGetter
+        # The owner can see it.
+        self.assertContentEqual(
+            [git_bmp],
+            getter.getProposalsForReviewer(
+                reviewer,
+                [BranchMergeProposalStatus.NEEDS_REVIEW],
+                visible_by_user=owner,
+            ),
+        )
+        # An anonymous request cannot.
+        self.assertContentEqual(
+            [],
+            getter.getProposalsForReviewer(
+                reviewer, [BranchMergeProposalStatus.NEEDS_REVIEW]
+            ),
+        )
+
     def test_created_proposal_default_status(self):
         # When we create a merge proposal using the helper method, the default
         # status of the proposal is work in progress.
