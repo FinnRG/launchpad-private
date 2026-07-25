@@ -503,8 +503,10 @@ class GitRepository(
         namespace.moveRepository(self, user, rename_if_necessary=True)
         self._reconcileAccess()
 
-    def repackRepository(self):
-        getUtility(IGitHostingClient).repackRepository(self.getInternalPath())
+    def repackRepository(self, no_reuse_delta=False):
+        getUtility(IGitHostingClient).repackRepository(
+            self.getInternalPath(), no_reuse_delta=no_reuse_delta
+        )
         self.date_last_repacked = UTC_NOW
 
     def collectGarbage(self):
