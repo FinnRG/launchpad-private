@@ -52,7 +52,6 @@ from lp.code.errors import (
     BranchMergeProposalMergeFailed,
     BranchMergeProposalNotMergeable,
     DiffNotFound,
-    UserNotBranchReviewer,
     WrongBranchMergeProposal,
 )
 from lp.code.event.branchmergeproposal import (
@@ -151,8 +150,11 @@ def is_valid_transition(proposal, from_state, next_state, user=None):
         # to transition away from them either.
         if next_state in obsolete_states or from_state in obsolete_states:
             return False
-        # Non-reviewers cannot reject proposals [XXX: what about their own?]
+        # The registrant (owner) of a proposal is allowed to reject their
+        # own proposal.  Other non-reviewers cannot reject.
         if next_state == rejected:
+            if user is not None and user.inTeam(proposal.registrant):
+                return True
             return False
         # Non-reviewers cannot approve proposals, but can otherwise move
         # things around relatively freely.
@@ -1179,9 +1181,6 @@ class BranchMergeProposal(StormBase, BugLinkTargetMixin):
         self, reviewer, next_state, revision_id, _date_reviewed=None
     ):
         """Set the proposal to next_state."""
-        # Check the reviewer can review the code for the target branch.
-        if not self.merge_target.isPersonTrustedReviewer(reviewer):
-            raise UserNotBranchReviewer
         # Check the current state of the proposal.
         self._transitionToState(next_state, reviewer)
         # Record the reviewer

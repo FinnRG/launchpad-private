@@ -804,8 +804,9 @@ class IBranchMergeProposalEdit(Interface):
         :param revision_id: The revision id of the branch that was
                             reviewed by the `reviewer`.
 
-        :raises: UserNotBranchReviewer if the reviewer is not in the team of
-                 the branch reviewer for the target branch.
+        :raises BadStateTransition: if the reviewer is not a trusted
+            reviewer of the target branch, or if the current state does
+            not allow transitioning to code approved.
         """
 
     def rejectBranch(reviewer, revision_id):
@@ -813,12 +814,15 @@ class IBranchMergeProposalEdit(Interface):
 
         The time that the branch was rejected is recoreded in `date_reviewed`.
 
-        :param reviewer: A person authorised to review branches for merging.
+        :param reviewer: A person authorised to review branches for merging,
+            or the proposal registrant rejecting their own proposal.
         :param revision_id: The revision id of the branch that was
                             reviewed by the `reviewer`.
 
-        :raises: UserNotBranchReviewer if the reviewer is not in the team of
-                 the branch reviewer for the target branch.
+        :raises BadStateTransition: if the reviewer is not a trusted
+            reviewer of the target branch (and is not the proposal
+            registrant), or if the current state does not allow
+            transitioning to rejected.
         """
 
     def markAsMerged(merged_revno=None, date_merged=None, merge_reporter=None):

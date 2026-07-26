@@ -2498,15 +2498,16 @@ class TestBranchMergeProposalChangeStatusView(TestCaseWithFactory):
         self.assertStatusVocabTokens(desired_statuses, user)
 
     def test_createStatusVocabulary_non_reviewer(self):
-        # Neither the source branch owner nor the registrant should be
-        # able to approve or reject their own code (assuming they don't have
-        # rights on the target branch).
+        # The source branch owner cannot approve or reject code they don't
+        # review (assuming they don't have rights on the target branch).
         status_options = ["WORK_IN_PROGRESS", "NEEDS_REVIEW", "MERGED"]
         self.assertStatusVocabTokens(
             status_options, user=self.proposal.source_branch.owner
         )
+        # The registrant can additionally reject their own proposal.
+        registrant_options = status_options + ["REJECTED"]
         self.assertStatusVocabTokens(
-            status_options, user=self.proposal.registrant
+            registrant_options, user=self.proposal.registrant
         )
 
     def test_createStatusVocabulary_reviewer(self):
@@ -2517,7 +2518,8 @@ class TestBranchMergeProposalChangeStatusView(TestCaseWithFactory):
 
     def test_createStatusVocabulary_non_reviewer_approved(self):
         # Once the branch has been approved, the source owner or the
-        # registrant can queue the branch.
+        # registrant can queue the branch.  The registrant can additionally
+        # reject their own proposal.
         self.proposal.approveBranch(
             self.proposal.target_branch.owner, "some-revision"
         )
@@ -2530,8 +2532,9 @@ class TestBranchMergeProposalChangeStatusView(TestCaseWithFactory):
         self.assertStatusVocabTokens(
             status_options, user=self.proposal.source_branch.owner
         )
+        registrant_options = status_options + ["REJECTED"]
         self.assertStatusVocabTokens(
-            status_options, user=self.proposal.registrant
+            registrant_options, user=self.proposal.registrant
         )
 
     def test_createStatusVocabulary_reviewer_approved(self):

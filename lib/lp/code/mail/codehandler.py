@@ -13,7 +13,7 @@ from zope.security.interfaces import Unauthorized
 from lp.app.errors import NotFoundError
 from lp.code.adapters.branch import BranchMergeProposalNoPreviewDiffDelta
 from lp.code.enums import CodeReviewVote
-from lp.code.errors import UserNotBranchReviewer
+from lp.code.errors import BadStateTransition
 from lp.code.interfaces.branchmergeproposal import IBranchMergeProposalGetter
 from lp.services.config import config
 from lp.services.mail.commands import EmailCommand, EmailCommandCollection
@@ -170,7 +170,7 @@ class UpdateStatusEmailCommand(CodeReviewEmailCommand):
                         example_argument="approved",
                     )
                 )
-        except (UserNotBranchReviewer, Unauthorized):
+        except (BadStateTransition, Unauthorized):
             raise EmailProcessingError(
                 get_error_message(
                     "user-not-reviewer.txt",
