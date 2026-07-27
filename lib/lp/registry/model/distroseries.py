@@ -1384,7 +1384,15 @@ class DistroSeries(
         homepage=None,
         buildinfo=None,
     ):
-        """See `IDistroSeries`."""
+        """See `IDistroSeries`.
+
+        Note that gina (the Debian importer,
+        lp.soyuz.scripts.gina.handlers.SourcePackageHandler.
+        createSourcePackageRelease) does not use this function.
+        It constructs SourcePackageRelease directly.  If you add a new
+        parameter here, mirror it in gina as well or imported packages
+        will silently miss the new field.
+        """
         return SourcePackageRelease(
             upload_distroseries=self,
             sourcepackagename=sourcepackagename,
