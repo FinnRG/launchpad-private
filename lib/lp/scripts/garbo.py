@@ -47,6 +47,10 @@ from zope.security.proxy import removeSecurityProxy
 
 from lp.answers.model.answercontact import AnswerContact
 from lp.archivepublisher.publishing import BY_HASH_STAY_OF_EXECUTION
+from lp.archiveuploader.tagfiles import (
+    TagFileParseError,
+    parse_tagfile_content,
+)
 from lp.bugs.interfaces.bug import IBugSet
 from lp.bugs.model.bug import Bug
 from lp.bugs.model.bugattachment import BugAttachment
@@ -84,6 +88,7 @@ from lp.services.database.sqlbase import (
     sqlvalues,
 )
 from lp.services.database.stormexpr import BulkUpdate, Values
+from lp.services.encoding import guess as guess_encoding
 from lp.services.features import (
     getFeatureFlag,
     install_feature_controller,
@@ -2124,6 +2129,50 @@ class SourcePackagePublishingHistoryFormatPopulator(TunableLoop):
         transaction.commit()
 
 
+class SourcePackageReleaseHomepagePopulator(TunableLoop):
+    """Populate `SourcePackageRelease.homepage` from the stored .dsc.
+
+    The Debian importer (gina) did not import the Homepage field, so
+    some source package releases imported from Debian are missing their
+    homepage.
+    """
+
+    maximum_chunk_size = 1000
+
+    def __init__(self, log, abort_time=None):
+        super().__init__(log, abort_time)
+        self.start_at = 1
+        self.store = IPrimaryStore(SourcePackageRelease)
+
+    def findReleases(self):
+        return self.store.find(
+            SourcePackageRelease,
+            SourcePackageRelease.id >= self.start_at,
+            SourcePackageRelease.homepage == None,
+            SourcePackageRelease.dsc != None,
+        ).order_by(SourcePackageRelease.id)
+
+    def isDone(self):
+        return self.findReleases().is_empty()
+
+    def __call__(self, chunk_size):
+        sprs = list(self.findReleases()[:chunk_size])
+        for spr in sprs:
+            try:
+                dsc_contents = parse_tagfile_content(spr.dsc.encode("utf-8"))
+            except TagFileParseError as e:
+                self.log.warning(
+                    "Failed to parse stored dsc for "
+                    "SourcePackageRelease %d: %s" % (spr.id, e)
+                )
+                continue
+            homepage = dsc_contents.get("Homepage")
+            if homepage is not None:
+                spr.homepage = guess_encoding(homepage)
+        self.start_at = sprs[-1].id + 1
+        transaction.commit()
+
+
 class BinaryPackagePublishingHistoryFormatPopulator(TunableLoop):
     """Populate new `BPPH.binarypackageformat` column."""
 
@@ -2655,6 +2704,7 @@ class DailyDatabaseGarbageCollector(BaseDatabaseGarbageCollector):
         SnapBuildJobPruner,
         SnapFilePruner,
         SourcePackagePublishingHistoryFormatPopulator,
+        SourcePackageReleaseHomepagePopulator,
         SuggestiveTemplatesCacheUpdater,
         TeamMembershipPruner,
         UnlinkedAccountPruner,

@@ -2450,6 +2450,40 @@ class TestGarbo(FakeAdapterMixin, TestCaseWithFactory):
                 SourcePackageType.RPM, removeSecurityProxy(spph)._format
             )
 
+    def test_SourcePackageReleaseHomepagePopulator(self):
+        switch_dbuser("testadmin")
+        homepage = "https://example.com/foo"
+        # 4 cases:
+        # 1. A spr without a homepage with a dsc with a homepage (backfill)
+        # 2. A spr without a homepage without a dsc (skip)
+        # 3. A spr without a homepage with a dsc without a homepage (skip)
+        # 4. A spr with an existing homepage (skip)
+        with_homepage = self.factory.makeSourcePackageRelease(homepage=None)
+        removeSecurityProxy(with_homepage).dsc = (
+            "Format: 3.0 (quilt)\nSource: foo\nHomepage: %s\n" % homepage
+        )
+        without_dsc = self.factory.makeSourcePackageRelease(homepage=None)
+        without_homepage_field = self.factory.makeSourcePackageRelease(
+            homepage=None
+        )
+        removeSecurityProxy(without_homepage_field).dsc = (
+            "Format: 3.0 (quilt)\nSource: foo\n"
+        )
+        existing = self.factory.makeSourcePackageRelease(
+            homepage="https://example.com/keep"
+        )
+        removeSecurityProxy(existing).dsc = (
+            "Format: 3.0 (quilt)\nSource: foo\nHomepage: %s\n" % homepage
+        )
+        transaction.commit()
+
+        self.runDaily()
+
+        self.assertEqual(homepage, with_homepage.homepage)
+        self.assertIsNone(without_dsc.homepage)
+        self.assertIsNone(without_homepage_field.homepage)
+        self.assertEqual("https://example.com/keep", existing.homepage)
+
     def test_BinaryPackagePublishingHistoryFormatPopulator(self):
         switch_dbuser("testadmin")
         old_bpphs = [
