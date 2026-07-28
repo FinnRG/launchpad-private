@@ -691,6 +691,7 @@ class SourcePackageHandler:
             dsc_maintainer_rfc822=maintainer_line,
             dsc_standards_version=src.standards_version,
             dsc_binaries=", ".join(src.binaries),
+            homepage=src.homepage,
             upload_archive=distroseries.main_archive,
             **kwargs,
         )

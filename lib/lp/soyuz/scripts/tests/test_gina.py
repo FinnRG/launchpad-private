@@ -468,24 +468,35 @@ class TestSourcePackageHandler(TestCaseWithFactory):
             PackagePublishingPocket.RELEASE,
             None,
         )
+        sp_data = self.makeSourcePackageData(
+            archive_root, {"Build-Indep-Architecture": b"amd64"}
+        )
+        self.assertEqual(
+            [["Build-Indep-Architecture", "amd64"]], sp_data._user_defined
+        )
+        spr = sphandler.createSourcePackageRelease(sp_data, series)
+        self.assertIsNotNone(spr)
+        self.assertEqual(
+            [["Build-Indep-Architecture", "amd64"]], spr.user_defined_fields
+        )
+
+    def makeSourcePackageData(self, archive_root, extra_fields=None):
         dsc_contents = {
             "Format": b"3.0 (quilt)",
             "Source": b"foo",
             "Binary": b"foo",
-            "Architecture": b"all arm64",
+            "Architecture": b"all",
             "Version": b"1.0-1",
             "Maintainer": b"Foo Bar <foo@canonical.com>",
             "Files": b"xxx 000 foo_1.0-1.dsc",
-            "Build-Indep-Architecture": b"amd64",
             "Directory": b"pool/main/f/foo",
             "Package": b"foo",
             "Component": b"main",
             "Section": b"misc",
         }
+        if extra_fields is not None:
+            dsc_contents.update(extra_fields)
         sp_data = SourcePackageData(**dsc_contents)
-        self.assertEqual(
-            [["Build-Indep-Architecture", "amd64"]], sp_data._user_defined
-        )
         sp_data.archive_root = archive_root
         sp_data.dsc = ""
         sp_data.copyright = ""
@@ -497,11 +508,43 @@ class TestSourcePackageHandler(TestCaseWithFactory):
         write_file(
             os.path.join(archive_root, "pool/main/f/foo/foo_1.0-1.dsc"), b"x"
         )
+        return sp_data
+
+    def test_createSourcePackageRelease_stores_homepage(self):
+        # The Homepage field from the Sources index is stored on the
+        # created SourcePackageRelease.
+        series = self.factory.makeDistroSeries()
+        archive_root = self.useTempDir()
+        sphandler = SourcePackageHandler(
+            series.distribution.name,
+            archive_root,
+            PackagePublishingPocket.RELEASE,
+            None,
+        )
+        sp_data = self.makeSourcePackageData(
+            archive_root, {"Homepage": b"https://example.com/foo"}
+        )
+        self.assertEqual("https://example.com/foo", sp_data.homepage)
         spr = sphandler.createSourcePackageRelease(sp_data, series)
         self.assertIsNotNone(spr)
-        self.assertEqual(
-            [["Build-Indep-Architecture", "amd64"]], spr.user_defined_fields
+        self.assertEqual("https://example.com/foo", spr.homepage)
+
+    def test_createSourcePackageRelease_without_homepage(self):
+        # A Sources entry without a Homepage field produces a
+        # SourcePackageRelease with no homepage.
+        series = self.factory.makeDistroSeries()
+        archive_root = self.useTempDir()
+        sphandler = SourcePackageHandler(
+            series.distribution.name,
+            archive_root,
+            PackagePublishingPocket.RELEASE,
+            None,
         )
+        sp_data = self.makeSourcePackageData(archive_root)
+        self.assertIsNone(sp_data.homepage)
+        spr = sphandler.createSourcePackageRelease(sp_data, series)
+        self.assertIsNotNone(spr)
+        self.assertIsNone(spr.homepage)
 
 
 class TestSourcePackagePublisher(TestCaseWithFactory):
