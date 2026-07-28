@@ -442,6 +442,42 @@ class TestBranchMergeProposalTransitions(TestCaseWithFactory):
             proposal.source_branch.owner,
         )
 
+    def test_transition_to_rejected_by_registrant(self):
+        # The registrant (owner) of a proposal can reject their own
+        # proposal even if they are not a trusted reviewer of the target.
+        proposal = self.factory.makeBranchMergeProposal()
+        registrant = proposal.registrant
+        obsolete_states = (
+            BranchMergeProposalStatus.MERGE_FAILED,
+            BranchMergeProposalStatus.QUEUED,
+        )
+        expected = {
+            s
+            for s in BranchMergeProposalStatus.items
+            if s not in obsolete_states
+        }
+        expected.add(BranchMergeProposalStatus.REJECTED)
+        self.assertValidTransitions(
+            expected,
+            proposal,
+            BranchMergeProposalStatus.REJECTED,
+            registrant,
+        )
+
+    def test_rejectBranch_by_registrant(self):
+        # The registrant can reject their own merge proposal via
+        # rejectBranch even without being a trusted reviewer of the target.
+        proposal = self.factory.makeBranchMergeProposal()
+        registrant = proposal.registrant
+        login_person(registrant)
+        self.assertProposalState(
+            proposal, BranchMergeProposalStatus.WORK_IN_PROGRESS
+        )
+        proposal.rejectBranch(registrant, "1")
+        self.assertProposalState(proposal, BranchMergeProposalStatus.REJECTED)
+        self.assertEqual(registrant, proposal.reviewer)
+        self.assertEqual("1", proposal.reviewed_revision_id)
+
     def test_transitions_to_wip_resets_reviewer(self):
         # When a proposal was approved and is moved back into work in progress
         # the reviewer, date reviewed, and reviewed revision are all reset.
