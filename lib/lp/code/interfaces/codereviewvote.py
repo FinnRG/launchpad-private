@@ -114,6 +114,21 @@ class ICodeReviewVoteReferenceEdit(Interface):
             not pending.
         """
 
+    # XXX 2026-07-30 finnrg: Ideally this would reset back to the team for
+    # claimed reviews, but that will require a new column (see LP: #1708172)
+    @export_write_operation()
+    @operation_for_version("devel")
+    def resetToPending():
+        """Reset a completed review back into a pending one.
+
+        This asks the reviewer to look at the proposal again, typically
+        because the source branch has changed since they voted.  The comment
+        carrying their original vote is left untouched, so the vote remains
+        visible in the conversation.
+
+        :raises ReviewAlreadyPending: If the review is already pending.
+        """
+
     def validateReasignReview(reviewer):
         """Implements the validation for reassignment.
 

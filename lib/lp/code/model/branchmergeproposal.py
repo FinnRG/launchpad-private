@@ -65,6 +65,7 @@ from lp.code.interfaces.branchmergeproposal import (
 )
 from lp.code.interfaces.branchmergeproposal import (
     PROPOSAL_MERGE_ENABLED_FEATURE_FLAG,
+    SATISFIED_CODE_REVIEW_VOTES,
     IBranchMergeProposal,
     IBranchMergeProposalGetter,
 )
@@ -1445,6 +1446,34 @@ class BranchMergeProposal(StormBase, BugLinkTargetMixin):
         if _notify_listeners:
             notify(ReviewerNominatedEvent(vote_reference))
         return vote_reference
+
+    def requestReviewAgain(self, reviewers=None):
+        """See `IBranchMergeProposal`."""
+        if reviewers is None:
+            votes = [
+                vote
+                for vote in self.votes
+                if not vote.is_pending
+                and vote.comment.vote not in SATISFIED_CODE_REVIEW_VOTES
+            ]
+        else:
+            wanted = {reviewer.id for reviewer in reviewers}
+            votes = [
+                vote
+                for vote in self.votes
+                if not vote.is_pending and vote.reviewer.id in wanted
+            ]
+        # Put the proposal back in the review queue first, so that a rejected
+        # transition leaves the votes alone.
+        self.requestReview()
+        self.date_review_requested = UTC_NOW
+        for vote in votes:
+            vote.resetToPending()
+        if votes:
+            Store.of(self).flush()
+            for vote in votes:
+                notify(ReviewerNominatedEvent(vote))
+        return votes
 
     def deleteProposal(self):
         """See `IBranchMergeProposal`."""

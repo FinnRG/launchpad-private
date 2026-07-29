@@ -24,6 +24,7 @@ __all__ = [
     "IReviewRequestedEmailJobSource",
     "IUpdatePreviewDiffJob",
     "IUpdatePreviewDiffJobSource",
+    "SATISFIED_CODE_REVIEW_VOTES",
 ]
 
 
@@ -49,6 +50,7 @@ from zope.schema import (
     Datetime,
     Dict,
     Int,
+    List,
     Object,
     Text,
     TextLine,
@@ -87,6 +89,13 @@ BRANCH_MERGE_PROPOSAL_FINAL_STATES = (
 BRANCH_MERGE_PROPOSAL_OBSOLETE_STATES = (
     BranchMergeProposalStatus.MERGE_FAILED,
     BranchMergeProposalStatus.QUEUED,
+)
+
+
+# Votes that do not need to be cast again for a proposal to make progress,
+# so `requestReviewAgain` leaves them alone by default.
+SATISFIED_CODE_REVIEW_VOTES = frozenset(
+    (CodeReviewVote.APPROVE, CodeReviewVote.ABSTAIN)
 )
 
 
@@ -838,6 +847,32 @@ class IBranchMergeProposalEdit(Interface):
 
         As long as the branch is not yet merged, a review can be requested.
         Requesting a review sets the date_review_requested.
+        """
+
+    @operation_parameters(
+        reviewers=List(
+            title=_("The reviewers to ask again."),
+            description=_(
+                "Defaults to everyone whose review did not approve or "
+                "abstain."
+            ),
+            value_type=Reference(schema=IPerson),
+            required=False,
+        )
+    )
+    @export_write_operation()
+    @operation_for_version("devel")
+    def requestReviewAgain(reviewers=None):
+        """Ask reviewers who have already voted to review the proposal again.
+
+        Their completed reviews become pending again and they are notified as
+        they would be for a new review request.  The comments carrying their
+        original votes are left in place.  The proposal is put back into
+        'Needs review'.
+
+        :param reviewers: The people or teams to ask again.  If None, ask
+            everyone whose vote was neither Approve nor Abstain.
+        :return: The reopened `ICodeReviewVoteReference` objects.
         """
 
     def approveBranch(reviewer, revision_id):
