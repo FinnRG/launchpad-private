@@ -663,6 +663,18 @@ class BranchMergeProposalView(
                 self.request.response.addErrorNotification(str(e))
         self.next_url = canonical_url(self.context)
 
+    @action("Request again", name="request_again")
+    @notify
+    def request_again_action(self, action, data):
+        """Ask a reviewer who has already voted to review this again."""
+        vote = self.context.getVoteReference(data["review_id"])
+        if vote is not None:
+            self.context.requestReviewAgain(reviewers=[vote.reviewer])
+            self.request.response.addNotification(
+                "Requested another review from %s." % vote.reviewer.displayname
+            )
+        self.next_url = canonical_url(self.context)
+
     @property
     def comment_location(self):
         """Location of page for commenting on this proposal."""
@@ -976,6 +988,14 @@ class DecoratedCodeReviewVoteReference:
     def status_text(self):
         """The text shown in the table of the users vote."""
         return self.status_text_map[self.context.comment.vote]
+
+    @cachedproperty
+    def can_request_again(self):
+        """Checks if the viewer can ask this reviewer
+        to look at the proposal again"""
+        return not self.context.is_pending and check_permission(
+            "launchpad.Edit", self.context.branch_merge_proposal
+        )
 
 
 class BranchMergeProposalVoteView(LaunchpadView):
