@@ -18,6 +18,7 @@ from lp.code.enums import (
     BranchMergeProposalStatus,
     BranchSubscriptionNotificationLevel,
     CodeReviewNotificationLevel,
+    CodeReviewVote,
 )
 from lp.code.mail.branch import RecipientReason
 from lp.code.mail.branchmergeproposal import BMPMailer
@@ -820,6 +821,64 @@ class TestBranchMergeProposalRequestReview(TestCaseWithFactory):
             ],
             sorted(mail["to"] for mail in sent_mail),
         )
+
+    def makeProposalWithCastVote(self):
+        """Return a needs-review proposal on which the reviewer has voted.
+
+        Any jobs and mail from setting the review up are drained, so that
+        only what happens next is visible.
+        """
+        bmp = self.factory.makeBranchMergeProposal(
+            set_state=BranchMergeProposalStatus.NEEDS_REVIEW
+        )
+        reviewer = self.factory.makePerson()
+        with person_logged_in(bmp.registrant):
+            bmp.nominateReviewer(reviewer, bmp.registrant, None)
+        with person_logged_in(reviewer):
+            bmp.createComment(
+                reviewer,
+                "Subject",
+                "Content",
+                vote=CodeReviewVote.NEEDS_FIXING,
+            )
+        self.old_job_ids = {job.id for job in self.getReviewEmailJobs(bmp)}
+        pop_notifications()
+        return bmp, reviewer
+
+    def getNewReviewEmailJobs(self, bmp):
+        """The review email jobs created since makeProposalWithCastVote."""
+        return [
+            ReviewRequestedEmailJob(job)
+            for job in self.getReviewEmailJobs(bmp)
+            if job.id not in self.old_job_ids
+        ]
+
+    def test_requestReviewAgain_creates_job(self):
+        # Reopening a review creates the same email job a fresh nomination
+        # would, addressed to the reviewer being asked again.
+        bmp, reviewer = self.makeProposalWithCastVote()
+        with person_logged_in(bmp.registrant):
+            bmp.requestReviewAgain()
+        # No email is sent.
+        self.assertEqual([], pop_notifications())
+        # A job is created.
+        [job] = self.getNewReviewEmailJobs(bmp)
+        self.assertEqual(bmp, job.branch_merge_proposal)
+        self.assertEqual(reviewer, job.reviewer)
+
+    def test_requestReviewAgain_does_not_mail_untouched_reviewers(self):
+        # Someone whose review was not reopened is not pestered.
+        bmp, reviewer = self.makeProposalWithCastVote()
+        approver = self.factory.makePerson()
+        with person_logged_in(approver):
+            bmp.createComment(
+                approver, "Subject", "Fine", vote=CodeReviewVote.APPROVE
+            )
+        pop_notifications()
+        with person_logged_in(bmp.registrant):
+            bmp.requestReviewAgain()
+        jobs = self.getNewReviewEmailJobs(bmp)
+        self.assertEqual([reviewer], [job.reviewer for job in jobs])
 
     def test_requestReviewWithPrivateEmail(self):
         # We can request a review, even when one of the parties involved has a

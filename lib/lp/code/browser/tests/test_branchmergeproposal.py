@@ -147,6 +147,35 @@ class TestDecoratedCodeReviewVoteReference(TestCaseWithFactory):
             self.assertTrue(d.user_can_review)
             self.assertTrue(d.can_change_review)
 
+    def makeCastVote(self, vote=CodeReviewVote.NEEDS_FIXING):
+        """Return a vote reference that has been voted on."""
+        bmp = make_merge_proposal_without_reviewers(self.factory)
+        reviewer = self.factory.makePerson()
+        with person_logged_in(reviewer):
+            bmp.createComment(reviewer, "Subject", "Content", vote=vote)
+        [request] = list(bmp.votes)
+        return request
+
+    def test_can_request_again(self):
+        # Somebody who can edit the proposal can ask for another review.
+        request = self.factory.makeCodeReviewVoteReference()
+        bmp = request.branch_merge_proposal
+        with person_logged_in(bmp.registrant):
+            # A pending review cannot be requested again; it already is.
+            d = DecoratedCodeReviewVoteReference(request, bmp.registrant, None)
+            self.assertFalse(d.can_request_again)
+        cast = self.makeCastVote()
+        bmp = cast.branch_merge_proposal
+        with person_logged_in(bmp.registrant):
+            d = DecoratedCodeReviewVoteReference(cast, bmp.registrant, None)
+            self.assertTrue(d.can_request_again)
+
+    def test_can_request_again_needs_edit_permission(self):
+        cast = self.makeCastVote()
+        with person_logged_in(self.factory.makePerson()) as person:
+            d = DecoratedCodeReviewVoteReference(cast, person, None)
+            self.assertFalse(d.can_request_again)
+
 
 class TestBranchMergeProposalMergedViewMixin:
     """Tests for `BranchMergeProposalMergedView`."""

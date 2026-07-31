@@ -3005,6 +3005,139 @@ class TestBranchMergeProposalNominateReviewer(
         self.assertContentEqual(votes_2, merge_proposal_2.votes)
 
 
+class TestBranchMergeProposalRequestReviewAgain(
+    WithVCSScenarios, TestCaseWithFactory
+):
+    """Tests for `BranchMergeProposal.requestReviewAgain`."""
+
+    layer = DatabaseFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        if self.git:
+            self.hosting_fixture = self.useFixture(GitHostingFixture())
+
+    def makeProposalWithVotes(self, votes):
+        """Make a proposal with one cast vote per entry in `votes`.
+
+        :param votes: A list of `CodeReviewVote`s.
+        :return: (proposal, [reviewer, ...]) in the same order as `votes`.
+        """
+        proposal = make_merge_proposal_without_reviewers(
+            factory=self.factory, for_git=self.git
+        )
+        login_person(proposal.registrant)
+        proposal.requestReview(datetime(2020, 1, 1, tzinfo=timezone.utc))
+        reviewers = []
+        for vote in votes:
+            reviewer = self.factory.makePerson()
+            login_person(reviewer)
+            proposal.createComment(reviewer, "Subject", "Content", vote=vote)
+            reviewers.append(reviewer)
+        login_person(proposal.registrant)
+        return proposal, reviewers
+
+    def test_reopens_unsatisfied_votes_by_default(self):
+        # By default every vote that asked for something to change becomes
+        # pending again.
+        proposal, _ = self.makeProposalWithVotes(
+            [
+                CodeReviewVote.NEEDS_FIXING,
+                CodeReviewVote.NEEDS_INFO,
+                CodeReviewVote.DISAPPROVE,
+                CodeReviewVote.NEEDS_RESUBMITTING,
+            ]
+        )
+        proposal.requestReviewAgain()
+        self.assertEqual(
+            [True] * 4, [vote.is_pending for vote in proposal.votes]
+        )
+
+    def test_keeps_approvals_and_abstentions(self):
+        # An existing approval is not silently discarded.
+        proposal, (approver, abstainer, fixer) = self.makeProposalWithVotes(
+            [
+                CodeReviewVote.APPROVE,
+                CodeReviewVote.ABSTAIN,
+                CodeReviewVote.NEEDS_FIXING,
+            ]
+        )
+        reopened = proposal.requestReviewAgain()
+        self.assertEqual([fixer], [vote.reviewer for vote in reopened])
+        self.assertEqual(
+            {approver: False, abstainer: False, fixer: True},
+            {vote.reviewer: vote.is_pending for vote in proposal.votes},
+        )
+
+    def test_reopens_only_the_named_reviewers(self):
+        # Passing reviewers explicitly overrides the default selection, in
+        # both directions.
+        proposal, (approver, fixer) = self.makeProposalWithVotes(
+            [CodeReviewVote.APPROVE, CodeReviewVote.NEEDS_FIXING]
+        )
+        reopened = proposal.requestReviewAgain(reviewers=[approver])
+        self.assertEqual([approver], [vote.reviewer for vote in reopened])
+        self.assertEqual(
+            {approver: True, fixer: False},
+            {vote.reviewer: vote.is_pending for vote in proposal.votes},
+        )
+
+    def test_ignores_pending_votes(self):
+        # Reviewers who have not voted yet are left alone; they have already
+        # been asked.
+        proposal, [fixer] = self.makeProposalWithVotes(
+            [CodeReviewVote.NEEDS_FIXING]
+        )
+        pending_reviewer = self.factory.makePerson()
+        proposal.nominateReviewer(
+            reviewer=pending_reviewer, registrant=proposal.registrant
+        )
+        reopened = proposal.requestReviewAgain(
+            reviewers=[fixer, pending_reviewer]
+        )
+        self.assertEqual([fixer], [vote.reviewer for vote in reopened])
+
+    def test_sets_needs_review(self):
+        # A proposal that had been approved goes back to needs-review.
+        proposal, _ = self.makeProposalWithVotes([CodeReviewVote.NEEDS_FIXING])
+        target_owner = proposal.merge_target.owner
+        login_person(target_owner)
+        proposal.setStatus(
+            BranchMergeProposalStatus.CODE_APPROVED, target_owner
+        )
+        proposal.requestReviewAgain()
+        self.assertEqual(
+            BranchMergeProposalStatus.NEEDS_REVIEW, proposal.queue_status
+        )
+
+    def test_notifies_per_reopened_vote(self):
+        # Each reopened reviewer is notified as for a new review request.
+        proposal, _ = self.makeProposalWithVotes(
+            [CodeReviewVote.NEEDS_FIXING, CodeReviewVote.NEEDS_INFO]
+        )
+        reopened, events = self.assertNotifies(
+            [ReviewerNominatedEvent, ReviewerNominatedEvent],
+            False,
+            proposal.requestReviewAgain,
+        )
+        self.assertContentEqual(reopened, [event.object for event in events])
+
+    def test_keeps_the_comments(self):
+        # The comment carrying the original vote stays in the conversation.
+        proposal, _ = self.makeProposalWithVotes([CodeReviewVote.NEEDS_FIXING])
+        [comment] = list(proposal.all_comments)
+        proposal.requestReviewAgain()
+        self.assertEqual([comment], list(proposal.all_comments))
+
+    def test_requires_edit_permission(self):
+        # A random logged-in person cannot ask for a review again.
+        proposal, _ = self.makeProposalWithVotes([CodeReviewVote.NEEDS_FIXING])
+        login_person(self.factory.makePerson())
+        self.assertRaises(
+            Unauthorized, getattr, proposal, "requestReviewAgain"
+        )
+
+
 class TestBranchMergeProposalResubmit(TestCaseWithFactory):
     layer = DatabaseFunctionalLayer
 

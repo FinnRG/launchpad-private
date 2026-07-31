@@ -516,6 +516,19 @@ form.archive-subscription-activation button:hover {
     text-decoration: underline;
 }
 
+/* A submit button that should sit among plain icon links without looking
+ * like a button; the icon's alt text and the button's title carry the
+ * meaning. */
+button.bare-icon-button {
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    line-height: 0;
+    vertical-align: baseline;
+    cursor: pointer;
+}
+
 /* Shaded logging area. */
 div.logtail {
     margin: 0.5em;

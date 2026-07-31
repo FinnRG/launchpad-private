@@ -41,6 +41,16 @@
         <a tal:condition="review/can_change_review" href="+review">
           <img src="/@@/edit" title="Vote again" alt="vote"/>
         </a>
+        <form method="POST" style="display: inline"
+              tal:condition="review/can_request_again">
+          <input type="hidden" name="field.review_id"
+              tal:attributes="value string:${review/id}" />
+          <button type="submit" name="field.actions.request_again"
+              value="Request again" class="bare-icon-button"
+              title="Request another review from this reviewer">
+            <img src="/@@/retry" alt="Request again"/>
+          </button>
+        </form>
       </td>
     </tr>
     <!-- Pending reviews -->
