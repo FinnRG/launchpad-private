@@ -168,12 +168,15 @@ class IGitHostingClient(Interface):
         :param logger: An optional logger.
         """
 
-    def repackRepository(path, logger=None):
+    def repackRepository(path, logger=None, no_reuse_delta=False):
         """Repack a Git repository.
 
         :param path: Physical path of the new repository on the hosting
             service.
         :param logger: An optional logger.
+        :param no_reuse_delta: If True, request the hosting service to force a
+            full delta recomputation instead of reusing
+            existing deltas.
         """
 
     def collectGarbage(path, logger=None):

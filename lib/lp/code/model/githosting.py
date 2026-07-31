@@ -515,14 +515,14 @@ class GitHostingClient:
                     % (ref, path, e.response.status_code)
                 )
 
-    def repackRepository(self, path, logger=None):
+    def repackRepository(self, path, logger=None, no_reuse_delta=False):
         """See `IGitHostingClient`."""
 
         url = "/repo/%s/repack" % path
         try:
             if logger is not None:
                 logger.info("Repacking repository %s" % (path))
-            return self._post(url)
+            return self._post(url, json={"no_reuse_delta": no_reuse_delta})
         except requests.RequestException as e:
             if (
                 e.response is not None

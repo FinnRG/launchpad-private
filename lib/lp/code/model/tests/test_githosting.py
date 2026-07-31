@@ -719,6 +719,17 @@ class TestGitHostingClient(TestCase):
         with self.mockRequests("POST", status=200):
             repack = self.client.repackRepository("/repo/123")
         self.assertEqual(None, repack)
+        [request] = self.requests
+        self.assertEqual({"no_reuse_delta": False}, json.loads(request.body))
+
+    def test_repack_no_reuse_delta(self):
+        with self.mockRequests("POST", status=200):
+            repack = self.client.repackRepository(
+                "/repo/123", no_reuse_delta=True
+            )
+        self.assertEqual(None, repack)
+        [request] = self.requests
+        self.assertEqual({"no_reuse_delta": True}, json.loads(request.body))
 
     def test_repack_failure(self):
         with self.mockRequests("POST", status=400):

@@ -1075,8 +1075,15 @@ class IGitRepositoryExpensiveRequest(Interface):
     """
 
     @export_write_operation()
+    @operation_parameters(
+        no_reuse_delta=Bool(
+            title=_("Force full delta recomputation"),
+            required=False,
+            default=False,
+        )
+    )
     @operation_for_version("devel")
-    def repackRepository():
+    def repackRepository(no_reuse_delta=False):
         """Trigger a repack repository operation.
 
         Raises Unauthorized if the repack was attempted by a person
