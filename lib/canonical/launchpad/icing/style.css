@@ -705,6 +705,10 @@ table.diff .diff-chunk, table.diff .diff-file, table.diff .diff-header {
   background: #f4f6f9;
   font-weight: 600;
 }
+table.diff .diff-header a.diff-file-link {
+  color: inherit;
+  text-decoration: underline;
+}
 table.diff .diff-added { background-color: #cff7cf; }
 table.diff .diff-removed { background-color: #ffb8b8; }
 table.diff .inline-comments > td > div {

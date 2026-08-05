@@ -13,6 +13,7 @@ from zope.component import getUtility
 from lp.app.browser.stringformatter import (
     FormattersAPI,
     linkify_bug_numbers,
+    linkify_diff_file_header,
     parse_diff,
 )
 from lp.services.config import config
@@ -618,6 +619,89 @@ class TestDiffFormatter(TestCase):
             [tag["class"] for tag in text],
         )
 
+    def test_get_file_url_links_headers(self):
+        # When a get_file_url callback is supplied, the "---"/"+++" file
+        # headers of a Git diff link the path to the returned URL.
+        diff = dedent(
+            """\
+            diff --git a/tales.py b/tales.py
+            index aaaaaaa..bbbbbbb 100644
+            --- a/tales.py
+            +++ b/tales.py
+            @@ -1,1 +1,1 @@
+            -removed
+            +added
+            """
+        )
+
+        def get_file_url(path, side):
+            return "https://git.example.test/%s/tree/%s" % (side, path)
+
+        html = FormattersAPI(diff).format_diff(get_file_url=get_file_url)
+        headers = find_tags_by_class(html, "diff-header")
+        links = [header.find("a") for header in headers]
+        self.assertEqual(
+            [
+                "https://git.example.test/a/tree/tales.py",
+                "https://git.example.test/b/tree/tales.py",
+            ],
+            [link["href"] for link in links],
+        )
+        self.assertEqual(
+            ["a/tales.py", "b/tales.py"],
+            [link.decode_contents() for link in links],
+        )
+        self.assertEqual(
+            ["diff-file-link"], [link["class"] for link in links][0]
+        )
+        self.assertEqual([], find_tags_by_class(html, "diff-chunk")[0]("a"))
+
+    def test_get_file_url_default_unchanged(self):
+        # Without a callback (the default) the output is unchanged, so all
+        # other fmt:diff callers are unaffected.
+        diff = dedent(
+            """\
+            diff --git a/tales.py b/tales.py
+            --- a/tales.py
+            +++ b/tales.py
+            @@ -1,1 +1,1 @@
+            -removed
+            +added
+            """
+        )
+        self.assertEqual(
+            FormattersAPI(diff).format_diff(),
+            FormattersAPI(diff).format_diff(
+                get_file_url=lambda path, side: None
+            ),
+        )
+
+    def test_get_file_url_dev_null_not_linked(self):
+        # Added or deleted files use /dev/null on one side, which is not
+        # linked.
+        diff = dedent(
+            """\
+            diff --git a/tales.py b/tales.py
+            new file mode 100644
+            index 0000000..bbbbbbb
+            --- /dev/null
+            +++ b/tales.py
+            @@ -0,0 +1,1 @@
+            +added
+            """
+        )
+
+        def get_file_url(path, side):
+            return "https://git.example.test/%s" % path
+
+        html = FormattersAPI(diff).format_diff(get_file_url=get_file_url)
+        headers = find_tags_by_class(html, "diff-header")
+        hrefs = [
+            header.find("a")["href"] if header.find("a") else None
+            for header in headers
+        ]
+        self.assertEqual([None, "https://git.example.test/tales.py"], hrefs)
+
 
 class TestSideBySideDiffFormatter(TestCase):
     """Test the string formatter fmt:ssdiff."""
@@ -778,6 +862,104 @@ class TestSideBySideDiffFormatter(TestCase):
             ],
             [tag["class"] for tag in text],
         )
+
+    def test_get_file_url_links_headers(self):
+        # The side-by-side formatter also links Git file headers when a
+        # get_file_url callback is supplied.
+        diff = dedent(
+            """\
+            diff --git a/tales.py b/tales.py
+            index aaaaaaa..bbbbbbb 100644
+            --- a/tales.py
+            +++ b/tales.py
+            @@ -1,1 +1,1 @@
+            -removed
+            +added
+            """
+        )
+
+        def get_file_url(path, side):
+            return "https://git.example.test/%s/tree/%s" % (side, path)
+
+        html = FormattersAPI(diff).format_ssdiff(get_file_url=get_file_url)
+        headers = find_tags_by_class(html, "diff-header")
+        links = [header.find("a") for header in headers]
+        self.assertEqual(
+            [
+                "https://git.example.test/a/tree/tales.py",
+                "https://git.example.test/b/tree/tales.py",
+            ],
+            [link["href"] for link in links],
+        )
+
+
+class TestLinkifyDiffFileHeader(TestCase):
+    """Test the linkify_diff_file_header helper directly."""
+
+    def _url(self, path, side):
+        return "https://git.example.test/%s/tree/%s" % (side, path)
+
+    def test_no_callback_returns_line(self):
+        line = "--- a/tales.py"
+        self.assertIs(
+            line, linkify_diff_file_header("diff-header text", line, None)
+        )
+
+    def test_non_header_returns_line(self):
+        # Content lines that happen to start with "-" are not file headers.
+        line = "-removed a line"
+        self.assertIs(
+            line,
+            linkify_diff_file_header("diff-removed text", line, self._url),
+        )
+
+    def test_old_side_uses_a(self):
+        result = linkify_diff_file_header(
+            "diff-header text", "--- a/dir/tales.py", self._url
+        )
+        self.assertEqual(
+            '--- <a class="diff-file-link" '
+            'href="https://git.example.test/a/tree/dir/tales.py">'
+            "a/dir/tales.py</a>",
+            result.escapedtext,
+        )
+
+    def test_new_side_uses_b(self):
+        result = linkify_diff_file_header(
+            "diff-header text", "+++ b/tales.py", self._url
+        )
+        self.assertEqual(
+            '+++ <a class="diff-file-link" '
+            'href="https://git.example.test/b/tree/tales.py">'
+            "b/tales.py</a>",
+            result.escapedtext,
+        )
+
+    def test_dev_null_returns_line(self):
+        line = "--- /dev/null"
+        self.assertIs(
+            line,
+            linkify_diff_file_header("diff-header text", line, self._url),
+        )
+
+    def test_none_url_returns_line(self):
+        line = "--- a/tales.py"
+        self.assertIs(
+            line,
+            linkify_diff_file_header(
+                "diff-header text", line, lambda path, side: None
+            ),
+        )
+
+    def test_path_and_url_are_escaped(self):
+        result = linkify_diff_file_header(
+            "diff-header text",
+            '+++ b/a&b".py',
+            lambda path, side: "https://git.example.test/x?p=%s" % path,
+        )
+        self.assertNotIn("&b\"", result.escapedtext)
+        self.assertIn("&amp;", result.escapedtext)
+        self.assertIn("&quot;", result.escapedtext)
 
 
 class TestOOPSFormatter(TestCase):

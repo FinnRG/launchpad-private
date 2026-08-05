@@ -302,6 +302,39 @@ def parse_diff(text):
             header_next = False
 
 
+def linkify_diff_file_header(css_class, line, get_file_url):
+    """Return the cell content for a diff line, linking file-header paths.
+
+    For a ---/+++ file header, the file path is wrapped in a link to
+    the code browser.
+    """
+    if get_file_url is None or not css_class.startswith("diff-header"):
+        return line
+    prefix = line[:4]
+    if prefix not in ("--- ", "+++ "):
+        return line
+    # A bzr diff appends a tab and timestamp; only the leading path matters.
+    display_path = line[4:]
+    bare_path = display_path.split("\t", 1)[0]
+    if not bare_path or bare_path == "/dev/null":
+        return line
+    side = "a" if prefix == "--- " else "b"
+    # Strip the leading "a/" or "b/" segment to get the repository path.
+    if "/" in bare_path:
+        repository_path = bare_path.split("/", 1)[1]
+    else:
+        repository_path = bare_path
+    url = get_file_url(repository_path, side)
+    if url is None:
+        return line
+    return structured(
+        '%s<a class="diff-file-link" href="%s">%s</a>',
+        prefix,
+        url,
+        display_path,
+    )
+
+
 @implementer(ITraversable)
 class FormattersAPI:
     """Adapter from strings to HTML formatted text."""
@@ -976,8 +1009,13 @@ class FormattersAPI:
         else:
             return self._stringtoformat
 
-    def format_diff(self):
-        """Format the string as a diff in a table with line numbers."""
+    def format_diff(self, get_file_url=None):
+        """Format the string as a diff in a table with line numbers.
+
+        :param get_file_url: An optional callback taking a repository path
+            and a side ("a" or "b") and returning a code-browse URL,
+            used to link diff file headers.
+        """
         # Trim off trailing carriage returns.
         text = self._stringtoformat.rstrip("\n")
         if len(text) == 0:
@@ -987,9 +1025,10 @@ class FormattersAPI:
         for css_class, row, _, _, line in parse_diff(text):
             result.append('<tr id="diff-line-%s">' % row)
             result.append('<td class="line-no unselectable">%s</td>' % row)
+            content = linkify_diff_file_header(css_class, line, get_file_url)
             result.append(
                 structured(
-                    '<td class="%s">%s</td>', css_class, line
+                    '<td class="%s">%s</td>', css_class, content
                 ).escapedtext
             )
             result.append("</tr>")
@@ -1036,8 +1075,13 @@ class FormattersAPI:
                 result, max(removed_diff_row, added_diff_row), cells
             )
 
-    def format_ssdiff(self):
-        """Format the string as a side-by-side diff."""
+    def format_ssdiff(self, get_file_url=None):
+        """Format the string as a side-by-side diff.
+
+        :param get_file_url: An optional callback taking a repository path
+            and a side ("a" or "b") and returning a code-browse URL,
+            used to link diff file headers.
+        """
         # Trim off trailing carriage returns.
         text = self._stringtoformat.rstrip("\n")
         if not text:
@@ -1066,11 +1110,14 @@ class FormattersAPI:
                     queue_mod = []
                 if orig_row is None and mod_row is None:
                     # Non-text line.
+                    content = linkify_diff_file_header(
+                        css_class, line, get_file_url
+                    )
                     cells = [
                         structured(
                             '<td class="%s" colspan="4">%s</td>',
                             css_class,
-                            line,
+                            content,
                         ).escapedtext,
                     ]
                 else:
