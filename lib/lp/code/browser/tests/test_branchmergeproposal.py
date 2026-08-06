@@ -1795,6 +1795,111 @@ class TestResubmitBrowserGit(GitHostingClientMixin, BrowserTestCase):
             self.assertEqual("flibble", bmp.superseded_by.description)
 
 
+class TestBranchMergeProposalDiffLinks(TestCaseWithFactory):
+    """The diff view links Git file headers to the code browser."""
+
+    layer = LaunchpadFunctionalLayer
+
+    diff_bytes = (
+        b"diff --git a/FUNDING.json b/FUNDING.json\n"
+        b"index aaaaaaa..bbbbbbb 100644\n"
+        b"--- a/FUNDING.json\n"
+        b"+++ b/FUNDING.json\n"
+        b"@@ -1,1 +1,1 @@\n"
+        b"-old\n"
+        b"+new\n"
+    )
+
+    def _makeGitPreviewDiff(self, **kwargs):
+        bmp = self.factory.makeBranchMergeProposalForGit(**kwargs)
+        preview_diff = PreviewDiff.create(
+            bmp,
+            self.diff_bytes,
+            bmp.source_git_commit_sha1,
+            bmp.target_git_commit_sha1,
+            None,
+            "",
+        )
+        transaction.commit()
+        return bmp, preview_diff
+
+    def _getHeaderLinks(self, markup):
+        return [
+            header.find("a")
+            for header in find_tags_by_class(markup, "diff-header")
+        ]
+
+    def test_links_both_sides_cross_repo(self):
+        # By default the source and target are in different repositories, so
+        # the two file headers link to different repositories.
+        bmp, preview_diff = self._makeGitPreviewDiff()
+        with person_logged_in(bmp.registrant):
+            target_url = "%s/tree/FUNDING.json?h=%s&id=%s" % (
+                bmp.target_git_repository.getCodebrowseUrl(),
+                bmp.target_git_ref.url_quoted_name,
+                bmp.target_git_commit_sha1,
+            )
+            source_url = "%s/tree/FUNDING.json?h=%s&id=%s" % (
+                bmp.source_git_repository.getCodebrowseUrl(),
+                bmp.source_git_ref.url_quoted_name,
+                bmp.source_git_commit_sha1,
+            )
+            view = create_initialized_view(preview_diff, "+diff")
+            links = self._getHeaderLinks(view.rendered_diff)
+        self.assertEqual(
+            [target_url, source_url], [link["href"] for link in links]
+        )
+
+    def test_ssdiff_links_both_sides(self):
+        # The side-by-side rendering (ss=1) is linked the same way.
+        bmp, preview_diff = self._makeGitPreviewDiff()
+        with person_logged_in(bmp.registrant):
+            view = create_initialized_view(
+                preview_diff, "+diff", form={"ss": "1"}
+            )
+            markup = view.rendered_diff
+        self.assertIn("ssdiff", markup)
+        links = self._getHeaderLinks(markup)
+        self.assertEqual(2, len(links))
+        self.assertTrue(all(link is not None for link in links))
+
+    def test_index_view_links_diff(self):
+        # The merge proposal index page renders the same linked diff.
+        bmp, preview_diff = self._makeGitPreviewDiff()
+        with person_logged_in(bmp.registrant):
+            view = create_initialized_view(bmp, "+index")
+            links = self._getHeaderLinks(view.rendered_diff)
+        self.assertEqual(2, len(links))
+        self.assertTrue(all(link is not None for link in links))
+
+    def test_hunk_header_links_to_source_line(self):
+        # The "@@" hunk header deep-links to the source file at the hunk's
+        # new start line.
+        bmp, preview_diff = self._makeGitPreviewDiff()
+        with person_logged_in(bmp.registrant):
+            expected = "%s/tree/FUNDING.json?h=%s&id=%s#n1" % (
+                bmp.source_git_repository.getCodebrowseUrl(),
+                bmp.source_git_ref.url_quoted_name,
+                bmp.source_git_commit_sha1,
+            )
+            view = create_initialized_view(preview_diff, "+diff")
+            markup = view.rendered_diff
+        (chunk,) = find_tags_by_class(markup, "diff-chunk")
+        self.assertEqual(expected, chunk.find("a")["href"])
+
+    def test_bzr_diff_not_linked(self):
+        # Bazaar proposals keep the previous, unlinked rendering.
+        bmp = self.factory.makeBranchMergeProposal()
+        preview_diff = PreviewDiff.create(
+            bmp, self.diff_bytes, "a", "b", None, ""
+        )
+        transaction.commit()
+        with person_logged_in(bmp.registrant):
+            view = create_initialized_view(preview_diff, "+diff")
+            links = self._getHeaderLinks(view.rendered_diff)
+        self.assertEqual([None, None], links)
+
+
 class TestBranchMergeProposalView(TestCaseWithFactory):
     layer = LaunchpadFunctionalLayer
 

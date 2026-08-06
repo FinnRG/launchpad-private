@@ -27,7 +27,7 @@ __all__ = [
 import json
 import operator
 from functools import wraps
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, quote_plus, urlsplit, urlunsplit
 
 from lazr.delegates import delegate_to
 from lazr.restful.interface import copy_field
@@ -50,6 +50,7 @@ from lp.app.browser.lazrjs import (
     TextAreaEditorWidget,
     vocabulary_to_choice_edit_items,
 )
+from lp.app.browser.stringformatter import FormattersAPI
 from lp.app.browser.tales import DateTimeFormatterAPI
 from lp.code.adapters.branch import BranchMergeProposalNoPreviewDiffDelta
 from lp.code.browser.codereviewcomment import CodeReviewDisplayComment
@@ -571,6 +572,66 @@ class DiffRenderingMixin:
             return False
         diff_text = self.preview_diff_text
         return diff_text.count("\n") >= config.diff.max_format_lines
+
+    def _getGitFileURLGetter(self, preview_diff):
+        """Return a callback linking diff file headers to the code browser.
+
+        The callback maps a repository path, a side ("a" for the old side,
+        "b" for the new side) and an optional line number to a Git
+        code-browse URL.  Returns None for proposals that are not Git-backed.
+        """
+        bmp = preview_diff.branch_merge_proposal
+        if bmp.source_git_ref is None:
+            return None
+        # The merge diff shows the target ("a") side merged with the source
+        # ("b") side, so each side links to its own repository, ref and
+        # commit.
+        sides = {
+            "a": (
+                bmp.target_git_repository,
+                bmp.target_git_ref,
+                preview_diff.target_revision_id,
+            ),
+            "b": (
+                bmp.source_git_repository,
+                bmp.source_git_ref,
+                preview_diff.source_revision_id,
+            ),
+        }
+
+        def get_file_url(path, side, line=None):
+            repository, ref, commit = sides[side]
+            if repository is None or not commit:
+                return None
+            url = "%s/tree/%s" % (repository.getCodebrowseUrl(), quote(path))
+            params = []
+            if ref is not None:
+                params.append("h=%s" % ref.url_quoted_name)
+            params.append("id=%s" % quote_plus(commit))
+            url = "%s?%s" % (url, "&".join(params))
+            if line is not None:
+                url += "#n%s" % line
+            return url
+
+        return get_file_url
+
+    @property
+    def rendered_diff(self):
+        """The preview diff as HTML, with Git file headers linked.
+
+        Uses the side-by-side layout when the ``ss`` request variable is set.
+        """
+        text = self.preview_diff_text
+        if text is None:
+            return None
+        get_file_url = None
+        preview_diff = self.preview_diff
+        if preview_diff is not None:
+            get_file_url = self._getGitFileURLGetter(preview_diff)
+        formatter = FormattersAPI(text)
+        if self.request.get("ss"):
+            return formatter.format_ssdiff(get_file_url=get_file_url)
+        return formatter.format_diff(get_file_url=get_file_url)
 
 
 class ICodeReviewNewRevisions(IComment):
