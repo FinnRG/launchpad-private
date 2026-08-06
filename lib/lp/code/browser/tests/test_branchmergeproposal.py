@@ -1865,12 +1865,27 @@ class TestBranchMergeProposalDiffLinks(TestCaseWithFactory):
 
     def test_index_view_links_diff(self):
         # The merge proposal index page renders the same linked diff.
-        bmp, _ = self._makeGitPreviewDiff()
+        bmp, preview_diff = self._makeGitPreviewDiff()
         with person_logged_in(bmp.registrant):
             view = create_initialized_view(bmp, "+index")
             links = self._getHeaderLinks(view.rendered_diff)
         self.assertEqual(2, len(links))
         self.assertTrue(all(link is not None for link in links))
+
+    def test_hunk_header_links_to_source_line(self):
+        # The "@@" hunk header deep-links to the source file at the hunk's
+        # new start line.
+        bmp, preview_diff = self._makeGitPreviewDiff()
+        with person_logged_in(bmp.registrant):
+            expected = "%s/tree/FUNDING.json?h=%s&id=%s#n1" % (
+                bmp.source_git_repository.getCodebrowseUrl(),
+                bmp.source_git_ref.url_quoted_name,
+                bmp.source_git_commit_sha1,
+            )
+            view = create_initialized_view(preview_diff, "+diff")
+            markup = view.rendered_diff
+        (chunk,) = find_tags_by_class(markup, "diff-chunk")
+        self.assertEqual(expected, chunk.find("a")["href"])
 
     def test_bzr_diff_not_linked(self):
         # Bazaar proposals keep the previous, unlinked rendering.

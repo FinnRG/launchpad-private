@@ -281,7 +281,7 @@ def parse_diff(text):
                 getUtility(IErrorReportingUtility).raising(sys.exc_info())
                 orig_row = 1
                 mod_row = 1
-            yield "diff-chunk text", row, None, None, line
+            yield "diff-chunk text", row, orig_row, mod_row, line
             header_next = False
         elif line.startswith("+"):
             yield "diff-added text", row, None, mod_row, line
@@ -302,37 +302,140 @@ def parse_diff(text):
             header_next = False
 
 
-def linkify_diff_file_header(css_class, line, get_file_url):
-    """Return the cell content for a diff line, linking file-header paths.
+def _parse_diff_header_path(line):
+    """Return (side, display_path, repository_path) for a diff file header.
 
-    For a ---/+++ file header, the file path is wrapped in a link to
-    the code browser.
+    side is "a" for the old ("--- ") side and "b" for the new ("+++ ")
+    side.  Returns None for lines that are not linkable file headers,
+    including "/dev/null".
     """
-    if get_file_url is None or not css_class.startswith("diff-header"):
-        return line
     prefix = line[:4]
     if prefix not in ("--- ", "+++ "):
-        return line
+        return None
     # A bzr diff appends a tab and timestamp; only the leading path matters.
     display_path = line[4:]
     bare_path = display_path.split("\t", 1)[0]
     if not bare_path or bare_path == "/dev/null":
-        return line
+        return None
     side = "a" if prefix == "--- " else "b"
     # Strip the leading "a/" or "b/" segment to get the repository path.
     if "/" in bare_path:
         repository_path = bare_path.split("/", 1)[1]
     else:
         repository_path = bare_path
+    return side, display_path, repository_path
+
+
+def parse_diff_with_paths(text):
+    """Wrap `parse_diff`, tracking the old/new file paths per line.
+
+    Yields each `parse_diff` tuple extended with the repository paths of the
+    old ("a") and new ("b") sides of the file the line belongs to, or None
+    before the corresponding header has been seen.
+    """
+    a_path = b_path = None
+    for row_data in parse_diff(text):
+        css_class, _, _, _, line = row_data
+        if css_class.startswith("diff-file"):
+            a_path = b_path = None
+        elif css_class.startswith("diff-header"):
+            parsed = _parse_diff_header_path(line)
+            if parsed is not None:
+                side, _, repository_path = parsed
+                if side == "a":
+                    a_path = repository_path
+                else:
+                    b_path = repository_path
+        yield row_data + (a_path, b_path)
+
+
+def _hunk_first_changed_lines(rows):
+    """Map each hunk header's row to its first changed new-file line.
+
+    `rows` are tuples from `parse_diff_with_paths`.  For every hunk, find
+    the new-file line of the first added or removed line, seeded from the
+    modified-side position parse_diff already computed for the hunk header
+    and skipping the leading context lines shown for orientation.
+    """
+    result = {}
+    header_row = None
+    new_line = 0
+    for css_class, row, _orig_row, mod_row, _line, _a_path, _b_path in rows:
+        if css_class.startswith("diff-chunk"):
+            header_row = row
+            new_line = mod_row if mod_row is not None else 1
+        elif css_class.startswith("diff-added"):
+            if header_row is not None:
+                result[header_row] = new_line
+                header_row = None
+            new_line += 1
+        elif css_class.startswith("diff-removed"):
+            if header_row is not None:
+                result[header_row] = new_line
+                header_row = None
+        elif css_class.startswith("text"):
+            new_line += 1
+        elif css_class.startswith(("diff-file", "diff-header")):
+            header_row = None
+    return result
+
+
+def linkify_diff_file_header(css_class, line, get_file_url):
+    """Return the cell content for a diff line, linking file-header paths.
+
+    For a "---"/"+++" file header, the file path is wrapped in a link to
+    the code browser.  `get_file_url` is called with the repository path
+    and the side ("a" for the old side, "b" for the new side) and
+    returns a URL or None.
+    """
+    if get_file_url is None or not css_class.startswith("diff-header"):
+        return line
+    parsed = _parse_diff_header_path(line)
+    if parsed is None:
+        return line
+    side, display_path, repository_path = parsed
     url = get_file_url(repository_path, side)
     if url is None:
         return line
     return structured(
         '%s<a class="diff-file-link" href="%s">%s</a>',
-        prefix,
+        line[:4],
         url,
         display_path,
     )
+
+
+def linkify_diff_hunk_header(line, new_path, get_file_url, start_line=None):
+    """Link a `@@` hunk header to the new-side file at `start_line`.
+
+    `get_file_url` is called with `new_path`, the "b" side and `start_line`
+    (the first changed line, taken from parse_diff's positions).  Returns the
+    plain line when there is no path, URL or start line.
+    """
+    if get_file_url is None or new_path is None or start_line is None:
+        return line
+    url = get_file_url(new_path, "b", line=start_line)
+    if url is None:
+        return line
+    return structured('<a class="diff-file-link" href="%s">%s</a>', url, line)
+
+
+def _linkify_diff_meta_line(
+    css_class, line, new_path, get_file_url, start_line=None
+):
+    """Linkify a diff file header or hunk header line."""
+    if css_class.startswith("diff-header"):
+        return linkify_diff_file_header(css_class, line, get_file_url)
+    if css_class.startswith("diff-chunk"):
+        return linkify_diff_hunk_header(
+            line, new_path, get_file_url, start_line=start_line
+        )
+    return line
+
+
+def _ss_line_no_cell(number):
+    """Return a side-by-side line-number cell."""
+    return '<td class="ss-line-no unselectable">%s</td>' % number
 
 
 @implementer(ITraversable)
@@ -1012,9 +1115,9 @@ class FormattersAPI:
     def format_diff(self, get_file_url=None):
         """Format the string as a diff in a table with line numbers.
 
-        :param get_file_url: An optional callback taking a repository path
-            and a side ("a" or "b") and returning a code-browse URL,
-            used to link diff file headers.
+        :param get_file_url: An optional callback taking a repository path, a
+            side ("a" or "b") and an optional line number, returning
+            a code-browse URL.  Used to link file and hunk headers.
         """
         # Trim off trailing carriage returns.
         text = self._stringtoformat.rstrip("\n")
@@ -1022,10 +1125,26 @@ class FormattersAPI:
             return text
         result = ['<table class="diff unidiff">']
 
-        for css_class, row, _, _, line in parse_diff(text):
+        rows = list(parse_diff_with_paths(text))
+        first_changed = _hunk_first_changed_lines(rows)
+        for (
+            css_class,
+            row,
+            _,
+            _,
+            line,
+            _,
+            new_path,
+        ) in rows:
             result.append('<tr id="diff-line-%s">' % row)
             result.append('<td class="line-no unselectable">%s</td>' % row)
-            content = linkify_diff_file_header(css_class, line, get_file_url)
+            content = _linkify_diff_meta_line(
+                css_class,
+                line,
+                new_path,
+                get_file_url,
+                start_line=first_changed.get(row),
+            )
             result.append(
                 structured(
                     '<td class="%s">%s</td>', css_class, content
@@ -1059,11 +1178,11 @@ class FormattersAPI:
             else:
                 added_diff_row, added_row, added_line = 0, "", ""
             cells = (
-                '<td class="ss-line-no unselectable">%s</td>' % removed_row,
+                _ss_line_no_cell(removed_row),
                 structured(
                     '<td class="diff-removed text">%s</td>', removed_line
                 ).escapedtext,
-                '<td class="ss-line-no unselectable">%s</td>' % added_row,
+                _ss_line_no_cell(added_row),
                 structured(
                     '<td class="diff-added text">%s</td>', added_line
                 ).escapedtext,
@@ -1078,9 +1197,9 @@ class FormattersAPI:
     def format_ssdiff(self, get_file_url=None):
         """Format the string as a side-by-side diff.
 
-        :param get_file_url: An optional callback taking a repository path
-            and a side ("a" or "b") and returning a code-browse URL,
-            used to link diff file headers.
+        :param get_file_url: An optional callback taking a repository path, a
+            side ("a" or "b") and an optional line number, returning
+            a code-browse URL.  Used to link file and hunk headers.
         """
         # Trim off trailing carriage returns.
         text = self._stringtoformat.rstrip("\n")
@@ -1088,9 +1207,19 @@ class FormattersAPI:
             return text
         result = ['<table class="diff ssdiff">']
 
+        rows = list(parse_diff_with_paths(text))
+        first_changed = _hunk_first_changed_lines(rows)
         queue_orig = []
         queue_mod = []
-        for css_class, row, orig_row, mod_row, line in parse_diff(text):
+        for (
+            css_class,
+            row,
+            orig_row,
+            mod_row,
+            line,
+            _,
+            b_path,
+        ) in rows:
             if orig_row is not None and mod_row is None:
                 # Text line only in original version.  Queue until we find a
                 # common or non-text line.
@@ -1100,18 +1229,24 @@ class FormattersAPI:
                 # common or non-text line.
                 queue_mod.append((row, mod_row, line[1:]))
             else:
-                # Common or non-text line; emit any queued differences, then
-                # this line.
+                # Common or non-content line; emit any queued differences,
+                # then this line.
                 if queue_orig or queue_mod:
                     self._ssdiff_emit_queued_lines(
                         result, queue_orig, queue_mod
                     )
                     queue_orig = []
                     queue_mod = []
-                if orig_row is None and mod_row is None:
-                    # Non-text line.
-                    content = linkify_diff_file_header(
-                        css_class, line, get_file_url
+                if css_class.startswith(
+                    ("diff-file", "diff-header", "diff-chunk", "diff-comment")
+                ):
+                    # File, hunk or comment header spanning both columns.
+                    content = _linkify_diff_meta_line(
+                        css_class,
+                        line,
+                        b_path,
+                        get_file_url,
+                        start_line=first_changed.get(row),
                     )
                     cells = [
                         structured(
@@ -1125,13 +1260,11 @@ class FormattersAPI:
                     if line.startswith(" "):
                         line = line[1:]
                     cells = [
-                        '<td class="ss-line-no unselectable">%s</td>'
-                        % orig_row,
+                        _ss_line_no_cell(orig_row),
                         structured(
                             '<td class="text">%s</td>', line
                         ).escapedtext,
-                        '<td class="ss-line-no unselectable">%s</td>'
-                        % mod_row,
+                        _ss_line_no_cell(mod_row),
                         structured(
                             '<td class="text">%s</td>', line
                         ).escapedtext,

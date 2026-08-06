@@ -576,16 +576,16 @@ class DiffRenderingMixin:
     def _getGitFileURLGetter(self, preview_diff):
         """Return a callback linking diff file headers to the code browser.
 
-        The callback maps a repository path and a side ("a" for the old side,
-        "b" for the new side) to a Git code-browse URL.  Returns None for
-        proposals that are not Git-backed.
+        The callback maps a repository path, a side ("a" for the old side,
+        "b" for the new side) and an optional line number to a Git
+        code-browse URL.  Returns None for proposals that are not Git-backed.
         """
         bmp = preview_diff.branch_merge_proposal
         if bmp.source_git_ref is None:
             return None
         # The merge diff shows the target ("a") side merged with the source
         # ("b") side, so each side links to its own repository, ref and
-        # commit..
+        # commit.
         sides = {
             "a": (
                 bmp.target_git_repository,
@@ -599,7 +599,7 @@ class DiffRenderingMixin:
             ),
         }
 
-        def get_file_url(path, side):
+        def get_file_url(path, side, line=None):
             repository, ref, commit = sides[side]
             if repository is None or not commit:
                 return None
@@ -608,7 +608,10 @@ class DiffRenderingMixin:
             if ref is not None:
                 params.append("h=%s" % ref.url_quoted_name)
             params.append("id=%s" % quote_plus(commit))
-            return "%s?%s" % (url, "&".join(params))
+            url = "%s?%s" % (url, "&".join(params))
+            if line is not None:
+                url += "#n%s" % line
+            return url
 
         return get_file_url
 
