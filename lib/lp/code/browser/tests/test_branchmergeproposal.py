@@ -57,6 +57,7 @@ from lp.code.enums import (
 from lp.code.errors import GitRepositoryScanFault, InvalidBranchMergeProposal
 from lp.code.interfaces.branchjob import IBranchScanJobSource
 from lp.code.interfaces.branchmergeproposal import (
+    PROPOSAL_MERGE_ENABLED_FEATURE_FLAG,
     IBranchMergeProposal,
     IMergeProposalNeedsReviewEmailJobSource,
     IMergeProposalUpdatedEmailJobSource,
@@ -2361,6 +2362,26 @@ class TestBranchMergeProposalView(TestCaseWithFactory):
             ),
         )
 
+    def test_client_cache_merge_request_enabled(self):
+        self.useFixture(
+            FeatureFixture({PROPOSAL_MERGE_ENABLED_FEATURE_FLAG: "on"})
+        )
+        bmp = self.factory.makeBranchMergeProposalForGit()
+        view = create_initialized_view(bmp, "+index")
+
+        cache = IJSONRequestCache(view.request)
+        self.assertTrue(cache.objects["merge_request_enabled"])
+
+    def test_client_cache_merge_request_disabled(self):
+        self.useFixture(
+            FeatureFixture({PROPOSAL_MERGE_ENABLED_FEATURE_FLAG: ""})
+        )
+        bmp = self.factory.makeBranchMergeProposalForGit()
+        view = create_initialized_view(bmp, "+index")
+
+        cache = IJSONRequestCache(view.request)
+        self.assertFalse(cache.objects["merge_request_enabled"])
+
     def test_breadcrumbs_bzr(self):
         bmp = self.factory.makeBranchMergeProposal()
         view = create_view(bmp, "+index", principal=self.user)
@@ -3077,6 +3098,75 @@ class TestBranchMergeCandidateView(TestCaseWithFactory):
         )
         view = create_initialized_view(bmp, "+link-summary")
         self.assertEqual("Eric on 2008-09-10", view.status_title)
+
+
+class TestBranchMergeProposalGlobalActions(BrowserTestCase):
+    layer = LaunchpadFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        self.useFixture(GitHostingFixture())
+        self.proposal = self.factory.makeBranchMergeProposalForGit()
+        self.owner = self.proposal.target_git_repository.owner
+
+    def _getGlobalActions(self, user):
+        browser = self.getViewBrowser(self.proposal, user=user)
+        return find_tag_by_id(browser.contents, "global-actions")
+
+    def _getGlobalActionsText(self, user):
+        actions = self._getGlobalActions(user)
+        return "" if actions is None else extract_text(actions)
+
+    def test_request_merge_enabled_for_target_owner(self):
+        self.useFixture(
+            FeatureFixture({PROPOSAL_MERGE_ENABLED_FEATURE_FLAG: "on"})
+        )
+
+        actions = self._getGlobalActions(self.owner)
+        self.assertIn("Request merge", extract_text(actions))
+        [request_merge] = find_tags_by_class(
+            str(actions), "menu-link-request_merge"
+        )
+        self.assertIn("merge-proposal", request_merge["class"])
+
+    def test_request_merge_disabled_by_feature_flag(self):
+        self.useFixture(
+            FeatureFixture({PROPOSAL_MERGE_ENABLED_FEATURE_FLAG: ""})
+        )
+
+        self.assertNotIn(
+            "Request merge", self._getGlobalActionsText(self.owner)
+        )
+
+    def test_request_merge_disabled_without_push_permission(self):
+        self.useFixture(
+            FeatureFixture({PROPOSAL_MERGE_ENABLED_FEATURE_FLAG: "on"})
+        )
+        user = self.factory.makePerson()
+
+        self.assertNotIn("Request merge", self._getGlobalActionsText(user))
+
+    def test_request_merge_disabled_when_not_in_progress(self):
+        self.useFixture(
+            FeatureFixture({PROPOSAL_MERGE_ENABLED_FEATURE_FLAG: "on"})
+        )
+        with person_logged_in(self.owner):
+            self.proposal.markAsMerged(merge_reporter=self.owner)
+
+        self.assertNotIn(
+            "Request merge", self._getGlobalActionsText(self.owner)
+        )
+
+    def test_request_merge_disabled_for_bzr(self):
+        self.useFixture(
+            FeatureFixture({PROPOSAL_MERGE_ENABLED_FEATURE_FLAG: "on"})
+        )
+        self.proposal = self.factory.makeBranchMergeProposal()
+        self.owner = self.proposal.target_branch.owner
+
+        self.assertNotIn(
+            "Request merge", self._getGlobalActionsText(self.owner)
+        )
 
 
 class TestBranchMergeProposal(BrowserTestCase):

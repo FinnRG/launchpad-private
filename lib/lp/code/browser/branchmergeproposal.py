@@ -72,7 +72,10 @@ from lp.code.errors import (
     WrongBranchMergeProposal,
 )
 from lp.code.interfaces.branch import IBranch
-from lp.code.interfaces.branchmergeproposal import IBranchMergeProposal
+from lp.code.interfaces.branchmergeproposal import (
+    PROPOSAL_MERGE_ENABLED_FEATURE_FLAG,
+    IBranchMergeProposal,
+)
 from lp.code.interfaces.codereviewcomment import ICodeReviewComment
 from lp.code.interfaces.codereviewinlinecomment import (
     ICodeReviewInlineCommentSet,
@@ -269,6 +272,18 @@ class BranchMergeProposalMenuMixin:
         enabled = self._enabledForStatus(BranchMergeProposalStatus.MERGED)
         return Link("+merged", text, enabled=enabled)
 
+    def request_merge(self):
+        text = "Request merge"
+        bmp = self.branch_merge_proposal
+        enabled = (
+            bool(getFeatureFlag(PROPOSAL_MERGE_ENABLED_FEATURE_FLAG))
+            and bmp.source_branch is None
+            and bmp.isInProgress()
+            and self.user is not None
+            and bmp.canIMerge(self.user)
+        )
+        return Link("+index", text, icon="merge-proposal", enabled=enabled)
+
     @enabled_with_permission("launchpad.Edit")
     def update_merge_revno(self):
         if IBranch.providedBy(self.context.merge_target):
@@ -296,7 +311,7 @@ class BranchMergeProposalEditMenu(
     usedfor = IBranchMergeProposal
     title = "Edit Proposal"
     facet = "branches"
-    links = ["resubmit", "delete"]
+    links = ["request_merge", "resubmit", "delete"]
 
     @property
     def branch_merge_proposal(self):
@@ -697,6 +712,9 @@ class BranchMergeProposalView(
         super().initialize()
         cache = IJSONRequestCache(self.request)
         cache.objects["branch_name"] = self.context.merge_source.name
+        cache.objects["merge_request_enabled"] = bool(
+            getFeatureFlag(PROPOSAL_MERGE_ENABLED_FEATURE_FLAG)
+        )
         if IBranch.providedBy(self.context.merge_source) and getFeatureFlag(
             "code.bzr.diff.disable_proxy"
         ):
