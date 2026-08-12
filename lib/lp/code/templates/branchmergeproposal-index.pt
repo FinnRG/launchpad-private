@@ -243,6 +243,7 @@
   conf = <tal:status-config replace="view/status_config" />
   LPJS.use('io-base', 'lp.code.branchmergeproposal.reviewcomment',
           'lp.code.branchmergeproposal.status', 'lp.app.comment',
+          'lp.code.branchmergeproposal.requestmerge',
           'lp.app.widgets.expander',
           'lp.code.branch.revisionexpander',
           'lp.code.branchmergeproposal.inlinecomments',
@@ -276,6 +277,7 @@
         });
         if (comment !== null) {
             comment.on('CodeReviewComment.appended', cl.bind_new_comment);
+            comment.on('CodeReviewComment.appended', Y.lp.code.branchmergeproposal.requestmerge.refresh);
         }
         cl.render();
     }, window);
@@ -288,6 +290,7 @@
             false,
             Y.lp.code.branch.revisionexpander.bmp_diff_loader);
         Y.lp.services.messages.edit.setup();
+        Y.lp.code.branchmergeproposal.requestmerge.setup();
     });
   });
 <tal:script replace="structure string:&lt;/script&gt;" />
