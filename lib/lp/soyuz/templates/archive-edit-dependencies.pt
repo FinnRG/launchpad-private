@@ -10,7 +10,7 @@
 
 <div metal:fill-slot="main">
 <div class="top-portlet">
-  <div metal:use-macro="context/@@launchpad_form/form">
+    <div metal:use-macro="context/@@launchpad_form/form">
 
     <div class="form" metal:fill-slot="widgets">
 
@@ -49,14 +49,46 @@
           </td>
         </tr>
 
-        <tal:dependencies
-          define="widget nocall:view/widgets/selected_dependencies|nothing"
-          condition="view/has_dependencies">
-          <metal:widget
-            metal:use-macro="context/@@launchpad_form/widget_row" />
-        </tal:dependencies>
-      </table>
+      <tr tal:condition="view/dependency_items">
+          <td colspan="2">
+            <h3 i18n:translate="">Extra dependencies</h3>
+            <p i18n:translate="">
+              Select one or more dependencies to be removed, or edit
+              their pin priority. Changes are applied when you save.
+            </p>
+            <table class="listing" id="ppa-dependencies">
+              <thead>
+                <tr>
+                  <th i18n:translate="">Dependency</th>
+                  <th i18n:translate="">Priority</th>
+                  <th i18n:translate="">Remove</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr tal:repeat="item view/dependency_items">
+                  <td>
+                    <a tal:attributes="href item/url"
+                       tal:content="item/title">Dependency title</a>
+                  </td>
+                  <td tal:define="widget nocall:item/priority_widget">
+                    <div class="message"
+                         tal:condition="python:widget is not None and widget.error()"
+                         tal:content="structure python:widget.error()" />
+                    <span tal:replace="structure python:widget()" />
+                  </td>
+                  <td>
+                    <input type="checkbox"
+                           class="line-through-when-checked ppa-dependencies"
+                           name="field.selected_dependencies"
+                           tal:attributes="value item/token" />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </td>
+        </tr>
 
+      </table>
    </div> <!-- widgets -->
 
   </div> <!-- launchpad_form -->
@@ -100,7 +132,10 @@
        main_area.all(
            "input.line-through-when-checked").on('click', function(e) {
                var input = e.currentTarget;
-               var link = input.next();
+               var link = input.ancestor("tr").one("a");
+               if (link === null) {
+                   return;
+               }
                if (input.get("checked")) {
                    link.setStyle("color", "red");
                    link.setStyle("textDecoration", "line-through");
@@ -109,8 +144,7 @@
                    link.setStyle("color", "blue");
                    link.setStyle("textDecoration", "none");
                }
-           });
-       });
+        });
    });
 </script>
 
