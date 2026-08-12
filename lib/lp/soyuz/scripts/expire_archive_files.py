@@ -30,6 +30,9 @@ canonical-foundations/uc20-build-ppa
 canonical-foundations/uc20-staging-ppa
 canonical-kernel-team/uc20-release
 canonical-kernel-dgx/release
+canonical-nvidia/nvidia-virtualization
+canonical-nvidia/nvidia-virtualization-proposed
+canonical-nvidia/nvidia-virtualization-staging
 checkbox-dev/beta
 checkbox-dev/stable
 chelsea-team
