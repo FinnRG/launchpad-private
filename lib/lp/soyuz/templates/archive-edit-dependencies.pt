@@ -7,40 +7,152 @@
   i18n:domain="launchpad"
   >
 <body>
-
 <div metal:fill-slot="main">
 <div class="top-portlet">
+
+  <style type="text/css">
+    /* Visually hidden, but still announced by assistive technologies. */
+    .sr-only {
+      position: absolute;
+      width: 1px; height: 1px;
+      margin: -1px; padding: 0;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    #ppa-dependencies th { vertical-align: bottom; white-space: nowrap; }
+    #ppa-dependencies td { vertical-align: top; }
+    #ppa-dependencies .pin-priority-input { width: 7em; }
+
+    /* Dark hover/focus tooltip. Overlays content instead of reflowing
+       the table, so it cannot push the neighbouring column out. */
+    .help-tip { position: relative; display: inline-block; }
+    .help-tip > .help-trigger {
+      background: none;
+      border: 0;
+      margin: 0;
+      padding: 0 0 0 0.25em;
+      font: inherit;
+      line-height: 1;
+      color: inherit;
+      cursor: help;
+    }
+    .help-tip > .help-trigger:focus {
+      outline: 2px solid #0066cc;
+      outline-offset: 2px;
+    }
+    .help-tip > .help-bubble {
+      display: none;
+      position: absolute;
+      top: 1.7em;
+      left: 0;
+      z-index: 1000;
+      width: 24em;
+      max-width: 60vw;
+      padding: 0.6em 0.8em;
+      background-color: #1a1a1a;
+      color: #ffffff;
+      font-size: 0.9em;
+      font-weight: normal;
+      line-height: 1.4;
+      text-align: left;
+      white-space: normal;
+      border-radius: 4px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+    }
+    .help-tip > .help-bubble::before {
+      content: "";
+      position: absolute;
+      top: -6px;
+      left: 10px;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-bottom: 6px solid #1a1a1a;
+    }
+    .help-tip:hover > .help-bubble,
+    .help-tip > .help-trigger:focus + .help-bubble,
+    .help-tip.help-tip-open > .help-bubble {
+      display: block;
+    }
+
+    /* Private PPA marker. */
+    .private-dependency .private-badge {
+      font-size: 0.85em;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border: 1px solid #b8b8b8;
+      border-radius: 3px;
+      padding: 0 0.4em;
+      margin-left: 0.4em;
+      white-space: nowrap;
+    }
+    /* Hide the native spin buttons: the field is a plain numeric entry,
+    and stepping one unit at a time through a -100..2000 range is
+    useless. type="number" is kept for the numeric keypad on mobile
+    and for client-side range validation. */
+    #ppa-dependencies .pin-priority-input {
+    -moz-appearance: textfield;
+    appearance: textfield;
+    }
+    #ppa-dependencies .pin-priority-input::-webkit-outer-spin-button,
+    #ppa-dependencies .pin-priority-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+    }
+
+    /* Pending-removal state: signalled by background + strike-through +
+       icon + text status, never by colour or opacity alone. */
+    #ppa-dependencies tr.pending-removal { background-color: #f4f4f4; }
+    #ppa-dependencies tr.pending-removal .dependency-name {
+      text-decoration: line-through;
+    }
+    #ppa-dependencies tr.pending-removal .pin-priority-input {
+      background-color: #ebebeb;
+      color: #767676;
+    }
+    #ppa-dependencies .pending-removal-status:empty { display: none; }
+    #ppa-dependencies .pending-removal-status {
+      display: block;
+      margin-top: 0.3em;
+      font-size: 0.9em;
+      font-style: italic;
+      color: #4a4a4a;
+      white-space: normal;
+    }
+    #ppa-dependencies .pending-removal-status::before {
+      content: "\21BA\00a0";
+      font-style: normal;
+    }
+    #ppa-dependencies .remove-on-save { cursor: pointer; }
+    #ppa-dependencies .remove-on-save input { margin-right: 0.4em; }
+  </style>
+
     <div metal:use-macro="context/@@launchpad_form/form">
-
     <div class="form" metal:fill-slot="widgets">
-
       <table>
-
         <tal:primary_dependency
           define="widget nocall:view/widgets/primary_dependencies|nothing"
           condition="widget">
           <metal:widget
             metal:use-macro="context/@@launchpad_form/widget_row" />
         </tal:primary_dependency>
-
         <tal:primary_components
           define="widget nocall:view/widgets/primary_components|nothing"
           condition="widget">
           <metal:widget
             metal:use-macro="context/@@launchpad_form/widget_row" />
         </tal:primary_components>
-
         <tr style="height: 2em;">
           <td colspan="2">&nbsp;</td>
         </tr>
-
         <tal:add_dependency
           define="widget nocall:view/widgets/dependency_candidate|nothing"
           condition="widget">
           <metal:widget
             metal:use-macro="context/@@launchpad_form/widget_row" />
         </tal:add_dependency>
-
         <tr tal:condition="not: view/has_dependencies">
           <td></td>
           <td>
@@ -48,53 +160,118 @@
             ><i>No dependencies recorded for this PPA yet.</i></p>
           </td>
         </tr>
-
       <tr tal:condition="view/dependency_items">
           <td colspan="2">
             <h3 i18n:translate="">Extra dependencies</h3>
             <p i18n:translate="">
-              Select one or more dependencies to be removed, or edit
-              their pin priority. Changes are applied when you save.
+              Change pin priorities or mark dependencies for removal,
+              then select &#8220;Save changes&#8221;.
             </p>
             <table class="listing" id="ppa-dependencies">
+              <caption class="sr-only" i18n:translate="">
+                Extra dependencies for this PPA, with their pin priority
+                and a per-row removal control.
+              </caption>
               <thead>
                 <tr>
-                  <th i18n:translate="">Dependency</th>
-                  <th i18n:translate="">Priority</th>
-                  <th i18n:translate="">Remove</th>
+                  <th scope="col" i18n:translate="">Dependency</th>
+                  <th scope="col">
+                    <span i18n:translate="">Pin priority</span><span
+                      class="help-tip"><button
+                        type="button"
+                        class="help-trigger"
+                        aria-describedby="pin-priority-help"
+                        ><span aria-hidden="true">&#9432;</span><span
+                          class="sr-only" i18n:translate=""
+                          >About pin priority</span></button><span
+                        class="help-bubble"
+                        role="tooltip"
+                        id="pin-priority-help"
+                        i18n:translate=""
+                        >Controls how APT chooses dependency versions from
+                        this PPA relative to Ubuntu and other PPAs. Higher
+                        values are preferred. The default is 500. Allowed
+                        values: -100 to 2000.</span></span>
+                  </th>
+                  <th scope="col" i18n:translate="">Action</th>
                 </tr>
               </thead>
               <tbody>
-                <tr tal:repeat="item view/dependency_items">
-                  <td>
-                    <a tal:attributes="href item/url"
+                <tr tal:repeat="item view/dependency_items"
+                    class="ppa-dependency-row"
+                    tal:attributes="id string:ppa-dependency-${repeat/item/index}">
+                  <td class="dependency-name-cell"
+                      tal:define="dependency_url item/url|nothing">
+                    <!-- Public PPA: normal link. -->
+                    <a tal:condition="dependency_url"
+                       class="dependency-name"
+                       tal:attributes="href dependency_url"
                        tal:content="item/title">Dependency title</a>
+                    <!-- Private PPA: no link is rendered, so state why
+                         rather than silently degrading to plain text. -->
+                    <tal:private condition="not: dependency_url">
+                      <span class="private-dependency"
+                            tal:attributes="aria-describedby
+                              string:private-ppa-help-${repeat/item/index}">
+                        <span class="sprite private" aria-hidden="true"></span>
+                        <span class="dependency-name"
+                              tal:content="item/title">Dependency title</span>
+                        <span class="private-badge"
+                              i18n:translate="">Private</span>
+                      </span>
+                      <span class="sr-only"
+                            i18n:translate=""
+                            tal:attributes="id
+                              string:private-ppa-help-${repeat/item/index}">
+                        This is a private PPA. You do not have permission to
+                        view its page, so no link is available. You can still
+                        change its pin priority or remove it from this list.
+                      </span>
+                    </tal:private>
                   </td>
-                  <td tal:define="widget nocall:item/priority_widget">
-                    <div class="message"
-                         tal:condition="python:widget is not None and widget.error()"
-                         tal:content="structure python:widget.error()" />
-                    <span tal:replace="structure python:widget()" />
+                  <td class="pin-priority-cell"
+                      tal:define="widget nocall:item/priority_widget|nothing">
+                    <tal:priority condition="widget">
+                      <div class="message"
+                           tal:define="error python:widget.error()"
+                           tal:condition="error"
+                           tal:content="structure error" />
+                      <tal:input replace="structure python:widget()" />
+                    </tal:priority>
                   </td>
-                  <td>
-                    <input type="checkbox"
-                           class="line-through-when-checked ppa-dependencies"
-                           name="field.selected_dependencies"
-                           tal:attributes="value item/token" />
+                  <td class="action-cell">
+                    <label class="remove-on-save">
+                      <input type="checkbox"
+                             class="line-through-when-checked ppa-dependencies"
+                             name="field.selected_dependencies"
+                             tal:attributes="value item/token;
+                                             aria-describedby
+                               string:pending-removal-status-${repeat/item/index}" />
+                      <span i18n:translate="">Remove on save</span>
+                    </label>
+                    <!-- Empty on load so the later injection is announced
+                         by the polite live region. -->
+                    <span class="pending-removal-status"
+                          role="status"
+                          aria-live="polite"
+                          tal:attributes="id
+                            string:pending-removal-status-${repeat/item/index}"
+                          ></span>
                   </td>
                 </tr>
               </tbody>
             </table>
           </td>
         </tr>
-
       </table>
    </div> <!-- widgets -->
-
   </div> <!-- launchpad_form -->
-
 <script type="text/javascript">
    LPJS.use("node", function(Y) {
+       var PRIORITY_MIN = -100;
+       var PRIORITY_MAX = 2000;
+       var PENDING_REMOVAL_TEXT =
+           "Pending removal \u2014 save changes to apply.";
 
        // Highlight (setting bold font-weight) the label for the
        // selected option in a given NodesList. Assumes the input is
@@ -111,46 +288,145 @@
            });
        };
 
-       var main_area = Y.one("#mainarea");
-
-       // Highlight the selected radio button input on page load.
-       var inputs = main_area.all("input.highlight-selected");
-       highlight_checked(inputs);
-
-       // Install signal handlers for all radio-button inputs to
-       // recalculate with options should be highlighted when one of
-       // them is clicked.
-       inputs.on("click", function(e) {
+       // This page is rendered through the main_only macro, which has no
+       // #mainarea element; scoping to it made the whole handler a no-op.
+       var form_area = Y.one("#mainarea") || Y.one("#maincontent") ||
+                       Y.one("body");
+       if (form_area !== null) {
+           // Highlight the selected radio button input on page load.
+           var inputs = form_area.all("input.highlight-selected");
            highlight_checked(inputs);
-       }, this);
+           // Recalculate which options should be highlighted whenever one
+           // of them is clicked.
+           inputs.on("click", function(e) {
+               highlight_checked(inputs);
+           }, this);
+       }
 
-       // Install handlers to decorate selected check-box inputs when
-       // they get clicked. Selected options text (next sibling) will
-       // be decorated with 'line-through' style and rendered in
-       // 'red'. Options not selected (or unselected) text will be
-       // rendered in 'blue' and without any decoration.
-       main_area.all(
-           "input.line-through-when-checked").on('click', function(e) {
-               var input = e.currentTarget;
-               var link = input.ancestor("tr").one("a");
-               if (link === null) {
-                   return;
+       var table = Y.one("#ppa-dependencies");
+       if (table === null) {
+           return;
+       }
+
+       // Dark tooltip: shown on hover/focus via CSS. Add a click toggle
+       // for touch devices, and Escape to dismiss (WCAG 1.4.13).
+       table.all(".help-tip").each(function(tip) {
+           var trigger = tip.one(".help-trigger");
+           if (trigger === null) {
+               return;
+           }
+           trigger.on("click", function(e) {
+               e.preventDefault();
+               tip.toggleClass("help-tip-open");
+           });
+           tip.on("key", function(e) {
+               tip.removeClass("help-tip-open");
+               trigger.blur();
+           }, "esc");
+       });
+
+       // The pin priority widget is rendered server-side as a plain text
+       // input (IntWidget). Upgrade it in place to a native number input
+       // with the documented bounds and wire it to the help text. The
+       // server-side validation remains authoritative.
+       table.all(".pin-priority-cell input").each(function(input) {
+           if (input.get("type") === "hidden") {
+               return;
+           }
+           try {
+               input.setAttribute("type", "number");
+           }
+           catch (e) {
+               // Ancient browsers refuse to mutate the type; the text
+               // input keeps working, so carry on.
+           }
+           input.setAttribute("min", String(PRIORITY_MIN));
+           input.setAttribute("max", String(PRIORITY_MAX));
+           input.setAttribute("step", "1");
+           input.setAttribute("inputmode", "numeric");
+           input.setAttribute("aria-describedby", "pin-priority-help");
+           input.addClass("pin-priority-input");
+           // The column header alone is ambiguous when the control is
+           // read out of context by a screen reader.
+           var row = input.ancestor("tr");
+           var name_node = (row === null)
+               ? null : row.one(".dependency-name");
+           if (name_node !== null) {
+               input.setAttribute(
+                   "aria-label",
+                   "Pin priority for " + name_node.get("text"));
+           }
+       });
+
+       // Reflect the pending-removal state of a single row.
+       function set_pending_removal(row, pending) {
+           if (row === null) {
+               return;
+           }
+           var priority = row.one(".pin-priority-cell input.pin-priority-input");
+           if (priority === null) {
+               priority = row.one(
+                   ".pin-priority-cell input:not([type=hidden])");
+           }
+           var cell = row.one(".pin-priority-cell");
+           var mirror = row.one(".pin-priority-cell input.pin-priority-mirror");
+           var status = row.one(".pending-removal-status");
+
+           if (pending) {
+               row.addClass("pending-removal");
+               if (priority !== null) {
+                   // Disabled controls are not submitted, so keep a
+                   // hidden twin to preserve the posted value.
+                   if (mirror === null && cell !== null) {
+                       mirror = Y.Node.create('<input type="hidden" />');
+                       mirror.addClass("pin-priority-mirror");
+                       mirror.set("name", priority.get("name"));
+                       cell.append(mirror);
+                   }
+                   if (mirror !== null) {
+                       mirror.set("value", priority.get("value"));
+                   }
+                   priority.set("disabled", true);
+                   priority.setAttribute("aria-disabled", "true");
                }
-               if (input.get("checked")) {
-                   link.setStyle("color", "red");
-                   link.setStyle("textDecoration", "line-through");
+               if (status !== null) {
+                   status.setContent(PENDING_REMOVAL_TEXT);
                }
-               else {
-                   link.setStyle("color", "blue");
-                   link.setStyle("textDecoration", "none");
+           }
+           else {
+               row.removeClass("pending-removal");
+               if (priority !== null) {
+                   priority.set("disabled", false);
+                   priority.removeAttribute("aria-disabled");
                }
-        });
+               if (mirror !== null) {
+                   mirror.remove(true);
+               }
+               if (status !== null) {
+                   status.setContent("");
+               }
+           }
+       }
+
+       // Rows marked for removal get a subtle background, a strike-through
+       // name, a dimmed disabled priority field and a politely announced
+       // status. The checkbox stays enabled so the removal can be undone.
+       table.all("input.line-through-when-checked").each(function(checkbox) {
+           // Restore state when the form is redisplayed after a
+           // validation error.
+           set_pending_removal(
+               checkbox.ancestor("tr"), checkbox.get("checked"));
+           var handler = function(e) {
+               var target = e.currentTarget;
+               set_pending_removal(
+                   target.ancestor("tr"), target.get("checked"));
+           };
+           checkbox.on("change", handler);
+           checkbox.on("click", handler);
+       });
    });
 </script>
-
-
 </div> <!--top-portlet -->
 </div> <!--main -->
-
 </body>
 </html>

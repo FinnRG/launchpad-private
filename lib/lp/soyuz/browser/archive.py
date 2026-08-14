@@ -2119,28 +2119,29 @@ class ArchiveEditDependenciesView(ArchiveViewBase, LaunchpadFormView):
     def dependency_items(self):
         """Data for rendering the dependency listing table.
 
-        One item per visible PPA dependency, containing its linked
-        title, the vocabulary token used by the deletion checkbox, and
-        the widget for the dynamic 'priority_<id>' field created in
-        `createPriorityFields`.
+        One item per PPA dependency, containing its linked
+        title if visible, the vocabulary token used by the deletion
+        checkbox, and the widget for the dynamic 'priority_<id>' field
+        created in `createPriorityFields`.
         """
         items = []
         for archive_dependency in self.context.dependencies:
             dependency = archive_dependency.dependency
             if not dependency.is_ppa:
                 continue
-            if not check_permission("launchpad.View", dependency):
-                continue
-            items.append(
-                {
-                    "title": archive_dependency.title,
-                    "url": canonical_url(dependency),
-                    "token": dependency.reference,
-                    "priority_widget": self.widgets.get(
-                        "priority_%d" % dependency.id
-                    ),
-                }
-            )
+            can_view = check_permission("launchpad.View", dependency)
+            item = {
+                "title": archive_dependency.title,
+                "token": dependency.reference,
+                "priority_widget": self.widgets.get(
+                    "priority_%d" % dependency.id
+                ),
+            }
+            if can_view:
+                item["url"] = canonical_url(dependency)
+            else:
+                item["url"] = None
+            items.append(item)
         return items
 
     @property
