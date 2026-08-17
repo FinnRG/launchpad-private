@@ -27,13 +27,13 @@
          <tal:plural
            condition="python: view.number_of_registered_builders != 1"
            replace="string:machines:">machines:</tal:plural>
-         <span style="font-weight: bold; color: green"
+         <span style="font-weight: bold"
                tal:content="view/number_of_available_builders">1</span> available
-         (<span style="font-weight: bold; color: blue"
+         (<span style="font-weight: bold"
                tal:content="view/number_of_building_builders">1</span> building,
-         <span style="font-weight: bold; color: orange"
+         <span style="font-weight: bold"
                tal:content="view/number_of_cleaning_builders">0</span> cleaning,
-         <span style="font-weight: bold; color: gray"
+         <span style="font-weight: bold"
                tal:content="view/number_of_idle_builders">0</span> idle)
          and <span style="font-weight: bold; color: red"
                tal:content="view/number_of_disabled_builders">1</span> disabled
