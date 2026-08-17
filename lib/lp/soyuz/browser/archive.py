@@ -132,6 +132,9 @@ from lp.soyuz.enums import (
 from lp.soyuz.interfaces.archive import (
     ARCHIVE_BUGS_FEATURE_FLAG,
     ARCHIVE_WEBHOOKS_FEATURE_FLAG,
+    DEFAULT_PIN_PRIORITY,
+    MAXIMUM_PIN_PRIORITY,
+    MINIMUM_PIN_PRIORITY,
     ArchiveDependencyError,
     CannotCopy,
     IArchive,
@@ -1858,10 +1861,6 @@ class ArchiveEditDependenciesView(ArchiveViewBase, LaunchpadFormView):
     label = "Edit PPA dependencies"
     page_title = label
 
-    minimum_pin_priority = -100
-    maximum_pin_priority = 2000
-    default_pin_priority = 500
-
     def initialize(self):
         self.cancel_url = canonical_url(self.context)
         self._messages = []
@@ -1892,7 +1891,7 @@ class ArchiveEditDependenciesView(ArchiveViewBase, LaunchpadFormView):
         'priority_123') so the template can render it next to the
         dependency's title, and is pre-populated with the current
         `IArchiveDependency.pin_priority`. Allowed values are restricted
-        to the [-100, 2000] range.
+        to the [MINIMUM_PIN_PRIORITY, MAXIMUM_PIN_PRIORITY] range.
         """
         fields = []
         for archive_dependency in self.context.dependencies:
@@ -1907,8 +1906,8 @@ class ArchiveEditDependenciesView(ArchiveViewBase, LaunchpadFormView):
                     title=_("Priority"),
                     required=False,
                     default=archive_dependency.pin_priority,
-                    min=self.minimum_pin_priority,
-                    max=self.maximum_pin_priority,
+                    min=MINIMUM_PIN_PRIORITY,
+                    max=MAXIMUM_PIN_PRIORITY,
                 )
             )
         return form.Fields(*fields)
@@ -2111,6 +2110,15 @@ class ArchiveEditDependenciesView(ArchiveViewBase, LaunchpadFormView):
         )
 
     @cachedproperty
+    def pin_priority_settings(self):
+        """Pin-priority values shared with the model and template."""
+        return {
+            "default": DEFAULT_PIN_PRIORITY,
+            "minimum": MINIMUM_PIN_PRIORITY,
+            "maximum": MAXIMUM_PIN_PRIORITY,
+        }
+
+    @cachedproperty
     def has_dependencies(self):
         """Whether or not the PPA has recorded dependencies."""
         return not self.context.dependencies.is_empty()
@@ -2247,7 +2255,7 @@ class ArchiveEditDependenciesView(ArchiveViewBase, LaunchpadFormView):
         """Update the pin priority of existing dependencies.
 
         Extracts the dynamic 'priority_<id>' values from the form data,
-        checks them against the allowed [-100, 2000] range, and stores
+        checks them against the allowed range, and stores
         the changed values. Dependencies selected for removal in the
         same submission are skipped.
 
@@ -2267,17 +2275,17 @@ class ArchiveEditDependenciesView(ArchiveViewBase, LaunchpadFormView):
             if new_priority is None:
                 continue
             if (
-                not self.minimum_pin_priority
+                not MINIMUM_PIN_PRIORITY
                 <= new_priority
-                <= self.maximum_pin_priority
+                <= MAXIMUM_PIN_PRIORITY
             ):
                 self.setFieldError(
                     field_name,
                     _(
                         "Priority must be between %d and %d."
                         % (
-                            self.minimum_pin_priority,
-                            self.maximum_pin_priority,
+                            MINIMUM_PIN_PRIORITY,
+                            MAXIMUM_PIN_PRIORITY,
                         )
                     ),
                 )
