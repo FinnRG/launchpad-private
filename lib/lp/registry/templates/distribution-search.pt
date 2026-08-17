@@ -59,7 +59,7 @@
                 </div>
                 <div class="summary">
                   <tal:project_only condition="project">
-                  <p tal:content="structure project/summary" />
+                  <p tal:content="project/summary" />
                   </tal:project_only>
                   <p>Available in: 
                     <tal:distroseries_list
@@ -128,7 +128,7 @@
                   <p>
                   <tal:summary
                     tal:condition="project"
-                    tal:content="structure project/summary">
+                    tal:content="project/summary">
                       A snippet of search result summary text.
                   </tal:summary>
                   <tal:binary-search-only condition="view/search_by_binary_name">
