@@ -32,6 +32,7 @@ builder state. In the sampledata, the builder 'bob' is building
     ... )
     View full history Current status
     Building i386 build of mozilla-firefox 0.9 in ubuntu hoary RELEASE
+    (for ...)
     Started ... ago.
     Buildlog
     Dummy sampledata entry, not processing
@@ -51,6 +52,7 @@ outdated information.
     ... )
     View full history Current status
     Building i386 build of mozilla-firefox 0.9 in ubuntu hoary RELEASE
+    (for ...)
     Started ... ago.
     Buildlog
     Dummy sampledata entry, not processing
