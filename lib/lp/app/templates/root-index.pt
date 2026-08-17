@@ -189,9 +189,9 @@
                 <li class="p-matrix__item" tal:repeat="project view/featured_projects">
                   <img class="p-matrix__img" tal:attributes="src project/image:logo_src; alt project/displayname">
                   <div class="p-matrix__content">
-                    <h4 class="p-matrix__title"><a class="p-matrix__link" href="#" tal:content="structure project/displayname" tal:attributes="href project/fmt:url"></a></h4>
+                    <h4 class="p-matrix__title"><a class="p-matrix__link" href="#" tal:content="project/displayname" tal:attributes="href project/fmt:url"></a></h4>
                     <div class="p-matrix__desc">
-                        <p tal:content="structure project/summary/fmt:shorten/100"></p>
+                        <p tal:content="project/summary/fmt:shorten/100"></p>
                     </div>
                   </div>
                 </li>

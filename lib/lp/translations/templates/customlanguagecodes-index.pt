@@ -11,7 +11,7 @@
     <div class="top-portlet">
       <p>
         You can define custom language codes for
-        <tal:target replace="structure context/displayname">Evolution</tal:target>
+        <tal:target replace="context/displayname">Evolution</tal:target>
         here.  Custom language codes will be treated like proper
         language codes by translations imports, except each is
         associated with a language you choose.
