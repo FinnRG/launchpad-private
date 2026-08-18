@@ -580,10 +580,12 @@ class IArchiveSubscriberView(Interface):
     @operation_parameters(
         name=TextLine(title=_("Source package name"), required=False),
         version=TextLine(title=_("Version"), required=False),
-        status=Choice(
+        status=List(
             title=_("Package Publishing Status"),
-            description=_("The status of this publishing record"),
-            vocabulary=PackagePublishingStatus,
+            description=_(
+                "The status (or statuses) of this publishing record."
+            ),
+            value_type=Choice(vocabulary=PackagePublishingStatus),
             required=False,
         ),
         distroseries=Reference(

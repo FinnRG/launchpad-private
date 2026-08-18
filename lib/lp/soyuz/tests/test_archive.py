@@ -4588,6 +4588,42 @@ class TestGetPublishedSourcesWebService(TestCaseWithFactory):
         )
         self.assertEqual(400, response.status)
 
+    def test_getPublishedSources_filter_by_status_list(self):
+        # status accepts a list of statuses over the webservice, not just
+        # a single value.
+        ppa = self.createTestingPPA()
+        ppa_url = f"/~{ppa.owner.name}/+archive/ubuntu/ppa"
+
+        with admin_logged_in():
+            sources = list(ppa.getPublishedSources())
+            removeSecurityProxy(sources[0]).status = (
+                PackagePublishingStatus.PUBLISHED
+            )
+            removeSecurityProxy(sources[1]).status = (
+                PackagePublishingStatus.SUPERSEDED
+            )
+            Store.of(ppa).flush()
+
+        webservice = webservice_for_person(
+            ppa.owner, permission=OAuthPermission.READ_PRIVATE
+        )
+        response = webservice.named_get(
+            ppa_url,
+            "getPublishedSources",
+            status=["Published", "Superseded"],
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual(2, response.jsonBody()["total_size"])
+
+        # A bare scalar (as before this field became a List) still works.
+        response_scalar = webservice.named_get(
+            ppa_url,
+            "getPublishedSources",
+            status="Published",
+        )
+        self.assertEqual(200, response_scalar.status)
+        self.assertEqual(1, response_scalar.jsonBody()["total_size"])
+
 
 class TestCopyPackage(TestCaseWithFactory):
     layer = DatabaseFunctionalLayer
