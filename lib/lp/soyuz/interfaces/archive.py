@@ -35,6 +35,7 @@ __all__ = [
     "InsufficientUploadRights",
     "InvalidComponent",
     "InvalidExternalDependencies",
+    "InvalidOrderBy",
     "InvalidPocketForPartnerArchive",
     "InvalidPocketForPPA",
     "IPPA",
@@ -212,6 +213,11 @@ class NoSuchDistroSeriesInArchive(NameLookupFailed):
 @error_status(http.client.BAD_REQUEST)
 class VersionRequiresName(Exception):
     """Raised on some queries when version is specified but name is not."""
+
+
+@error_status(http.client.BAD_REQUEST)
+class InvalidOrderBy(ValueError):
+    """Raised when getPublishedSources' order_by has an unrecognized key."""
 
 
 @error_status(http.client.BAD_REQUEST)
@@ -638,24 +644,35 @@ class IArchiveSubscriberView(Interface):
                 "publications since their last run. If not "
                 "specified, results are ordered by source "
                 "package name (lexicographically), then by "
-                "descending version and then descending ID."
+                "descending version and then descending ID. "
+                "DEPRECATED: use order_by=['-date_created'] instead."
             ),
             required=False,
         ),
         order_by_date_ascending=Bool(
             title=_("Order by ascending creation date"),
-            description=_("Return oldest results first."),
+            description=_(
+                "Return oldest results first. DEPRECATED: use "
+                "order_by=['date_created'] instead."
+            ),
             required=False,
         ),
-        order_by=Choice(
+        order_by=List(
             title=_("Sort order"),
             description=_(
-                "Sort order of the package publication. Can be either "
-                "ascending or descending of publication date, source "
-                "package name, series, pocket, binary package count, "
-                "or status."
+                "A list of field keys to sort by: date_published, "
+                "date_created, source_package_name, series, pocket, "
+                "status. 'series' sorts by the distroseries' version; "
+                "'pocket' and 'status' sort alphabetically by name, not "
+                "by their underlying database value. "
+                "Prefix a key with '-' for descending order, "
+                "e.g. ['-date_published', 'status']. DEPRECATED: a "
+                "single ArchivePublishingSort value (published_date_asc "
+                "or published_date_desc) is still accepted for "
+                "backwards compatibility; use ['date_published'] / "
+                "['-date_published'] in new code."
             ),
-            vocabulary=ArchivePublishingSort,
+            value_type=Text(),
             required=False,
         ),
         maintained_by=Reference(
@@ -774,17 +791,28 @@ class IArchiveSubscriberView(Interface):
             that need to catch up with publications since their last run.
             If not specified, publications are ordered by source
             package name (lexicographically), then by descending version
-            and then descending ID.
-        :param order_by_date_ascending: Order publications by descending
-            creation date and then by ascending ID.
+            and then descending ID. DEPRECATED: use
+            order_by=["-date_created"] instead.
+        :param order_by_date_ascending: Order publications by ascending
+            creation date and then by ascending ID. DEPRECATED: use
+            order_by=["date_created"] instead.
         :param include_removed: If True, include publications that have been
             removed from disk as well as those that have not.
         :param only_unpublished: If True, only include publications that
             have never been published to disk.
-        :param order_by: An `ArchivePublishingSort` value controlling sort
-            order (publication date, source package name, series, pocket,
-            binary package count, or status; each ascending or
-            descending).
+        :param order_by: A list of field keys to sort by: "date_published",
+            "date_created", "source_package_name", "series", "pocket",
+            "status". "series" sorts by the distroseries' version, so
+            older series come first. "pocket" and "status" sort
+            alphabetically by name, not by their underlying database
+            value. Prefix a key with "-" for descending
+            order, e.g. ["-date_published", "status"].
+            Multiple keys combine in the order given, with a raised
+            `InvalidOrderBy` for any unrecognized key. DEPRECATED: a
+            single `ArchivePublishingSort` value
+            (`PUBLISHED_DATE_ASC`/`PUBLISHED_DATE_DESC`, or the
+            equivalent "published_date_asc"/"published_date_desc"
+            string) is still accepted for backwards compatibility.
         :param maintained_by: Only return publications maintained by this
             `IPerson` (`SourcePackageRelease.maintainer`).
         :param changed_by: Only return publications whose changelog author

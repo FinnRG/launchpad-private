@@ -24,6 +24,7 @@ import six
 from lazr.lifecycle.event import ObjectCreatedEvent
 from lazr.restful.declarations import error_status
 from storm.databases.postgres import JSON as PgJSON
+from storm.databases.postgres import Case
 from storm.expr import (
     Alias,
     And,
@@ -32,6 +33,7 @@ from storm.expr import (
     Count,
     Desc,
     Exists,
+    Func,
     Is,
     Join,
     Not,
@@ -155,6 +157,7 @@ from lp.soyuz.interfaces.archive import (
     InsufficientUploadRights,
     InvalidComponent,
     InvalidExternalDependencies,
+    InvalidOrderBy,
     InvalidPocketForPartnerArchive,
     InvalidPocketForPPA,
     NamedAuthTokenFeatureDisabled,
@@ -218,6 +221,71 @@ PRE_RELEASE_POCKETS = [
     PackagePublishingPocket.PROPOSED,
     PackagePublishingPocket.BACKPORTS,
 ]
+
+
+# getPublishedSources' order_by also accepts these as deprecated aliases
+# for ["-date_published"] / ["date_published"], for backwards
+# compatibility with callers using the pre-existing
+# ArchivePublishingSort-based API (both the enum item itself, for direct
+# Python callers, and its webservice string token, for old webservice
+# callers).
+PUBLISHED_SOURCES_LEGACY_ORDER_BY_ALIASES = {
+    "published_date_desc": "-date_published",
+    "published_date_asc": "date_published",
+    ArchivePublishingSort.PUBLISHED_DATE_DESC: "-date_published",
+    ArchivePublishingSort.PUBLISHED_DATE_ASC: "date_published",
+}
+
+
+def _published_sources_series_version():
+    """Return the expression sorting on a distroseries' version.
+
+    `DistroSeries.version` is a text column, so it has to be sorted
+    through `debversion_sort_key` to order "9.10" before "10.04" rather
+    than after it. The field is validated as a Debian version, so the
+    Debian sort function is the right one.
+    """
+    # `DistroSeries` cannot be imported at module level here, since
+    # importing it pulls this module back in.
+    from lp.registry.model.distroseries import DistroSeries
+
+    return Func("debversion_sort_key", DistroSeries.version)
+
+
+def _alphabetical_enum_order(column, enum_type):
+    """Return the expression sorting a DBEnum column alphabetically.
+
+    `column`'s underlying database value is the item's numeric position
+    in `enum_type`'s declaration, which usually isn't alphabetical order
+    (for example, `PackagePublishingPocket.UPDATES` is 20 and
+    `PackagePublishingPocket.BACKPORTS` is 40, even though "Backports"
+    sorts before "Updates"). Build a `CASE` expression mapping each item
+    to its rank in alphabetical order by title instead.
+    """
+    ranked_items = sorted(enum_type.items, key=lambda item: item.title)
+    return Case(
+        cases=[
+            (column == item, rank) for rank, item in enumerate(ranked_items)
+        ]
+    )
+
+
+# Maps a getPublishedSources order_by field key to a callable returning
+# the Storm expression to sort by. These are callables because "series"
+# has to import `DistroSeries` lazily to dodge a circular import, and a
+# uniform convention beats special-casing a single key at the callsite.
+PUBLISHED_SOURCES_ORDER_BY_EXPRESSIONS = {
+    "date_published": lambda: SourcePackagePublishingHistory.datepublished,
+    "date_created": lambda: SourcePackagePublishingHistory.datecreated,
+    "source_package_name": lambda: SourcePackageName.name,
+    "series": _published_sources_series_version,
+    "pocket": lambda: _alphabetical_enum_order(
+        SourcePackagePublishingHistory.pocket, PackagePublishingPocket
+    ),
+    "status": lambda: _alphabetical_enum_order(
+        SourcePackagePublishingHistory.status, PackagePublishingStatus
+    ),
+}
 
 
 @error_status(http.client.BAD_REQUEST)
@@ -838,101 +906,42 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         clauses = [SourcePackagePublishingHistory.archive == self]
 
         explicit_order_by = (
-            order_by_date or order_by_date_ascending or order_by is not None
+            order_by_date or order_by_date_ascending or bool(order_by)
         )
 
-        if order_by == ArchivePublishingSort.PUBLISHED_DATE_DESC:
-            order_by_list = [
-                Desc(SourcePackagePublishingHistory.datepublished),
-                Desc(SourcePackagePublishingHistory.id),
-            ]
-        elif order_by == ArchivePublishingSort.PUBLISHED_DATE_ASC:
-            order_by_list = [
-                Asc(SourcePackagePublishingHistory.datepublished),
-                Asc(SourcePackagePublishingHistory.id),
-            ]
-        elif order_by == ArchivePublishingSort.SOURCE_NAME_ASC:
-            order_by_list = [
-                Asc(SourcePackageName.name),
-                Desc(SourcePackagePublishingHistory.id),
-            ]
-        elif order_by == ArchivePublishingSort.SOURCE_NAME_DESC:
-            order_by_list = [
-                Desc(SourcePackageName.name),
-                Desc(SourcePackagePublishingHistory.id),
-            ]
-        elif order_by == ArchivePublishingSort.SERIES_ASC:
-            order_by_list = [
-                Asc(SourcePackagePublishingHistory.distroseries_id),
-                Desc(SourcePackagePublishingHistory.id),
-            ]
-        elif order_by == ArchivePublishingSort.SERIES_DESC:
-            order_by_list = [
-                Desc(SourcePackagePublishingHistory.distroseries_id),
-                Desc(SourcePackagePublishingHistory.id),
-            ]
-        elif order_by == ArchivePublishingSort.POCKET_ASC:
-            order_by_list = [
-                Asc(SourcePackagePublishingHistory.pocket),
-                Desc(SourcePackagePublishingHistory.id),
-            ]
-        elif order_by == ArchivePublishingSort.POCKET_DESC:
-            order_by_list = [
-                Desc(SourcePackagePublishingHistory.pocket),
-                Desc(SourcePackagePublishingHistory.id),
-            ]
-        elif order_by == ArchivePublishingSort.STATUS_ASC:
-            order_by_list = [
-                Asc(SourcePackagePublishingHistory.status),
-                Desc(SourcePackagePublishingHistory.id),
-            ]
-        elif order_by == ArchivePublishingSort.STATUS_DESC:
-            order_by_list = [
-                Desc(SourcePackagePublishingHistory.status),
-                Desc(SourcePackagePublishingHistory.id),
-            ]
-        elif order_by in (
-            ArchivePublishingSort.BINARY_COUNT_ASC,
-            ArchivePublishingSort.BINARY_COUNT_DESC,
-        ):
-            binary_count = Select(
-                Count(BinaryPackagePublishingHistory.id),
-                where=And(
-                    BinaryPackagePublishingHistory.binarypackagerelease_id
-                    == BinaryPackageRelease.id,
-                    BinaryPackagePublishingHistory.distroarchseries_id
-                    == DistroArchSeries.id,
-                    BinaryPackagePublishingHistory.archive_id
-                    == SourcePackagePublishingHistory.archive_id,
-                    BinaryPackagePublishingHistory.pocket
-                    == SourcePackagePublishingHistory.pocket,
-                    DistroArchSeries.distroseries_id
-                    == SourcePackagePublishingHistory.distroseries_id,
-                    BinaryPackageRelease.build == BinaryPackageBuild.id,
-                    BinaryPackageBuild.source_package_release
-                    == SourcePackagePublishingHistory.sourcepackagerelease_id,
-                ),
-                # Pin the subquery's own FROM to just the binary-side
-                # tables, otherwise Storm also pulls in
-                # SourcePackagePublishingHistory (referenced in the WHERE
-                # clause above to correlate with the outer query) and the
-                # subquery stops being correlated.
-                tables=(
-                    BinaryPackagePublishingHistory,
-                    BinaryPackageRelease,
-                    DistroArchSeries,
-                    BinaryPackageBuild,
-                ),
-            )
-            sort_fn = (
-                Asc
-                if order_by == ArchivePublishingSort.BINARY_COUNT_ASC
-                else Desc
-            )
-            order_by_list = [
-                sort_fn(binary_count),
-                Desc(SourcePackagePublishingHistory.id),
-            ]
+        order_by_source_name = False
+        order_by_series = False
+        if order_by:
+            if not isinstance(order_by, (list, tuple)):
+                order_by = [order_by]
+            order_by_list = []
+            for raw_key in order_by:
+                key = PUBLISHED_SOURCES_LEGACY_ORDER_BY_ALIASES.get(
+                    raw_key, raw_key
+                )
+                if not isinstance(key, str):
+                    raise InvalidOrderBy(
+                        "Unrecognized order_by: %r" % (raw_key,)
+                    )
+                descending = key.startswith("-")
+                field = key[1:] if descending else key
+                try:
+                    expression = PUBLISHED_SOURCES_ORDER_BY_EXPRESSIONS[
+                        field
+                    ]()
+                except KeyError:
+                    raise InvalidOrderBy(
+                        "Unrecognized order_by: %r" % (raw_key,)
+                    )
+                if field == "source_package_name":
+                    order_by_source_name = True
+                elif field == "series":
+                    order_by_series = True
+                order_by_list.append(
+                    Desc(expression) if descending else Asc(expression)
+                )
+            # tiebreak on id descending
+            order_by_list.append(Desc(SourcePackagePublishingHistory.id))
         elif order_by_date:
             order_by_list = [
                 Desc(SourcePackagePublishingHistory.datecreated),
@@ -949,18 +958,19 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                 Desc(SourcePackagePublishingHistory.id),
             ]
 
-        if (
-            not explicit_order_by
-            or name is not None
-            or order_by
-            in (
-                ArchivePublishingSort.SOURCE_NAME_ASC,
-                ArchivePublishingSort.SOURCE_NAME_DESC,
-            )
-        ):
+        if not explicit_order_by or name is not None or order_by_source_name:
             clauses.append(
                 SourcePackagePublishingHistory.sourcepackagename_id
                 == SourcePackageName.id
+            )
+
+        if order_by_series:
+            # Sorting on the series version needs the series itself.
+            from lp.registry.model.distroseries import DistroSeries
+
+            clauses.append(
+                SourcePackagePublishingHistory.distroseries_id
+                == DistroSeries.id
             )
 
         if name is not None:

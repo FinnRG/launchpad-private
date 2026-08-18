@@ -101,6 +101,7 @@ from lp.soyuz.interfaces.archive import (
     IArchiveSet,
     InsufficientUploadRights,
     InvalidExternalDependencies,
+    InvalidOrderBy,
     InvalidPocketForPartnerArchive,
     InvalidPocketForPPA,
     NamedAuthTokenFeatureDisabled,
@@ -4074,6 +4075,26 @@ class TestGetPublishedSources(TestCaseWithFactory):
             ),
         )
 
+    def test_order_by_date_created_key(self):
+        # order_by=["date_created"]/["-date_created"] is the new-style
+        # equivalent of the deprecated order_by_date/
+        # order_by_date_ascending booleans, sorting on the same
+        # datecreated column.
+        archive = self.factory.makeArchive()
+        dates = [self.factory.getUniqueDate() for _ in range(5)]
+        for i in range(5):
+            self.factory.makeSourcePackagePublishingHistory(
+                archive=archive, date_uploaded=dates[(i + 1) % 5]
+            )
+        self.assertEqual(
+            list(archive.getPublishedSources(order_by_date=True)),
+            list(archive.getPublishedSources(order_by=["-date_created"])),
+        )
+        self.assertEqual(
+            list(archive.getPublishedSources(order_by_date_ascending=True)),
+            list(archive.getPublishedSources(order_by=["date_created"])),
+        )
+
     def test_order_by_published_date_descending(self):
         archive = self.factory.makeArchive()
         pub0 = self.factory.makeSourcePackagePublishingHistory(
@@ -4360,73 +4381,167 @@ class TestGetPublishedSources(TestCaseWithFactory):
             ),
         )
         asc = list(
-            archive.getPublishedSources(
-                order_by=ArchivePublishingSort.SOURCE_NAME_ASC
-            )
+            archive.getPublishedSources(order_by=["source_package_name"])
         )
         self.assertEqual([spph_a, spph_z], asc)
         desc = list(
-            archive.getPublishedSources(
-                order_by=ArchivePublishingSort.SOURCE_NAME_DESC
-            )
+            archive.getPublishedSources(order_by=["-source_package_name"])
         )
         self.assertEqual([spph_z, spph_a], desc)
 
-    def test_order_by_binary_count(self):
-        archive = self.factory.makeArchive()
-        ds = self.factory.makeDistroSeries(distribution=archive.distribution)
-        das = self.factory.makeDistroArchSeries(distroseries=ds)
-
-        spph_many = self.factory.makeSourcePackagePublishingHistory(
-            archive=archive, distroseries=ds
+    def test_order_by_series(self):
+        # "series" sorts by the series version, which is neither the
+        # series name order nor the series creation (id) order, and is
+        # not a plain text sort of the version either.
+        distribution = self.factory.makeDistribution()
+        archive = self.factory.makeArchive(distribution=distribution)
+        bionic = self.factory.makeDistroSeries(
+            distribution=distribution, name="bionic", version="10.04"
         )
-        for _ in range(3):
-            self.factory.makeBinaryPackagePublishingHistory(
-                archive=archive,
-                distroarchseries=das,
-                source_package_release=spph_many.sourcepackagerelease,
-                pocket=spph_many.pocket,
-            )
-
-        spph_few = self.factory.makeSourcePackagePublishingHistory(
-            archive=archive, distroseries=ds
+        artful = self.factory.makeDistroSeries(
+            distribution=distribution, name="artful", version="22.04"
         )
-        self.factory.makeBinaryPackagePublishingHistory(
+        zesty = self.factory.makeDistroSeries(
+            distribution=distribution, name="zesty", version="9.10"
+        )
+        pub_bionic = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, distroseries=bionic
+        )
+        pub_artful = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, distroseries=artful
+        )
+        pub_zesty = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, distroseries=zesty
+        )
+        self.assertEqual(
+            [pub_zesty, pub_bionic, pub_artful],
+            list(archive.getPublishedSources(order_by=["series"])),
+        )
+        self.assertEqual(
+            [pub_artful, pub_bionic, pub_zesty],
+            list(archive.getPublishedSources(order_by=["-series"])),
+        )
+
+    def test_order_by_pocket(self):
+        # "pocket" sorts alphabetically by the pocket's title, not by its
+        # database value: BACKPORTS (40) comes before UPDATES (20)
+        # because "Backports" sorts before "Updates".
+        distroseries = self.factory.makeDistroSeries()
+        archive = distroseries.main_archive
+        pub_updates = self.factory.makeSourcePackagePublishingHistory(
             archive=archive,
-            distroarchseries=das,
-            source_package_release=spph_few.sourcepackagerelease,
-            pocket=spph_few.pocket,
+            distroseries=distroseries,
+            pocket=PackagePublishingPocket.UPDATES,
+        )
+        pub_backports = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            distroseries=distroseries,
+            pocket=PackagePublishingPocket.BACKPORTS,
+        )
+        self.assertEqual(
+            [pub_backports, pub_updates],
+            list(archive.getPublishedSources(order_by=["pocket"])),
+        )
+        self.assertEqual(
+            [pub_updates, pub_backports],
+            list(archive.getPublishedSources(order_by=["-pocket"])),
         )
 
-        desc = list(
-            archive.getPublishedSources(
-                order_by=ArchivePublishingSort.BINARY_COUNT_DESC
-            )
-        )
-        self.assertEqual(spph_many.id, desc[0].id)
-        self.assertEqual(spph_few.id, desc[1].id)
-
-        asc = list(
-            archive.getPublishedSources(
-                order_by=ArchivePublishingSort.BINARY_COUNT_ASC
-            )
-        )
-        self.assertEqual(spph_few.id, asc[0].id)
-        self.assertEqual(spph_many.id, asc[1].id)
-
-    def test_order_by_series_pocket_status(self):
+    def test_order_by_status(self):
+        # "status" sorts alphabetically by the status' title, not by its
+        # database value: DELETED (4) comes before PENDING (1) because
+        # "Deleted" sorts before "Pending".
         archive = self.factory.makeArchive()
-        self.factory.makeSourcePackagePublishingHistory(archive=archive)
-        for order in (
-            ArchivePublishingSort.SERIES_ASC,
-            ArchivePublishingSort.SERIES_DESC,
-            ArchivePublishingSort.POCKET_ASC,
-            ArchivePublishingSort.POCKET_DESC,
-            ArchivePublishingSort.STATUS_ASC,
-            ArchivePublishingSort.STATUS_DESC,
-        ):
-            # Just confirm the query builds and executes without error.
-            list(archive.getPublishedSources(order_by=order))
+        pub_pending = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, status=PackagePublishingStatus.PENDING
+        )
+        pub_deleted = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, status=PackagePublishingStatus.DELETED
+        )
+        self.assertEqual(
+            [pub_deleted, pub_pending],
+            list(archive.getPublishedSources(order_by=["status"])),
+        )
+        self.assertEqual(
+            [pub_pending, pub_deleted],
+            list(archive.getPublishedSources(order_by=["-status"])),
+        )
+
+    def test_order_by_legacy_string_token(self):
+        # The pre-existing single-value form (either the
+        # ArchivePublishingSort item itself or its webservice string
+        # token) is still accepted as a deprecated alias for
+        # ["-date_published"] / ["date_published"].
+        archive = self.factory.makeArchive()
+        pub0 = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub0).datepublished = datetime(
+            2026, 1, 1, tzinfo=timezone.utc
+        )
+        pub1 = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub1).datepublished = datetime(
+            2026, 1, 2, tzinfo=timezone.utc
+        )
+        expected = [pub1, pub0]
+        self.assertEqual(
+            expected,
+            list(archive.getPublishedSources(order_by="published_date_desc")),
+        )
+        self.assertEqual(
+            expected,
+            list(
+                archive.getPublishedSources(
+                    order_by=ArchivePublishingSort.PUBLISHED_DATE_DESC
+                )
+            ),
+        )
+        self.assertEqual(
+            expected,
+            list(archive.getPublishedSources(order_by=["-date_published"])),
+        )
+
+    def test_order_by_unrecognized_key(self):
+        archive = self.factory.makeArchive()
+        self.assertRaises(
+            InvalidOrderBy,
+            archive.getPublishedSources,
+            order_by=["bogus"],
+        )
+
+    def test_order_by_multiple_keys(self):
+        # Multiple order_by keys combine in the order given.
+        archive = self.factory.makeArchive()
+        pub_pending_new = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, status=PackagePublishingStatus.PENDING
+        )
+        removeSecurityProxy(pub_pending_new).datepublished = datetime(
+            2026, 1, 2, tzinfo=timezone.utc
+        )
+        pub_pending_old = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, status=PackagePublishingStatus.PENDING
+        )
+        removeSecurityProxy(pub_pending_old).datepublished = datetime(
+            2026, 1, 1, tzinfo=timezone.utc
+        )
+        pub_published = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub_published).datepublished = datetime(
+            2026, 1, 1, tzinfo=timezone.utc
+        )
+        results = list(
+            archive.getPublishedSources(order_by=["status", "-date_published"])
+        )
+        result_ids = [p.id for p in results]
+        # PENDING sorts before PUBLISHED; within PENDING, newest first.
+        self.assertEqual(
+            [pub_pending_new.id, pub_pending_old.id],
+            result_ids[:2],
+        )
+        self.assertIn(pub_published.id, result_ids[2:])
 
 
 class TestGetPublishedSourcesWebService(TestCaseWithFactory):
@@ -4623,6 +4738,37 @@ class TestGetPublishedSourcesWebService(TestCaseWithFactory):
         )
         self.assertEqual(200, response_scalar.status)
         self.assertEqual(1, response_scalar.jsonBody()["total_size"])
+
+    def test_getPublishedSources_order_by_new_style_keys(self):
+        # The new list-of-field-keys order_by form works over the
+        # webservice too.
+        ppa = self.createTestingPPA()
+        ppa_url = f"/~{ppa.owner.name}/+archive/ubuntu/ppa"
+        webservice = webservice_for_person(
+            ppa.owner, permission=OAuthPermission.READ_PRIVATE
+        )
+        response = webservice.named_get(
+            ppa_url,
+            "getPublishedSources",
+            order_by=["source_package_name"],
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual(5, response.jsonBody()["total_size"])
+
+    def test_getPublishedSources_order_by_unrecognized_key(self):
+        # An unrecognized order_by key is a Bad Request.
+        ppa = self.createTestingPPA()
+        ppa_url = f"/~{ppa.owner.name}/+archive/ubuntu/ppa"
+        webservice = webservice_for_person(
+            ppa.owner, permission=OAuthPermission.READ_PRIVATE
+        )
+        response = webservice.named_get(
+            ppa_url,
+            "getPublishedSources",
+            order_by=["bogus"],
+        )
+        self.assertEqual(400, response.status)
+        self.assertEqual(b"Unrecognized order_by: 'bogus'", response.body)
 
 
 class TestCopyPackage(TestCaseWithFactory):
