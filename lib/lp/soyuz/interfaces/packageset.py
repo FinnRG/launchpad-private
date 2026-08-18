@@ -132,6 +132,19 @@ class IPackagesetViewOnly(IHasOwner):
             instances.
         """
 
+    def sourcesIncludedClause(direct_inclusion=False):
+        """A Storm expression matching source names in this package set.
+
+        This is the query-building counterpart to `sourcesIncluded`,
+        for composing with other Storm queries (e.g. filtering source
+        package publications by package set) without executing a
+        separate query first.
+
+        :param direct_inclusion: if this flag is set to True only sources
+            directly included by this package set will be considered.
+        :return: A Storm expression suitable for use as a `find()` clause.
+        """
+
     @operation_parameters(direct_inclusion=Bool(required=False))
     # Really IPackageset, patched below.
     @operation_returns_collection_of(Interface)
