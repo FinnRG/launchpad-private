@@ -1030,3 +1030,85 @@ class ArchivePublishingSort(EnumeratedType):
         Sort by package publication date in descending order (newest first).
         """
     )
+
+    SOURCE_NAME_ASC = Item(
+        """
+        source_name_asc
+
+        Sort by source package name in ascending order (A to Z).
+        """
+    )
+
+    SOURCE_NAME_DESC = Item(
+        """
+        source_name_desc
+
+        Sort by source package name in descending order (Z to A).
+        """
+    )
+
+    SERIES_ASC = Item(
+        """
+        series_asc
+
+        Sort by distro series in ascending order (oldest first).
+        """
+    )
+
+    SERIES_DESC = Item(
+        """
+        series_desc
+
+        Sort by distro series in descending order (newest first).
+        """
+    )
+
+    POCKET_ASC = Item(
+        """
+        pocket_asc
+
+        Sort by pocket in ascending order.
+        """
+    )
+
+    POCKET_DESC = Item(
+        """
+        pocket_desc
+
+        Sort by pocket in descending order.
+        """
+    )
+
+    BINARY_COUNT_ASC = Item(
+        """
+        binary_count_asc
+
+        Sort by the number of built binary packages in ascending order
+        (fewest first).
+        """
+    )
+
+    BINARY_COUNT_DESC = Item(
+        """
+        binary_count_desc
+
+        Sort by the number of built binary packages in descending order
+        (most first).
+        """
+    )
+
+    STATUS_ASC = Item(
+        """
+        status_asc
+
+        Sort by publishing status in ascending order.
+        """
+    )
+
+    STATUS_DESC = Item(
+        """
+        status_desc
+
+        Sort by publishing status in descending order.
+        """
+    )

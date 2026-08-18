@@ -737,6 +737,11 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         published_since=None,
         published_until=None,
         order_by=None,
+        maintained_by=None,
+        changed_by=None,
+        signed_by=None,
+        packageset=None,
+        maintainer_team=None,
     ):
         """See `IArchive`."""
         # 'eager_load' and 'include_removed' arguments are always True
@@ -757,6 +762,11 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             published_since=published_since,
             published_until=published_until,
             order_by=order_by,
+            maintained_by=maintained_by,
+            changed_by=changed_by,
+            signed_by=signed_by,
+            packageset=packageset,
+            maintainer_team=maintainer_team,
         )
 
         def load_api_extra_objects(rows):
@@ -818,9 +828,18 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         published_since=None,
         published_until=None,
         order_by=None,
+        maintained_by=None,
+        changed_by=None,
+        signed_by=None,
+        packageset=None,
+        maintainer_team=None,
     ):
         """See `IArchive`."""
         clauses = [SourcePackagePublishingHistory.archive == self]
+
+        explicit_order_by = (
+            order_by_date or order_by_date_ascending or order_by is not None
+        )
 
         if order_by == ArchivePublishingSort.PUBLISHED_DATE_DESC:
             order_by_list = [
@@ -831,6 +850,88 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             order_by_list = [
                 Asc(SourcePackagePublishingHistory.datepublished),
                 Asc(SourcePackagePublishingHistory.id),
+            ]
+        elif order_by == ArchivePublishingSort.SOURCE_NAME_ASC:
+            order_by_list = [
+                Asc(SourcePackageName.name),
+                Desc(SourcePackagePublishingHistory.id),
+            ]
+        elif order_by == ArchivePublishingSort.SOURCE_NAME_DESC:
+            order_by_list = [
+                Desc(SourcePackageName.name),
+                Desc(SourcePackagePublishingHistory.id),
+            ]
+        elif order_by == ArchivePublishingSort.SERIES_ASC:
+            order_by_list = [
+                Asc(SourcePackagePublishingHistory.distroseries_id),
+                Desc(SourcePackagePublishingHistory.id),
+            ]
+        elif order_by == ArchivePublishingSort.SERIES_DESC:
+            order_by_list = [
+                Desc(SourcePackagePublishingHistory.distroseries_id),
+                Desc(SourcePackagePublishingHistory.id),
+            ]
+        elif order_by == ArchivePublishingSort.POCKET_ASC:
+            order_by_list = [
+                Asc(SourcePackagePublishingHistory.pocket),
+                Desc(SourcePackagePublishingHistory.id),
+            ]
+        elif order_by == ArchivePublishingSort.POCKET_DESC:
+            order_by_list = [
+                Desc(SourcePackagePublishingHistory.pocket),
+                Desc(SourcePackagePublishingHistory.id),
+            ]
+        elif order_by == ArchivePublishingSort.STATUS_ASC:
+            order_by_list = [
+                Asc(SourcePackagePublishingHistory.status),
+                Desc(SourcePackagePublishingHistory.id),
+            ]
+        elif order_by == ArchivePublishingSort.STATUS_DESC:
+            order_by_list = [
+                Desc(SourcePackagePublishingHistory.status),
+                Desc(SourcePackagePublishingHistory.id),
+            ]
+        elif order_by in (
+            ArchivePublishingSort.BINARY_COUNT_ASC,
+            ArchivePublishingSort.BINARY_COUNT_DESC,
+        ):
+            binary_count = Select(
+                Count(BinaryPackagePublishingHistory.id),
+                where=And(
+                    BinaryPackagePublishingHistory.binarypackagerelease_id
+                    == BinaryPackageRelease.id,
+                    BinaryPackagePublishingHistory.distroarchseries_id
+                    == DistroArchSeries.id,
+                    BinaryPackagePublishingHistory.archive_id
+                    == SourcePackagePublishingHistory.archive_id,
+                    BinaryPackagePublishingHistory.pocket
+                    == SourcePackagePublishingHistory.pocket,
+                    DistroArchSeries.distroseries_id
+                    == SourcePackagePublishingHistory.distroseries_id,
+                    BinaryPackageRelease.build == BinaryPackageBuild.id,
+                    BinaryPackageBuild.source_package_release
+                    == SourcePackagePublishingHistory.sourcepackagerelease_id,
+                ),
+                # Pin the subquery's own FROM to just the binary-side
+                # tables, otherwise Storm also pulls in
+                # SourcePackagePublishingHistory (referenced in the WHERE
+                # clause above to correlate with the outer query) and the
+                # subquery stops being correlated.
+                tables=(
+                    BinaryPackagePublishingHistory,
+                    BinaryPackageRelease,
+                    DistroArchSeries,
+                    BinaryPackageBuild,
+                ),
+            )
+            sort_fn = (
+                Asc
+                if order_by == ArchivePublishingSort.BINARY_COUNT_ASC
+                else Desc
+            )
+            order_by_list = [
+                sort_fn(binary_count),
+                Desc(SourcePackagePublishingHistory.id),
             ]
         elif order_by_date:
             order_by_list = [
@@ -849,13 +950,13 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             ]
 
         if (
-            not (
-                order_by_date
-                or order_by_date_ascending
-                or order_by == ArchivePublishingSort.PUBLISHED_DATE_DESC
-                or order_by == ArchivePublishingSort.PUBLISHED_DATE_ASC
-            )
+            not explicit_order_by
             or name is not None
+            or order_by
+            in (
+                ArchivePublishingSort.SOURCE_NAME_ASC,
+                ArchivePublishingSort.SOURCE_NAME_DESC,
+            )
         ):
             clauses.append(
                 SourcePackagePublishingHistory.sourcepackagename_id
@@ -874,13 +975,12 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                 clauses.append(SourcePackageName.name.is_in(name))
 
         if (
-            not (
-                order_by_date
-                or order_by_date_ascending
-                or order_by == ArchivePublishingSort.PUBLISHED_DATE_DESC
-                or order_by == ArchivePublishingSort.PUBLISHED_DATE_ASC
-            )
+            not explicit_order_by
             or version is not None
+            or maintained_by is not None
+            or changed_by is not None
+            or signed_by is not None
+            or maintainer_team is not None
         ):
             clauses.append(
                 SourcePackagePublishingHistory.sourcepackagerelease_id
@@ -897,12 +997,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                 Cast(SourcePackageRelease.version, "text")
                 == six.ensure_text(version)
             )
-        elif not (
-            order_by_date
-            or order_by_date_ascending
-            or order_by == ArchivePublishingSort.PUBLISHED_DATE_DESC
-            or order_by == ArchivePublishingSort.PUBLISHED_DATE_ASC
-        ):
+        elif not explicit_order_by:
             order_by_list.insert(1, Desc(SourcePackageRelease.version))
 
         order_by = order_by_list
@@ -914,6 +1009,48 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                     == Component.id,
                     Component.name == component_name,
                 ]
+            )
+
+        if maintained_by is not None:
+            clauses.append(SourcePackageRelease.maintainer == maintained_by)
+
+        if changed_by is not None:
+            clauses.append(SourcePackageRelease.creator == changed_by)
+
+        if signed_by is not None:
+            clauses.append(SourcePackageRelease.signing_key_owner == signed_by)
+
+        if maintainer_team is not None:
+            clauses.append(
+                Or(
+                    SourcePackageRelease.maintainer == maintainer_team,
+                    SourcePackageRelease.maintainer_id.is_in(
+                        Select(
+                            TeamParticipation.person_id,
+                            where=TeamParticipation.team == maintainer_team,
+                        )
+                    ),
+                )
+            )
+
+        if packageset is not None:
+            # A package set belongs to a single distroseries, but its
+            # source-inclusion query only yields names. Constrain the
+            # publications to that series too, otherwise publications in
+            # other series that happen to share a source package name
+            # would match as well.
+            naked_packageset = removeSecurityProxy(packageset)
+            clauses.append(
+                SourcePackagePublishingHistory.sourcepackagename_id.is_in(
+                    Select(
+                        SourcePackageName.id,
+                        where=naked_packageset.sourcesIncludedClause(),
+                    )
+                )
+            )
+            clauses.append(
+                SourcePackagePublishingHistory.distroseries
+                == naked_packageset.distroseries
             )
 
         if status is not None:

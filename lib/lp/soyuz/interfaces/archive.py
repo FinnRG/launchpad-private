@@ -649,9 +649,53 @@ class IArchiveSubscriberView(Interface):
             title=_("Sort order"),
             description=_(
                 "Sort order of the package publication. Can be either "
-                "ascending or descending of publication date."
+                "ascending or descending of publication date, source "
+                "package name, series, pocket, binary package count, "
+                "or status."
             ),
             vocabulary=ArchivePublishingSort,
+            required=False,
+        ),
+        maintained_by=Reference(
+            schema=IPerson,
+            title=_("Maintained by"),
+            description=_(
+                "Return only publications maintained by this person."
+            ),
+            required=False,
+        ),
+        changed_by=Reference(
+            schema=IPerson,
+            title=_("Changed by"),
+            description=_(
+                "Return only publications whose changelog author is "
+                "this person."
+            ),
+            required=False,
+        ),
+        signed_by=Reference(
+            schema=IPerson,
+            title=_("Signed by"),
+            description=_("Return only publications signed by this person."),
+            required=False,
+        ),
+        # Really IPackageset, patched in lp.soyuz.interfaces.webservice.
+        packageset=Reference(
+            Interface,
+            title=_("Package set"),
+            description=_(
+                "Return only sources included in this package set, and "
+                "published in the package set's distroseries."
+            ),
+            required=False,
+        ),
+        maintainer_team=Reference(
+            schema=IPerson,
+            title=_("Maintainer team"),
+            description=_(
+                "Return only publications whose maintainer is a member "
+                "of this team."
+            ),
             required=False,
         ),
     )
@@ -674,6 +718,11 @@ class IArchiveSubscriberView(Interface):
         order_by_date=False,
         order_by_date_ascending=False,
         order_by=None,
+        maintained_by=None,
+        changed_by=None,
+        signed_by=None,
+        packageset=None,
+        maintainer_team=None,
     ):
         """All `ISourcePackagePublishingHistory` target to this archive."""
         # It loads additional related objects only needed in the API call
@@ -696,6 +745,11 @@ class IArchiveSubscriberView(Interface):
         published_since=None,
         published_until=None,
         order_by=None,
+        maintained_by=None,
+        changed_by=None,
+        signed_by=None,
+        packageset=None,
+        maintainer_team=None,
     ):
         """All `ISourcePackagePublishingHistory` target to this archive.
 
@@ -725,6 +779,27 @@ class IArchiveSubscriberView(Interface):
             removed from disk as well as those that have not.
         :param only_unpublished: If True, only include publications that
             have never been published to disk.
+        :param order_by: An `ArchivePublishingSort` value controlling sort
+            order (publication date, source package name, series, pocket,
+            binary package count, or status; each ascending or
+            descending).
+        :param maintained_by: Only return publications maintained by this
+            `IPerson` (`SourcePackageRelease.maintainer`).
+        :param changed_by: Only return publications whose changelog author
+            is this `IPerson` (`SourcePackageRelease.creator`).
+        :param signed_by: Only return publications signed by this
+            `IPerson` (`SourcePackageRelease.signing_key_owner`).
+        :param packageset: Only return sources included in this
+            `IPackageset`. A package set belongs to a single
+            distroseries, so this also restricts results to
+            publications in that series.
+        :param maintainer_team: Only return publications whose maintainer is
+            this team, or a member of this team.
+        :param ubuntu_change: If True, only return publications whose
+            source version contains "ubuntu", which marks a package that
+            Ubuntu has changed rather than taken from Debian unmodified.
+            If False, only return publications without that marker. If
+            None, do not filter on this at all.
 
         :return: SelectResults containing `ISourcePackagePublishingHistory`,
             ordered by name. If there are multiple results for the same
