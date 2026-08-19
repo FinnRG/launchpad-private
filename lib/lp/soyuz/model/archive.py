@@ -810,6 +810,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         signed_by=None,
         packageset=None,
         maintainer_team=None,
+        ubuntu_change=None,
     ):
         """See `IArchive`."""
         # 'eager_load' and 'include_removed' arguments are always True
@@ -835,6 +836,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             signed_by=signed_by,
             packageset=packageset,
             maintainer_team=maintainer_team,
+            ubuntu_change=ubuntu_change,
         )
 
         def load_api_extra_objects(rows):
@@ -901,6 +903,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         signed_by=None,
         packageset=None,
         maintainer_team=None,
+        ubuntu_change=None,
     ):
         """See `IArchive`."""
         clauses = [SourcePackagePublishingHistory.archive == self]
@@ -991,6 +994,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             or changed_by is not None
             or signed_by is not None
             or maintainer_team is not None
+            or ubuntu_change is not None
         ):
             clauses.append(
                 SourcePackagePublishingHistory.sourcepackagerelease_id
@@ -1042,6 +1046,18 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                     ),
                 )
             )
+
+        if ubuntu_change is not None:
+            # Ubuntu-modified packages carry an "ubuntu" marker in their
+            # Debian revision, as in "1.2-3ubuntu1". Packages taken from
+            # Debian unchanged do not.
+            # There are some exceptions: old packages version format was
+            # not underspecified, so a portion of the older native
+            # packages won't have "ubuntu" in the version.
+            has_marker = Cast(
+                SourcePackageRelease.version, "text"
+            ).contains_string("ubuntu")
+            clauses.append(has_marker if ubuntu_change else Not(has_marker))
 
         if packageset is not None:
             # A package set belongs to a single distroseries, but its

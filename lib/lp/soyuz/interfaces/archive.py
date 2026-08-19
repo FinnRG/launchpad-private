@@ -717,6 +717,17 @@ class IArchiveSubscriberView(Interface):
             ),
             required=False,
         ),
+        ubuntu_change=Bool(
+            title=_("Ubuntu change"),
+            description=_(
+                "If True, return only publications whose source version "
+                "contains 'ubuntu', which marks a package that Ubuntu has "
+                "changed rather than taken from Debian unmodified. If "
+                "False, return only publications without that marker. If "
+                "omitted, do not filter on this at all."
+            ),
+            required=False,
+        ),
     )
     # Really ISourcePackagePublishingHistory, patched in
     # lp.soyuz.interfaces.webservice.
@@ -742,6 +753,7 @@ class IArchiveSubscriberView(Interface):
         signed_by=None,
         packageset=None,
         maintainer_team=None,
+        ubuntu_change=None,
     ):
         """All `ISourcePackagePublishingHistory` target to this archive."""
         # It loads additional related objects only needed in the API call
@@ -769,6 +781,7 @@ class IArchiveSubscriberView(Interface):
         signed_by=None,
         packageset=None,
         maintainer_team=None,
+        ubuntu_change=None,
     ):
         """All `ISourcePackagePublishingHistory` target to this archive.
 

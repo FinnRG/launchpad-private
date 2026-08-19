@@ -4364,6 +4364,52 @@ class TestGetPublishedSources(TestCaseWithFactory):
             list(archive.getPublishedSources(packageset=packageset)),
         )
 
+    def makeUbuntuChangeFixture(self):
+        """Publish one Ubuntu-changed and one unchanged source.
+
+        :return: a tuple of (archive, changed publication, unchanged
+            publication).
+        """
+        archive = self.factory.makeArchive()
+        changed = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            sourcepackagerelease=self.factory.makeSourcePackageRelease(
+                archive=archive, version="1.2-3ubuntu1"
+            ),
+        )
+        unchanged = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            sourcepackagerelease=self.factory.makeSourcePackageRelease(
+                archive=archive, version="1.2-3"
+            ),
+        )
+        return archive, changed, unchanged
+
+    def test_ubuntu_change_true_returns_only_changed(self):
+        archive, changed, _ = self.makeUbuntuChangeFixture()
+        self.assertEqual(
+            [changed],
+            list(archive.getPublishedSources(ubuntu_change=True)),
+        )
+
+    def test_ubuntu_change_false_returns_only_unchanged(self):
+        archive, _, unchanged = self.makeUbuntuChangeFixture()
+        self.assertEqual(
+            [unchanged],
+            list(archive.getPublishedSources(ubuntu_change=False)),
+        )
+
+    def test_ubuntu_change_none_does_not_filter(self):
+        # The default does not filter on the Ubuntu marker at all.
+        archive, changed, unchanged = self.makeUbuntuChangeFixture()
+        self.assertContentEqual(
+            [changed, unchanged], archive.getPublishedSources()
+        )
+        self.assertContentEqual(
+            [changed, unchanged],
+            archive.getPublishedSources(ubuntu_change=None),
+        )
+
     def test_order_by_source_name(self):
         archive = self.factory.makeArchive()
         spn_a = self.factory.makeSourcePackageName(name="aaa")
@@ -4738,6 +4784,41 @@ class TestGetPublishedSourcesWebService(TestCaseWithFactory):
         )
         self.assertEqual(200, response_scalar.status)
         self.assertEqual(1, response_scalar.jsonBody()["total_size"])
+
+    def test_getPublishedSources_ubuntu_change(self):
+        # The tri-state ubuntu_change filter works over the webservice.
+        ppa = self.createTestingPPA()
+        ppa_url = f"/~{ppa.owner.name}/+archive/ubuntu/ppa"
+
+        with admin_logged_in():
+            sources = list(ppa.getPublishedSources())
+            for i, source in enumerate(sources):
+                version = "1.2-3ubuntu1" if i == 0 else "1.2-3"
+                removeSecurityProxy(source.sourcepackagerelease).version = (
+                    version
+                )
+            Store.of(ppa).flush()
+
+        webservice = webservice_for_person(
+            ppa.owner, permission=OAuthPermission.READ_PRIVATE
+        )
+        response = webservice.named_get(
+            ppa_url, "getPublishedSources", ubuntu_change=True
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual(1, response.jsonBody()["total_size"])
+
+        # False selects the complement, not "no filter".
+        response_false = webservice.named_get(
+            ppa_url, "getPublishedSources", ubuntu_change=False
+        )
+        self.assertEqual(200, response_false.status)
+        self.assertEqual(4, response_false.jsonBody()["total_size"])
+
+        # Omitting it does not filter at all.
+        response_omitted = webservice.named_get(ppa_url, "getPublishedSources")
+        self.assertEqual(200, response_omitted.status)
+        self.assertEqual(5, response_omitted.jsonBody()["total_size"])
 
     def test_getPublishedSources_order_by_new_style_keys(self):
         # The new list-of-field-keys order_by form works over the
