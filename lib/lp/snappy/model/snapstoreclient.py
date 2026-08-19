@@ -4,6 +4,7 @@
 """Communication with the snap store."""
 
 __all__ = [
+    "MacaroonAuth",
     "SnapStoreClient",
 ]
 

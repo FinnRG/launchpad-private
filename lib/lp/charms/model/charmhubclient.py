@@ -35,6 +35,7 @@ from lp.services.librarian.utils import EncodableLibraryFileAlias
 from lp.services.timeline.requesttimeline import get_request_timeline
 from lp.services.timeout import urlfetch
 from lp.services.webapp.url import urlappend
+from lp.snappy.model.snapstoreclient import MacaroonAuth
 
 
 def _get_macaroon(recipe):
@@ -84,10 +85,32 @@ class CharmhubClient:
         return error_class(error_message, detail=detail, can_retry=can_retry)
 
     @classmethod
-    def requestPackageUploadPermission(cls, package_name):
+    def requestPackageUploadPermission(cls, package_name, use_usso=False):
         """See `ICharmhubClient`."""
         assert config.charms.charmhub_url is not None
-        request_url = urlappend(config.charms.charmhub_url, "v1/tokens")
+        request_body = {
+            "packages": [{"type": "charm", "name": package_name}],
+            "permissions": [
+                "package-manage-releases",
+                "package-manage-revisions",
+                "package-view-revisions",
+            ],
+        }
+        if use_usso:
+            request_url = urlappend(
+                config.charms.charmhub_url, "v1/tokens/usso"
+            )
+            # Under Ubuntu SSO, the description is supplied later during the
+            # exchange, so here we only set how long the token should last.
+            # The new endpoint requires us to state this lifetime
+            # explicitly, whereas the old Candid endpoint did not accept one
+            # and let the server decide.
+            request_body["ttl"] = int(config.charms.charmhub_macaroon_ttl)
+        else:
+            request_url = urlappend(config.charms.charmhub_url, "v1/tokens")
+            request_body["description"] = "{} for {}".format(
+                package_name, config.vhost.mainsite.hostname
+            )
         request = get_current_browser_request()
         timeline_action = get_request_timeline(request).start(
             "request-charm-upload-macaroon", package_name, allow_nested=True
@@ -96,17 +119,7 @@ class CharmhubClient:
             response = urlfetch(
                 request_url,
                 method="POST",
-                json={
-                    "description": "{} for {}".format(
-                        package_name, config.vhost.mainsite.hostname
-                    ),
-                    "packages": [{"type": "charm", "name": package_name}],
-                    "permissions": [
-                        "package-manage-releases",
-                        "package-manage-revisions",
-                        "package-view-revisions",
-                    ],
-                },
+                json=request_body,
             )
             response_data = response.json()
             if "macaroon" not in response_data:
@@ -119,38 +132,58 @@ class CharmhubClient:
 
     @classmethod
     def exchangeMacaroons(
-        cls, root_macaroon_raw, unbound_discharge_macaroon_raw
+        cls,
+        root_macaroon_raw,
+        unbound_discharge_macaroon_raw,
+        use_usso=False,
+        description=None,
     ):
         """See `ICharmhubClient`."""
         assert config.charms.charmhub_url is not None
-        root_macaroon = Macaroon.deserialize(
-            root_macaroon_raw, JsonSerializer()
-        )
-        unbound_discharge_macaroon = Macaroon.deserialize(
-            unbound_discharge_macaroon_raw, JsonSerializer()
-        )
-        discharge_macaroon_raw = root_macaroon.prepare_for_request(
-            unbound_discharge_macaroon
-        ).serialize(JsonSerializer())
-        request_url = urlappend(
-            config.charms.charmhub_url, "v1/tokens/exchange"
-        )
-        request = get_current_browser_request()
-        timeline_action = get_request_timeline(request).start(
-            "exchange-macaroons", "", allow_nested=True
-        )
-        try:
+        if use_usso:
+            request_url = urlappend(
+                config.charms.charmhub_url, "v1/tokens/usso/exchange"
+            )
+            # MacaroonAuth binds the discharge to the root and sets the
+            # Authorization header for us, so we pass the raw macaroons
+            # straight through.
+            request_kwargs = {
+                "auth": MacaroonAuth(
+                    root_macaroon_raw, unbound_discharge_macaroon_raw
+                ),
+                "json": {"client-description": description},
+            }
+        else:
+            request_url = urlappend(
+                config.charms.charmhub_url, "v1/tokens/exchange"
+            )
+            # Candid expects a nonstandard "Macaroons" header that no request
+            # helper builds for us, so we assemble it by hand, which also
+            # means binding the discharge to the root here ourselves.
+            root_macaroon = Macaroon.deserialize(
+                root_macaroon_raw, JsonSerializer()
+            )
+            unbound_discharge_macaroon = Macaroon.deserialize(
+                unbound_discharge_macaroon_raw, JsonSerializer()
+            )
+            discharge_macaroon_raw = root_macaroon.prepare_for_request(
+                unbound_discharge_macaroon
+            ).serialize(JsonSerializer())
             all_macaroons = b64encode(
                 "[{}, {}]".format(
                     root_macaroon_raw, discharge_macaroon_raw
                 ).encode()
             ).decode()
-            response = urlfetch(
-                request_url,
-                method="POST",
-                headers={"Macaroons": all_macaroons},
-                json={},
-            )
+            request_kwargs = {
+                "headers": {"Macaroons": all_macaroons},
+                "json": {},
+            }
+        request = get_current_browser_request()
+        timeline_action = get_request_timeline(request).start(
+            "exchange-macaroons", "", allow_nested=True
+        )
+        try:
+            response = urlfetch(request_url, method="POST", **request_kwargs)
             response_data = response.json()
             if "macaroon" not in response_data:
                 raise BadExchangeMacaroonsResponse(response.text)

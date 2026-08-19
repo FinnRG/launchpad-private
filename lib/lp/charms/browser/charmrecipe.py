@@ -17,6 +17,8 @@ __all__ = [
     "CharmRecipeView",
 ]
 
+from urllib.parse import urlencode, urlsplit, urlunsplit
+
 from lazr.restful.interface import copy_field, use_template
 from zope.component import getUtility
 from zope.error.interfaces import IErrorReportingUtility
@@ -65,6 +67,7 @@ from lp.services.webapp import (
 from lp.services.webapp.breadcrumb import Breadcrumb, NameBreadcrumb
 from lp.services.webapp.candid import request_candid_discharge
 from lp.services.webapp.interfaces import ICanonicalUrlData
+from lp.services.webapp.url import urlappend
 from lp.services.webhooks.browser import WebhookTargetNavigationMixin
 from lp.snappy.browser.widgets.storechannels import StoreChannelsWidget
 from lp.soyuz.browser.build import get_build_by_id_str
@@ -617,15 +620,32 @@ class CharmRecipeAuthorizeView(LaunchpadEditFormView):
     def requestAuthorization(cls, recipe, request):
         """Begin the process of authorizing uploads of a charm recipe."""
         try:
-            root_macaroon_raw = recipe.beginAuthorization()
+            begin_result = recipe.beginAuthorization()
         except CannotAuthorizeCharmhubUploads as e:
             request.response.addInfoNotification(str(e))
             request.response.redirect(canonical_url(recipe))
+            return
+        base_url = canonical_url(recipe, view_name="+authorize")
+        # Branch on the method recorded by beginAuthorization rather than
+        # re-reading the feature flag, so this stays consistent with
+        # completeAuthorization even if the flag is toggled in between.
+        if recipe.store_secrets.get("auth_method") == "usso":
+            # As with snap recipes, begin_result is the Ubuntu SSO caveat
+            # that must be discharged through Launchpad's own login flow.
+            login_url = urlappend(base_url, "+login")
+            query_string = urlencode(
+                [
+                    ("macaroon_caveat_id", begin_result),
+                    ("discharge_macaroon_action", "field.actions.complete"),
+                    ("discharge_macaroon_field", "field.discharge_macaroon"),
+                ]
+            )
+            return urlunsplit(urlsplit(login_url)._replace(query=query_string))
         else:
-            base_url = canonical_url(recipe, view_name="+authorize")
+            # begin_result is the root macaroon that Candid must discharge.
             return request_candid_discharge(
                 request,
-                root_macaroon_raw,
+                begin_result,
                 base_url,
                 "field.discharge_macaroon",
                 discharge_macaroon_action="field.actions.complete",
