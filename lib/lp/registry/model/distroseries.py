@@ -1704,6 +1704,9 @@ class DistroSeries(
 
         Counts come from the BugSummary fact table via ``IBugTaskSet`` and
         are grouped by ``("status", "importance")``.
+
+        This full cross-tab remains for the legacy distroseries page and can
+        be removed when that page migrates to Launchpad UI.
         """
         if milestone is not None:
             # Circular import.

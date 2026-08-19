@@ -147,6 +147,27 @@ patch_plain_parameter_type(
     IHasBugs, "searchTasks", "structural_subscriber", IPerson
 )
 
+patch_plain_parameter_type(IHasBugs, "searchTasksCounts", "assignee", IPerson)
+patch_plain_parameter_type(
+    IHasBugs, "searchTasksCounts", "bug_reporter", IPerson
+)
+patch_plain_parameter_type(
+    IHasBugs, "searchTasksCounts", "bug_supervisor", IPerson
+)
+patch_plain_parameter_type(
+    IHasBugs, "searchTasksCounts", "bug_commenter", IPerson
+)
+patch_plain_parameter_type(
+    IHasBugs, "searchTasksCounts", "bug_subscriber", IPerson
+)
+patch_plain_parameter_type(IHasBugs, "searchTasksCounts", "owner", IPerson)
+patch_plain_parameter_type(
+    IHasBugs, "searchTasksCounts", "affected_user", IPerson
+)
+patch_plain_parameter_type(
+    IHasBugs, "searchTasksCounts", "structural_subscriber", IPerson
+)
+
 # IStructuralSubscription
 patch_collection_property(
     IStructuralSubscription, "bug_filters", IBugSubscriptionFilter

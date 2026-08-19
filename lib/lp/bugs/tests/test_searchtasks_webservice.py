@@ -3,11 +3,50 @@
 
 """Webservice unit tests related to Launchpad Bugs."""
 
+from lazr.restful.declarations import LAZR_WEBSERVICE_EXPORTED
+from lazr.restful.fields import ReferenceChoice
+
 from lp.app.enums import InformationType
-from lp.bugs.interfaces.bugtask import BugTaskStatusSearch
-from lp.testing import TestCaseWithFactory, person_logged_in
-from lp.testing.layers import DatabaseFunctionalLayer
-from lp.testing.pages import LaunchpadWebServiceCaller
+from lp.bugs.interfaces.bugtask import (
+    DB_INCOMPLETE_BUGTASK_STATUSES,
+    BugTaskImportance,
+    BugTaskStatus,
+    BugTaskStatusSearch,
+)
+from lp.bugs.interfaces.webservice import IHasBugs
+from lp.registry.interfaces.person import IPerson
+from lp.services.webapp.interfaces import OAuthPermission
+from lp.testing import TestCase, TestCaseWithFactory, api_url, person_logged_in
+from lp.testing.layers import BaseLayer, DatabaseFunctionalLayer
+from lp.testing.pages import LaunchpadWebServiceCaller, webservice_for_person
+
+
+class TestSearchTasksCountsParameterSchema(TestCase):
+    """Tests that count parameters do not mutate search parameters."""
+
+    layer = BaseLayer
+
+    def test_parameter_fields_are_independent(self):
+        search_params = IHasBugs["searchTasks"].queryTaggedValue(
+            LAZR_WEBSERVICE_EXPORTED
+        )["params"]
+        count_params = IHasBugs["searchTasksCounts"].queryTaggedValue(
+            LAZR_WEBSERVICE_EXPORTED
+        )["params"]
+
+        self.assertIsNot(search_params["milestone"], count_params["milestone"])
+        self.assertIsNot(
+            search_params["milestone"].value_type,
+            count_params["milestone"].value_type,
+        )
+        for params in (search_params, count_params):
+            self.assertIsInstance(
+                params["milestone"].value_type, ReferenceChoice
+            )
+            self.assertEqual(
+                "Milestone", params["milestone"].value_type.vocabularyName
+            )
+            self.assertIs(IPerson, params["assignee"].schema)
 
 
 class TestOmitTargetedParameter(TestCaseWithFactory):
@@ -42,8 +81,7 @@ class TestOmitTargetedParameter(TestCaseWithFactory):
 
 
 class TestProductSearchTasks(TestCaseWithFactory):
-    """Tests for the information_type, linked_blueprints and order_by
-    parameters."""
+    """Tests Product bug task search and grouped count operations."""
 
     layer = DatabaseFunctionalLayer
 
@@ -131,6 +169,249 @@ class TestProductSearchTasks(TestCaseWithFactory):
             )
         response = self.search("devel", status="Incomplete")
         self.assertEqual(response["total_size"], 2)
+
+    def test_search_counts(self):
+        response = self.webservice.named_get(
+            "/%s" % self.product_name,
+            "searchTasksCounts",
+            api_version="devel",
+        ).jsonBody()
+
+        self.assertEqual(1, response["total"])
+        self.assertEqual(1, response["by_status"]["NEW"])
+
+
+class TestSearchTasksCountsPrivacy(TestCaseWithFactory):
+    """Tests visibility filtering for grouped task counts."""
+
+    layer = DatabaseFunctionalLayer
+
+    def test_private_bug_visibility(self):
+        owner = self.factory.makePerson()
+        other_person = self.factory.makePerson()
+        with person_logged_in(owner):
+            product = self.factory.makeProduct(owner=owner)
+            self.factory.makeBug(
+                target=product,
+                owner=owner,
+                information_type=InformationType.PRIVATESECURITY,
+            )
+            product_url = api_url(product)
+        owner_webservice = webservice_for_person(
+            owner,
+            permission=OAuthPermission.WRITE_PRIVATE,
+            default_api_version="devel",
+        )
+        other_webservice = webservice_for_person(
+            other_person,
+            permission=OAuthPermission.WRITE_PRIVATE,
+            default_api_version="devel",
+        )
+
+        owner_response = owner_webservice.named_get(
+            product_url, "searchTasksCounts"
+        ).jsonBody()
+        other_response = other_webservice.named_get(
+            product_url, "searchTasksCounts"
+        ).jsonBody()
+
+        self.assertEqual(1, owner_response["total"])
+        self.assertEqual(0, other_response["total"])
+
+
+class TestDistroSeriesSearchTasksCounts(TestCaseWithFactory):
+    """Tests for grouped task counts on a distro series."""
+
+    layer = DatabaseFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        self.owner = self.factory.makePerson()
+        with person_logged_in(self.owner):
+            distribution = self.factory.makeDistribution(owner=self.owner)
+            self.series = self.factory.makeDistroSeries(
+                distribution=distribution
+            )
+            self.milestone = self.factory.makeMilestone(
+                distroseries=self.series
+            )
+            self.series_url = api_url(self.series)
+            self.milestone_url = api_url(self.milestone)
+            self.owner_url = api_url(self.owner)
+        self.webservice = LaunchpadWebServiceCaller(
+            "launchpad-library", "salgado-change-anything"
+        )
+
+    def _make_task(self, status, importance, milestone=None):
+        with person_logged_in(self.owner):
+            task = self.factory.makeBugTask(
+                owner=self.owner, target=self.series
+            )
+            if milestone is not None:
+                task.transitionToMilestone(milestone, self.owner)
+            task.transitionToStatus(status)
+            task.transitionToImportance(importance)
+        return task
+
+    def _get_counts(self, **kwargs):
+        return self.webservice.named_get(
+            self.series_url,
+            "searchTasksCounts",
+            api_version="devel",
+            **kwargs,
+        ).jsonBody()
+
+    def test_zero_result_response_shape(self):
+        response = self._get_counts()
+
+        self.assertEqual(
+            {"total", "by_status", "by_importance"}, set(response)
+        )
+        self.assertEqual(0, response["total"])
+        expected_statuses = {
+            status.name
+            for status in BugTaskStatusSearch.items
+            if status not in DB_INCOMPLETE_BUGTASK_STATUSES
+        }
+        expected_importances = {
+            importance.name for importance in BugTaskImportance.items
+        }
+        self.assertEqual(expected_statuses, set(response["by_status"]))
+        self.assertEqual(expected_importances, set(response["by_importance"]))
+        self.assertTrue(
+            all(count == 0 for count in response["by_status"].values())
+        )
+        self.assertTrue(
+            all(count == 0 for count in response["by_importance"].values())
+        )
+
+    def test_unknown_importance_is_counted(self):
+        self._make_task(BugTaskStatus.NEW, BugTaskImportance.UNKNOWN)
+
+        response = self._get_counts()
+
+        self.assertEqual(1, response["total"])
+        self.assertEqual(1, response["by_importance"]["UNKNOWN"])
+
+    def test_returns_total_and_complete_groups(self):
+        self._make_task(BugTaskStatus.NEW, BugTaskImportance.HIGH)
+        self._make_task(BugTaskStatus.INCOMPLETE, BugTaskImportance.HIGH)
+        self._make_task(BugTaskStatus.FIXRELEASED, BugTaskImportance.LOW)
+
+        response = self._get_counts()
+
+        self.assertEqual(
+            {"total", "by_status", "by_importance"}, set(response)
+        )
+        self.assertEqual(2, response["total"])
+        self.assertEqual(1, response["by_status"]["NEW"])
+        self.assertEqual(1, response["by_status"]["INCOMPLETE"])
+        self.assertEqual(0, response["by_status"]["FIXRELEASED"])
+        self.assertEqual(2, response["by_importance"]["HIGH"])
+        self.assertEqual(0, response["by_importance"]["LOW"])
+
+    def test_status_filter_matches_search_tasks(self):
+        self._make_task(BugTaskStatus.NEW, BugTaskImportance.HIGH)
+        self._make_task(BugTaskStatus.FIXRELEASED, BugTaskImportance.LOW)
+
+        response = self._get_counts(status="Fix Released")
+
+        self.assertEqual(1, response["total"])
+        self.assertEqual(1, response["by_status"]["FIXRELEASED"])
+        self.assertEqual(1, response["by_importance"]["LOW"])
+
+    def test_assignee_link_filter(self):
+        task = self._make_task(BugTaskStatus.NEW, BugTaskImportance.HIGH)
+        with person_logged_in(self.owner):
+            task.transitionToAssignee(self.owner)
+        self._make_task(BugTaskStatus.NEW, BugTaskImportance.LOW)
+
+        response = self._get_counts(assignee=self.owner_url)
+
+        self.assertEqual(1, response["total"])
+        self.assertEqual(1, response["by_importance"]["HIGH"])
+
+    def test_incomplete_statuses_are_combined(self):
+        self._make_task(
+            BugTaskStatusSearch.INCOMPLETE_WITH_RESPONSE,
+            BugTaskImportance.HIGH,
+        )
+        self._make_task(
+            BugTaskStatusSearch.INCOMPLETE_WITHOUT_RESPONSE,
+            BugTaskImportance.LOW,
+        )
+
+        response = self._get_counts()
+
+        self.assertEqual(2, response["by_status"]["INCOMPLETE"])
+        self.assertNotIn("INCOMPLETE_WITH_RESPONSE", response["by_status"])
+        self.assertNotIn("INCOMPLETE_WITHOUT_RESPONSE", response["by_status"])
+
+    def test_tag_filter(self):
+        tagged_task = self._make_task(
+            BugTaskStatus.NEW, BugTaskImportance.HIGH
+        )
+        with person_logged_in(self.owner):
+            tagged_task.bug.tags = ["included"]
+        self._make_task(BugTaskStatus.NEW, BugTaskImportance.LOW)
+
+        response = self._get_counts(tags="included")
+
+        self.assertEqual(1, response["total"])
+        self.assertEqual(1, response["by_importance"]["HIGH"])
+
+    def test_omit_duplicates(self):
+        original = self._make_task(BugTaskStatus.NEW, BugTaskImportance.HIGH)
+        duplicate = self._make_task(BugTaskStatus.NEW, BugTaskImportance.LOW)
+        with person_logged_in(self.owner):
+            duplicate.bug.markAsDuplicate(original.bug)
+
+        without_duplicates = self._get_counts()
+        with_duplicates = self._get_counts(omit_duplicates=False)
+
+        self.assertEqual(1, without_duplicates["total"])
+        self.assertEqual(2, with_duplicates["total"])
+
+    def test_milestone_link_filter(self):
+        self._make_task(
+            BugTaskStatus.INPROGRESS,
+            BugTaskImportance.CRITICAL,
+            milestone=self.milestone,
+        )
+        self._make_task(BugTaskStatus.NEW, BugTaskImportance.HIGH)
+
+        response = self._get_counts(milestone=[self.milestone_url])
+
+        self.assertEqual(1, response["total"])
+        self.assertEqual(1, response["by_status"]["INPROGRESS"])
+        self.assertEqual(1, response["by_importance"]["CRITICAL"])
+
+
+class TestPersonSearchTasksCounts(TestCaseWithFactory):
+    """Tests counts for the multi-alternative person task search."""
+
+    layer = DatabaseFunctionalLayer
+
+    def test_related_task_is_counted_once(self):
+        person = self.factory.makePerson()
+        with person_logged_in(person):
+            product = self.factory.makeProduct(owner=person)
+            self.factory.makeBug(
+                target=product, owner=person
+            ).default_bugtask.transitionToAssignee(person)
+            person_url = api_url(person)
+        webservice = LaunchpadWebServiceCaller(
+            "launchpad-library", "salgado-change-anything"
+        )
+
+        response = webservice.named_get(
+            person_url,
+            "searchTasksCounts",
+            api_version="devel",
+        ).jsonBody()
+
+        self.assertEqual(1, response["total"])
+        self.assertEqual(1, response["by_status"]["NEW"])
 
 
 class TestMaloneApplicationSearchTasks(TestCaseWithFactory):
