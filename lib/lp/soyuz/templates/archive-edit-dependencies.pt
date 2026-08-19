@@ -273,7 +273,7 @@
                               string:private-ppa-help-${repeat/item/index}">
                         This is a private PPA. You do not have permission to
                         view its page, so no link is available. You can still
-                        change its pin priority or remove it from this list.
+                        remove it from this list but not change its pin priority.
                       </span>
                     </tal:private>
                   </td>
