@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<!--
+Copyright 2026 Canonical Ltd.  This software is licensed under the
+GNU Affero General Public License version 3 (see the file LICENSE).
+-->
+<html>
+  <head>
+      <title>Test archive_edit_dependencies</title>
+      <!-- YUI and test setup -->
+      <script type="text/javascript"
+              src="../../../../../build/js/yui/yui/yui.js">
+      </script>
+      <link rel="stylesheet"
+      href="../../../../../build/js/yui/console/assets/console-core.css" />
+      <link rel="stylesheet"
+      href="../../../../../build/js/yui/test-console/assets/skins/sam/test-console.css" />
+      <script type="text/javascript"
+              src="../../../../../build/js/lp/app/testing/testrunner.js"></script>
+      <link rel="stylesheet" href="../../../../app/javascript/testing/test.css" />
+      <!-- The module under test. -->
+      <script type="text/javascript"
+              src="../archive_edit_dependencies.js"></script>
+      <!-- The test suite. -->
+      <script type="text/javascript"
+              src="test_archive_edit_dependencies.js"></script>
+    </head>
+    <body class="yui3-skin-sam">
+        <ul id="suites">
+            <li>lp.soyuz.archive_edit_dependencies.test</li>
+        </ul>
+        <h1>Testing the ArchiveEditDependencies javascript</h1>
+        <div id="maincontent">
+          <h2>Dependency options</h2>
+          <div id="highlight-options">
+          </div>
+          <h2>Dependencies</h2>
+          <table id="ppa-dependencies"
+                 data-priority-minimum="-32768"
+                 data-priority-maximum="32767">
+            <thead>
+              <tr>
+                <th>Dependency</th>
+                <th>Pin priority</th>
+                <th>Remove</th>
+              </tr>
+            </thead>
+            <tbody>
+            </tbody>
+          </table>
+          <p id="pin-priority-help">Higher priorities win.</p>
+        </div>
+    </body>
+</html>
