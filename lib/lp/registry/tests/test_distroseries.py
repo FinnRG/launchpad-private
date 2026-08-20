@@ -8,7 +8,7 @@ __all__ = [
 ]
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import transaction
 from testtools.matchers import Equals
@@ -26,6 +26,7 @@ from lp.registry.interfaces.externalpackage import ExternalPackageType
 from lp.registry.interfaces.pocket import PackagePublishingPocket
 from lp.services.database.interfaces import IStore
 from lp.services.webapp.interfaces import OAuthPermission
+from lp.services.webapp.publisher import canonical_url
 from lp.soyuz.enums import (
     ArchivePurpose,
     IndexCompressionType,
@@ -54,6 +55,9 @@ from lp.testing import (
 from lp.testing.layers import DatabaseFunctionalLayer, LaunchpadFunctionalLayer
 from lp.testing.matchers import HasQueryCount
 from lp.testing.pages import webservice_for_person
+from lp.translations.interfaces.distroserieslanguage import (
+    IDistroSeriesLanguageEntry,
+)
 from lp.translations.interfaces.translations import (
     TranslationsBranchImportMode,
 )
@@ -1068,6 +1072,15 @@ class TestDistroSeriesPackaging(TestCaseWithFactory):
 class TestDistroSeriesWebservice(TestCaseWithFactory):
     layer = DatabaseFunctionalLayer
 
+    def getTranslationCoverage(self, distroseries):
+        distroseries_url = api_url(distroseries)
+        webservice = webservice_for_person(None, default_api_version="devel")
+        distroseries_entry = webservice.get(distroseries_url).jsonBody()
+        collection_link = distroseries_entry[
+            "translation_coverage_collection_link"
+        ]
+        return webservice, collection_link
+
     def test_language_pack_full_export_requested_not_translations_admin(self):
         # Somebody with only launchpad.TranslationsAdmin cannot request full
         # language pack exports.
@@ -1143,6 +1156,404 @@ class TestDistroSeriesWebservice(TestCaseWithFactory):
             ],
             response.jsonBody(),
         )
+
+    def test_translation_coverage_contract(self):
+        distroseries = self.factory.makeDistroSeries()
+        naked_distroseries = removeSecurityProxy(distroseries)
+        naked_distroseries.hide_all_translations = False
+        naked_distroseries.messagecount = 3
+        date_updated = datetime(2026, 8, 16, 11, 45, tzinfo=timezone.utc)
+        coverage = self.factory.makeDistroSeriesLanguage(
+            distroseries,
+            language_name="French",
+            current_count=1,
+            rosetta_count=1,
+            contributor_count=143,
+            date_updated=date_updated,
+        )
+        distroseries_url = api_url(distroseries)
+        coverage_url = api_url(coverage)
+        language_url = api_url(coverage.language)
+        coverage_web_link = canonical_url(coverage)
+        webservice, collection_link = self.getTranslationCoverage(distroseries)
+
+        self.assertEqual(
+            webservice.getAbsoluteUrl(
+                distroseries_url + "/translation_coverage"
+            ),
+            collection_link,
+        )
+        entry_response = webservice.get(
+            webservice.getAbsoluteUrl(coverage_url)
+        )
+        self.assertEqual(200, entry_response.status)
+        response = webservice.get(collection_link)
+        self.assertEqual(200, response.status)
+        collection = response.jsonBody()
+        self.assertEqual(0, collection["start"])
+        self.assertEqual(1, collection["total_size"])
+        self.assertEqual(1, len(collection["entries"]))
+        entry = collection["entries"][0]
+        self.assertEqual(
+            {
+                "contributor_count",
+                "date_updated",
+                "distroseries_link",
+                "http_etag",
+                "language_code",
+                "language_link",
+                "language_name",
+                "resource_type_link",
+                "self_link",
+                "translated_percentage",
+                "web_link",
+            },
+            set(entry),
+        )
+        self.assertEqual(
+            webservice.getAbsoluteUrl(coverage_url), entry["self_link"]
+        )
+        self.assertEqual(coverage_web_link, entry["web_link"])
+        self.assertEqual(
+            "http://api.launchpad.test/devel/#distro_series_language",
+            entry["resource_type_link"],
+        )
+        self.assertEqual(
+            webservice.getAbsoluteUrl(language_url),
+            entry["language_link"],
+        )
+        self.assertEqual(
+            webservice.getAbsoluteUrl(distroseries_url),
+            entry["distroseries_link"],
+        )
+        self.assertEqual(coverage.language.code, entry["language_code"])
+        self.assertEqual("French", entry["language_name"])
+        self.assertEqual(date_updated.isoformat(), entry["date_updated"])
+        self.assertEqual(66, entry["translated_percentage"])
+        self.assertEqual(143, entry["contributor_count"])
+        self.assertEqual(entry, webservice.get(entry["self_link"]).jsonBody())
+
+    def test_translation_coverage_percentage_is_exact_and_clamped(self):
+        distroseries = self.factory.makeDistroSeries()
+        naked_distroseries = removeSecurityProxy(distroseries)
+        naked_distroseries.hide_all_translations = False
+        naked_distroseries.messagecount = 100
+        self.factory.makeDistroSeriesLanguage(
+            distroseries,
+            language_name="Exact",
+            language_code="exact",
+            current_count=29,
+        )
+        self.factory.makeDistroSeriesLanguage(
+            distroseries,
+            language_name="Clamped",
+            language_code="clamped",
+            current_count=101,
+        )
+        self.factory.makeDistroSeriesLanguage(
+            distroseries,
+            language_name="Negative",
+            language_code="negative",
+            current_count=-1,
+        )
+        distroseries_url = api_url(distroseries)
+        webservice = webservice_for_person(None, default_api_version="devel")
+
+        response = webservice.named_get(
+            distroseries_url,
+            "getTranslationCoverage",
+            order_by=["language_code"],
+        )
+
+        self.assertEqual(200, response.status)
+        percentages = {
+            entry["language_code"]: entry["translated_percentage"]
+            for entry in response.jsonBody()["entries"]
+        }
+        self.assertEqual(
+            {"clamped": 100, "exact": 29, "negative": 0}, percentages
+        )
+
+    def test_translation_coverage_order_visibility_and_pagination(self):
+        distroseries = self.factory.makeDistroSeries()
+        naked_distroseries = removeSecurityProxy(distroseries)
+        naked_distroseries.hide_all_translations = False
+        naked_distroseries.messagecount = 1
+        coverages = [
+            self.factory.makeDistroSeriesLanguage(
+                distroseries, language_name=name
+            )
+            for name in ("Zulu", "alpha", "Beta")
+        ]
+        hidden = self.factory.makeDistroSeriesLanguage(
+            distroseries, language_name="aardvark"
+        )
+        removeSecurityProxy(hidden.language).visible = False
+        webservice, collection_link = self.getTranslationCoverage(distroseries)
+
+        collection = webservice.get(collection_link).jsonBody()
+        self.assertEqual(0, collection["start"])
+        self.assertEqual(3, collection["total_size"])
+        self.assertEqual(
+            [
+                coverages[1].language.code,
+                coverages[2].language.code,
+                coverages[0].language.code,
+            ],
+            [entry["language_code"] for entry in collection["entries"]],
+        )
+        self.assertNotIn(
+            hidden.language.code,
+            [entry["language_code"] for entry in collection["entries"]],
+        )
+
+        page = webservice.get(
+            collection_link + "?ws.start=1&ws.size=1"
+        ).jsonBody()
+        self.assertEqual(1, page["start"])
+        self.assertEqual(3, page["total_size"])
+        self.assertEqual(
+            [coverages[2].language.code],
+            [entry["language_code"] for entry in page["entries"]],
+        )
+
+    def test_distroserieslanguages_preloads_languages(self):
+        distroseries = self.factory.makeDistroSeries()
+        for language_name in ("Zulu", "alpha", "Beta"):
+            self.factory.makeDistroSeriesLanguage(
+                distroseries, language_name=language_name
+            )
+        IStore(distroseries).flush()
+        IStore(distroseries).invalidate()
+
+        with StormStatementRecorder() as recorder:
+            coverages = list(distroseries.distroserieslanguages)
+            language_names = [coverage.language_name for coverage in coverages]
+
+        self.assertEqual(["Beta", "Zulu", "alpha"], language_names)
+        self.assertThat(recorder, HasQueryCount(Equals(2)))
+
+    def test_get_translation_coverage_accepts_scalar_order_by(self):
+        distroseries = self.factory.makeDistroSeries()
+        naked_distroseries = removeSecurityProxy(distroseries)
+        naked_distroseries.hide_all_translations = False
+        for language_name in ("Alpha", "Beta"):
+            self.factory.makeDistroSeriesLanguage(
+                distroseries, language_name=language_name
+            )
+
+        coverages = naked_distroseries.getTranslationCoverage("-language_name")
+
+        self.assertEqual(
+            ["Beta", "Alpha"],
+            [coverage.language_name for coverage in coverages],
+        )
+
+    def test_get_translation_coverage_sort_options(self):
+        distroseries = self.factory.makeDistroSeries()
+        naked_distroseries = removeSecurityProxy(distroseries)
+        naked_distroseries.hide_all_translations = False
+        # Alpha and Zulu both export 1%. This checks that later sort fields
+        # resolve equal rounded percentages.
+        naked_distroseries.messagecount = 1000
+        coverages = {
+            "alpha": self.factory.makeDistroSeriesLanguage(
+                distroseries,
+                language_name="alpha",
+                language_code="alpha",
+                current_count=10,
+                contributor_count=20,
+                date_updated=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            ),
+            "Beta": self.factory.makeDistroSeriesLanguage(
+                distroseries,
+                language_name="Beta",
+                language_code="beta",
+                current_count=1,
+                rosetta_count=29,
+                contributor_count=10,
+                date_updated=datetime(2026, 1, 3, tzinfo=timezone.utc),
+            ),
+            "Zulu": self.factory.makeDistroSeriesLanguage(
+                distroseries,
+                language_name="Zulu",
+                language_code="zulu",
+                current_count=19,
+                contributor_count=30,
+                date_updated=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            ),
+        }
+        distroseries_url = api_url(distroseries)
+        webservice = webservice_for_person(None, default_api_version="devel")
+
+        response = webservice.named_get(
+            distroseries_url, "getTranslationCoverage"
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual(
+            ["alpha", "Beta", "Zulu"],
+            [
+                entry["language_name"]
+                for entry in response.jsonBody()["entries"]
+            ],
+        )
+
+        sort_cases = [
+            ([], ["alpha", "Beta", "Zulu"]),
+            (["language_name"], ["alpha", "Beta", "Zulu"]),
+            (["-language_name"], ["Zulu", "Beta", "alpha"]),
+            (["language_code"], ["alpha", "Beta", "Zulu"]),
+            (["-language_code"], ["Zulu", "Beta", "alpha"]),
+            (["-translated_percentage"], ["Beta", "alpha", "Zulu"]),
+            (["translated_percentage"], ["alpha", "Zulu", "Beta"]),
+            (["-contributor_count"], ["Zulu", "alpha", "Beta"]),
+            (["contributor_count"], ["Beta", "alpha", "Zulu"]),
+            (["-date_updated"], ["Beta", "alpha", "Zulu"]),
+            (["date_updated"], ["Zulu", "alpha", "Beta"]),
+            (
+                ["translated_percentage", "-contributor_count"],
+                ["Zulu", "alpha", "Beta"],
+            ),
+        ]
+        for order_by, expected in sort_cases:
+            message = "order_by=%r" % (order_by,)
+            response = webservice.named_get(
+                distroseries_url,
+                "getTranslationCoverage",
+                order_by=order_by,
+            )
+            self.assertEqual(200, response.status, message)
+            body = response.jsonBody()
+            self.assertEqual(3, body["total_size"], message)
+            self.assertEqual(
+                expected,
+                [entry["language_name"] for entry in body["entries"]],
+                message,
+            )
+
+        page = webservice.named_get(
+            distroseries_url,
+            "getTranslationCoverage",
+            order_by=["-translated_percentage"],
+            **{"ws.start": 1, "ws.size": 1},
+        ).jsonBody()
+        self.assertEqual(1, page["start"])
+        self.assertEqual(
+            [coverages["alpha"].language.code],
+            [entry["language_code"] for entry in page["entries"]],
+        )
+
+    def test_get_translation_coverage_sort_with_no_messages(self):
+        distroseries = self.factory.makeDistroSeries()
+        naked_distroseries = removeSecurityProxy(distroseries)
+        naked_distroseries.hide_all_translations = False
+        naked_distroseries.messagecount = 0
+        self.factory.makeDistroSeriesLanguage(
+            distroseries,
+            language_name="Alpha",
+            language_code="alpha",
+            contributor_count=1,
+        )
+        self.factory.makeDistroSeriesLanguage(
+            distroseries,
+            language_name="Beta",
+            language_code="beta",
+            contributor_count=2,
+        )
+        distroseries_url = api_url(distroseries)
+        webservice = webservice_for_person(None, default_api_version="devel")
+
+        response = webservice.named_get(
+            distroseries_url,
+            "getTranslationCoverage",
+            order_by=["-translated_percentage", "-contributor_count"],
+        )
+
+        self.assertEqual(200, response.status)
+        entries = response.jsonBody()["entries"]
+        self.assertEqual(
+            ["Beta", "Alpha"], [entry["language_name"] for entry in entries]
+        )
+        self.assertEqual(
+            [0, 0], [entry["translated_percentage"] for entry in entries]
+        )
+
+    def test_get_translation_coverage_rejects_unknown_sort(self):
+        distroseries = self.factory.makeDistroSeries()
+        removeSecurityProxy(distroseries).hide_all_translations = False
+        distroseries_url = api_url(distroseries)
+        webservice = webservice_for_person(None, default_api_version="devel")
+
+        response = webservice.named_get(
+            distroseries_url,
+            "getTranslationCoverage",
+            order_by=["unknown"],
+        )
+
+        self.assertEqual(400, response.status)
+        self.assertIn(b"Unrecognized order_by: 'unknown'", response.body)
+
+    def test_translation_coverage_empty_excludes_placeholder(self):
+        distroseries = self.factory.makeDistroSeries()
+        removeSecurityProxy(distroseries).hide_all_translations = False
+        language = self.factory.makeLanguage()
+        placeholder = distroseries.getDistroSeriesLanguageOrEmpty(language)
+        self.assertIsNone(placeholder.id)
+        self.assertFalse(IDistroSeriesLanguageEntry.providedBy(placeholder))
+        webservice, collection_link = self.getTranslationCoverage(distroseries)
+
+        collection = webservice.get(collection_link).jsonBody()
+        self.assertEqual(0, collection["start"])
+        self.assertEqual(0, collection["total_size"])
+        self.assertEqual([], collection["entries"])
+
+    def test_translation_coverage_is_devel_only(self):
+        distroseries = self.factory.makeDistroSeries()
+        distroseries_url = api_url(distroseries)
+
+        for version in ("beta", "1.0"):
+            webservice = webservice_for_person(
+                None, default_api_version=version
+            )
+            entry = webservice.get(distroseries_url).jsonBody()
+            message = "API version %s" % version
+            self.assertNotIn(
+                "translation_coverage_collection_link", entry, message
+            )
+            response = webservice.named_get(
+                distroseries_url, "getTranslationCoverage"
+            )
+            self.assertEqual(400, response.status, message)
+
+    def test_translation_coverage_respects_hidden_series(self):
+        distroseries = self.factory.makeDistroSeries()
+        self.assertTrue(distroseries.hide_all_translations)
+        translations_admin = self.factory.makePerson(
+            member_of=[getUtility(ILaunchpadCelebrities).rosetta_experts]
+        )
+        self.factory.makeDistroSeriesLanguage(distroseries)
+        distroseries_url = api_url(distroseries)
+        webservice, collection_link = self.getTranslationCoverage(distroseries)
+
+        response = webservice.get(collection_link)
+        self.assertEqual(503, response.status)
+        response = webservice.named_get(
+            distroseries_url, "getTranslationCoverage"
+        )
+        self.assertEqual(503, response.status)
+        admin_webservice = webservice_for_person(
+            translations_admin,
+            default_api_version="devel",
+            permission=OAuthPermission.READ_PUBLIC,
+        )
+        response = admin_webservice.get(collection_link)
+        self.assertEqual(200, response.status)
+        self.assertEqual(1, response.jsonBody()["total_size"])
+        response = admin_webservice.named_get(
+            distroseries_url, "getTranslationCoverage"
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual(1, response.jsonBody()["total_size"])
 
 
 class TestDistroSeriesSet(TestCaseWithFactory):

@@ -58,6 +58,11 @@
     title="Administer something related to commercial offering."
     access_level="write" />
 
+  <permission
+    id="launchpad.ViewHiddenDistroSeriesTranslations"
+    title="View hidden distribution-series translations."
+    access_level="read" />
+
   <!-- There are some translation-related fields that need to be set
   by Translation admins (aka Rosetta Admins) but we don't want to give
   them launchpad.Admin rights because they should not be able to change other

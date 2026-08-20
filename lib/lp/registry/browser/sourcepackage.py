@@ -73,6 +73,9 @@ from lp.services.worlddata.helpers import browser_languages
 from lp.services.worlddata.interfaces.country import ICountry
 from lp.soyuz.browser.packagerelationship import relationship_builder
 from lp.translations.interfaces.potemplate import IPOTemplateSet
+from lp.translations.utilities.translation_visibility import (
+    check_distroseries_translations_viewable,
+)
 
 
 def get_register_upstream_url(source_package):
@@ -137,9 +140,6 @@ class SourcePackageNavigation(Navigation, BugTargetTraversalMixin):
         # we should also be allowed to see them for a distribution
         # source package.
         # If not, raise TranslationUnavailable.
-        from lp.translations.browser.distroseries import (
-            check_distroseries_translations_viewable,
-        )
 
         check_distroseries_translations_viewable(self.context.distroseries)
 

@@ -21,7 +21,21 @@ from typing import List, Optional
 
 import apt_pkg
 from lazr.delegates import delegate_to
-from storm.expr import SQL, And, Column, Desc, Is, Join, Not, Or, Select, Table
+from storm.expr import (
+    SQL,
+    And,
+    Cast,
+    Column,
+    Desc,
+    Func,
+    Is,
+    Join,
+    Lower,
+    Not,
+    Or,
+    Select,
+    Table,
+)
 from storm.locals import (
     JSON,
     Bool,
@@ -52,7 +66,10 @@ from lp.bugs.model.structuralsubscription import (
     StructuralSubscriptionTargetMixin,
 )
 from lp.buildmaster.model.processor import Processor
-from lp.registry.errors import NoSuchDistroSeries
+from lp.registry.errors import (
+    InvalidTranslationCoverageOrder,
+    NoSuchDistroSeries,
+)
 from lp.registry.interfaces.distroseries import (
     DerivationError,
     DistroSeriesTranslationTemplateStatistics,
@@ -84,6 +101,7 @@ from lp.registry.model.person import Person
 from lp.registry.model.series import SeriesMixin
 from lp.registry.model.sourcepackage import SourcePackage
 from lp.registry.model.sourcepackagename import SourcePackageName
+from lp.services.database.bulk import load_related
 from lp.services.database.constants import DEFAULT, UTC_NOW
 from lp.services.database.decoratedresultset import DecoratedResultSet
 from lp.services.database.enumcol import DBEnum
@@ -150,6 +168,9 @@ from lp.translations.model.pofile import POFile
 from lp.translations.model.potemplate import (
     POTemplate,
     TranslationTemplatesCollection,
+)
+from lp.translations.utilities.translation_visibility import (
+    check_distroseries_translations_viewable,
 )
 
 ACTIVE_RELEASED_STATUSES = [
@@ -802,9 +823,76 @@ class DistroSeries(
             SeriesStatus.SUPPORTED,
         ]
 
-    @property
-    def distroserieslanguages(self):
-        return (
+    def _getDistroSeriesLanguages(
+        self,
+        order_by=None,
+        check_visibility=False,
+        case_insensitive_language_names=False,
+    ):
+        if not order_by:
+            order_by = ["language_name"]
+        elif not isinstance(order_by, (list, tuple)):
+            order_by = [order_by]
+
+        ordering = []
+        has_unique_order = False
+        for field_name in order_by:
+            descending = field_name.startswith("-")
+            if descending:
+                field_name = field_name[1:]
+
+            if field_name == "language_name":
+                if case_insensitive_language_names:
+                    expressions = (
+                        Lower(Language.englishname),
+                        Language.englishname,
+                    )
+                else:
+                    expressions = (Language.englishname,)
+            elif field_name == "language_code":
+                expressions = (Language.code,)
+                has_unique_order = True
+            elif field_name == "translated_percentage":
+                if self.messagecount == 0:
+                    expressions = ()
+                else:
+                    translated_count = (
+                        DistroSeriesLanguage.currentcount
+                        + DistroSeriesLanguage.rosettacount
+                    )
+                    # Match the exported integer percentage exactly so that
+                    # later order_by fields resolve equal public values.
+                    percentage = (
+                        Cast(translated_count, "bigint")
+                        * 100
+                        / self.messagecount
+                    )
+                    expressions = (
+                        Func(
+                            "greatest",
+                            0,
+                            Func("least", 100, percentage),
+                        ),
+                    )
+            elif field_name == "contributor_count":
+                expressions = (DistroSeriesLanguage.contributorcount,)
+            elif field_name == "date_updated":
+                expressions = (DistroSeriesLanguage.dateupdated,)
+            else:
+                raise InvalidTranslationCoverageOrder(
+                    "Unrecognized order_by: %r" % (field_name,)
+                )
+
+            if descending:
+                expressions = tuple(
+                    Desc(expression) for expression in expressions
+                )
+            ordering.extend(expressions)
+
+        if not has_unique_order:
+            ordering.append(Language.code)
+
+        result = (
             IStore(DistroSeriesLanguage)
             .find(
                 DistroSeriesLanguage,
@@ -812,7 +900,36 @@ class DistroSeries(
                 DistroSeriesLanguage.distroseries == self,
                 Is(Language.visible, True),
             )
-            .order_by(Language.englishname)
+            .order_by(*ordering)
+        )
+
+        def preload_languages(rows):
+            # Defer the permission check until iteration so that property
+            # access never raises, while still restricting hidden
+            # translations to translation administrators.
+            if check_visibility:
+                check_distroseries_translations_viewable(self)
+            load_related(Language, rows, ["language_id"])
+
+        return DecoratedResultSet(result, pre_iter_hook=preload_languages)
+
+    @property
+    def distroserieslanguages(self):
+        return self._getDistroSeriesLanguages()
+
+    def getTranslationCoverage(self, order_by=None):
+        """See `IDistroSeries`."""
+        check_distroseries_translations_viewable(self)
+        return self._getDistroSeriesLanguages(
+            order_by, case_insensitive_language_names=True
+        )
+
+    @property
+    def translation_coverage(self):
+        """See `IDistroSeries`."""
+        return self._getDistroSeriesLanguages(
+            check_visibility=True,
+            case_insensitive_language_names=True,
         )
 
     @property

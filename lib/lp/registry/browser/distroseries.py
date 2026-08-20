@@ -104,7 +104,7 @@ from lp.soyuz.interfaces.packagecopyjob import IPlainPackageCopyJobSource
 from lp.soyuz.interfaces.packageset import IPackagesetSet
 from lp.soyuz.interfaces.queue import IPackageUploadSet
 from lp.soyuz.model.queue import PackageUploadQueue
-from lp.translations.browser.distroseries import (
+from lp.translations.utilities.translation_visibility import (
     check_distroseries_translations_viewable,
 )
 

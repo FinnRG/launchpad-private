@@ -10,6 +10,7 @@ which tells `lazr.restful` that it should look for webservice exports here.
 """
 
 __all__ = [
+    "IDistroSeriesLanguageEntry",
     "IHasTranslationImports",
     "IPOFile",
     "IPOTemplate",
@@ -26,6 +27,9 @@ from lp.services.webservice.apihelpers import (
     patch_collection_property,
     patch_collection_return_type,
     patch_reference_property,
+)
+from lp.translations.interfaces.distroserieslanguage import (
+    IDistroSeriesLanguageEntry,
 )
 from lp.translations.interfaces.hastranslationimports import (
     IHasTranslationImports,
@@ -46,6 +50,11 @@ from lp.translations.interfaces.translationgroup import (
 from lp.translations.interfaces.translationimportqueue import (
     ITranslationImportQueue,
     ITranslationImportQueueEntry,
+)
+
+# IDistroSeriesLanguageEntry
+patch_reference_property(
+    IDistroSeriesLanguageEntry, "distroseries", IDistroSeries
 )
 
 # IHasTranslationImports
