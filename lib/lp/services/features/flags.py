@@ -296,6 +296,15 @@ flag_info = sorted(
             "",
         ),
         (
+            "charm.charmhub.usso.enabled",
+            "boolean",
+            "If set, authorize charm recipe uploads to Charmhub using Ubuntu "
+            "SSO instead of Candid.",
+            "",
+            "",
+            "",
+        ),
+        (
             "snap.fetch_service.enable",
             "boolean",
             "If set, allow admins to set snap.use_fetch_service field, which "

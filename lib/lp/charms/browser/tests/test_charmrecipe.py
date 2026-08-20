@@ -43,10 +43,12 @@ from lp.charms.browser.charmrecipe import (
 )
 from lp.charms.interfaces.charmrecipe import (
     CHARM_RECIPE_ALLOW_CREATE,
+    CHARM_RECIPE_USSO_FEATURE_FLAG,
     CharmRecipeBuildRequestStatus,
     ICharmRecipeSet,
 )
 from lp.registry.enums import PersonVisibility
+from lp.services.config import config
 from lp.services.crypto.interfaces import IEncryptedContainer
 from lp.services.database.constants import UTC_NOW
 from lp.services.features.testing import FeatureFixture
@@ -416,7 +418,10 @@ class TestCharmRecipeAddView(BaseTestCharmRecipeView):
                 source=git_ref,
                 store_upload=True,
                 store_name="charmhub-name",
-                store_secrets={"root": root_macaroon_raw},
+                store_secrets={
+                    "root": root_macaroon_raw,
+                    "auth_method": "candid",
+                },
                 store_channels=["track/edge"],
             ),
         )
@@ -1193,7 +1198,8 @@ class TestCharmRecipeAuthorizeView(BaseTestCharmRecipeView):
         )
         with person_logged_in(owner):
             self.assertEqual(
-                {"root": root_macaroon_raw}, self.recipe.store_secrets
+                {"root": root_macaroon_raw, "auth_method": "candid"},
+                self.recipe.store_secrets,
             )
         self.assertEqual(303, browser.responseStatusCode)
         return_to_matcher = AfterPreprocessing(
@@ -1235,6 +1241,74 @@ class TestCharmRecipeAuthorizeView(BaseTestCharmRecipeView):
                 ),
                 fragment=Equals(""),
             ),
+        )
+
+    @responses.activate
+    def test_begin_authorization_usso(self):
+        # With the Ubuntu SSO feature flag on, beginning authorization
+        # redirects to Launchpad's own login flow to discharge the caveat.
+        self.useFixture(
+            FeatureFixture(
+                {
+                    CHARM_RECIPE_ALLOW_CREATE: "on",
+                    CHARM_RECIPE_USSO_FEATURE_FLAG: "on",
+                }
+            )
+        )
+        recipe_url = canonical_url(self.recipe)
+        owner = self.recipe.owner
+        store_name = self.recipe.store_name
+        browser = self.getNonRedirectingBrowser(
+            url=recipe_url + "/+authorize", user=self.recipe.owner
+        )
+        root_macaroon = Macaroon(version=2)
+        root_macaroon.add_third_party_caveat(
+            urlsplit(config.launchpad.openid_provider_root).netloc,
+            "",
+            "dummy",
+        )
+        root_macaroon_raw = root_macaroon.serialize()
+        responses.add(
+            "POST",
+            "http://charmhub.example/v1/tokens/usso",
+            json={"macaroon": root_macaroon_raw},
+        )
+        browser.getControl("Begin authorization").click()
+        tokens_matcher = MatchesStructure(
+            url=Equals("http://charmhub.example/v1/tokens/usso"),
+            method=Equals("POST"),
+            body=AfterPreprocessing(
+                json.loads,
+                Equals(
+                    {
+                        "ttl": 31536000,
+                        "packages": [
+                            {"type": "charm", "name": store_name},
+                        ],
+                        "permissions": [
+                            "package-manage-releases",
+                            "package-manage-revisions",
+                            "package-view-revisions",
+                        ],
+                    }
+                ),
+            ),
+        )
+        self.assertThat(
+            responses.calls,
+            MatchesListwise([MatchesStructure(request=tokens_matcher)]),
+        )
+        with person_logged_in(owner):
+            self.assertEqual(
+                {"root": root_macaroon_raw, "auth_method": "usso"},
+                self.recipe.store_secrets,
+            )
+        self.assertEqual(303, browser.responseStatusCode)
+        self.assertEqual(
+            recipe_url + "/+authorize/+login?macaroon_caveat_id=dummy&"
+            "discharge_macaroon_action=field.actions.complete&"
+            "discharge_macaroon_field=field.discharge_macaroon",
+            browser.headers["Location"],
         )
 
     def test_complete_authorization_missing_discharge_macaroon(self):

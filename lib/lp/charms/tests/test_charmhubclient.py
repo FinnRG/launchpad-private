@@ -16,8 +16,10 @@ from lazr.restful.utils import get_current_browser_request
 from nacl.public import PrivateKey
 from pymacaroons import Macaroon, Verifier
 from pymacaroons.serializers import JsonSerializer
+from requests.utils import parse_dict_header
 from testtools.matchers import (
     AfterPreprocessing,
+    Contains,
     ContainsDict,
     Equals,
     Is,
@@ -67,6 +69,32 @@ class MacaroonVerifies(Matcher):
             Verifier().verify(macaroon, self.key)
         except Exception as e:
             return Mismatch("Macaroon does not verify: %s" % e)
+
+
+class MacaroonsVerify(Matcher):
+    """Matches if the root and discharge in an auth header verify."""
+
+    def __init__(self, key):
+        self.key = key
+
+    def __str__(self):
+        return f"MacaroonsVerify({self.key!r})"
+
+    def match(self, macaroons):
+        mismatch = Contains("root").match(macaroons)
+        if mismatch is not None:
+            return mismatch
+        root_macaroon = Macaroon.deserialize(macaroons["root"])
+        if "discharge" in macaroons:
+            discharge_macaroons = [
+                Macaroon.deserialize(macaroons["discharge"])
+            ]
+        else:
+            discharge_macaroons = []
+        try:
+            Verifier().verify(root_macaroon, self.key, discharge_macaroons)
+        except Exception as e:
+            return Mismatch("Macaroons do not verify: %s" % e)
 
 
 class RequestMatches(MatchesAll):
@@ -290,6 +318,34 @@ class TestCharmhubClient(TestCaseWithFactory):
         )
 
     @responses.activate
+    def test_requestPackageUploadPermission_usso(self):
+        responses.add(
+            "POST",
+            "http://charmhub.example/v1/tokens/usso",
+            json={"macaroon": "sentinel"},
+        )
+        macaroon = self.client.requestPackageUploadPermission(
+            "test-charm", use_usso=True
+        )
+        self.assertThat(
+            responses.calls[-1].request,
+            RequestMatches(
+                url=Equals("http://charmhub.example/v1/tokens/usso"),
+                method=Equals("POST"),
+                json_data={
+                    "ttl": 31536000,
+                    "packages": [{"type": "charm", "name": "test-charm"}],
+                    "permissions": [
+                        "package-manage-releases",
+                        "package-manage-revisions",
+                        "package-view-revisions",
+                    ],
+                },
+            ),
+        )
+        self.assertEqual("sentinel", macaroon)
+
+    @responses.activate
     def test_exchangeMacaroons(self):
         responses.add(
             "POST",
@@ -332,6 +388,52 @@ class TestCharmhubClient(TestCaseWithFactory):
                 category="exchange-macaroons-stop", detail=""
             ),
         )
+
+    @responses.activate
+    def test_exchangeMacaroons_usso(self):
+        responses.add(
+            "POST",
+            "http://charmhub.example/v1/tokens/usso/exchange",
+            json={"macaroon": "sentinel"},
+        )
+        root_key = hashlib.sha256(b"root").hexdigest()
+        root_macaroon = Macaroon(version=2, key=root_key)
+        discharge_key = hashlib.sha256(b"discharge").hexdigest()
+        discharge_caveat_id = '{"secret": "thing"}'
+        root_macaroon.add_third_party_caveat(
+            "sso.example", discharge_key, discharge_caveat_id
+        )
+        root_macaroon_raw = root_macaroon.serialize()
+        unbound_discharge_macaroon = Macaroon(
+            version=2,
+            location="sso.example",
+            key=discharge_key,
+            identifier=discharge_caveat_id,
+        )
+        unbound_discharge_macaroon_raw = unbound_discharge_macaroon.serialize()
+        exchanged_macaroon_raw = self.client.exchangeMacaroons(
+            root_macaroon_raw,
+            unbound_discharge_macaroon_raw,
+            use_usso=True,
+            description="test-charm for launchpad.test",
+        )
+        self.assertThat(
+            responses.calls[-1].request,
+            RequestMatches(
+                url=Equals("http://charmhub.example/v1/tokens/usso/exchange"),
+                method=Equals("POST"),
+                auth=(
+                    "Macaroon",
+                    AfterPreprocessing(
+                        parse_dict_header, MacaroonsVerify(root_key)
+                    ),
+                ),
+                json_data={
+                    "client-description": "test-charm for launchpad.test"
+                },
+            ),
+        )
+        self.assertEqual("sentinel", exchanged_macaroon_raw)
 
     @responses.activate
     def test_exchangeMacaroons_missing_macaroon(self):

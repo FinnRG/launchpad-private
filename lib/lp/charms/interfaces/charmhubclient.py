@@ -66,7 +66,7 @@ class ReleaseFailedResponse(CharmhubError):
 class ICharmhubClient(Interface):
     """Interface for the API provided by Charmhub."""
 
-    def requestPackageUploadPermission(package_name):
+    def requestPackageUploadPermission(package_name, use_usso=False):
         """Request permission from Charmhub to upload builds of a charm.
 
         We need the following permissions: `package-manage-revisions` (to
@@ -75,22 +75,36 @@ class ICharmhubClient(Interface):
         blobs).
 
         The returned macaroon will include a third-party caveat that must be
-        discharged by Candid.  This method does not acquire that discharge;
-        it must be acquired separately.
+        discharged separately.  When `use_usso` is false, the caveat must be
+        discharged by Candid.  When `use_usso` is true, it must be discharged
+        by Ubuntu SSO.  This method does not acquire that discharge.
 
         :param package_name: The registered name of this charm on Charmhub.
+        :param use_usso: If true, request a macaroon to be discharged by
+            Ubuntu SSO rather than Candid.
         :return: A serialized macaroon appropriate for uploading builds of
             this charm.
         """
 
-    def exchangeMacaroons(root_macaroon_raw, unbound_discharge_macaroon_raw):
+    def exchangeMacaroons(
+        root_macaroon_raw,
+        unbound_discharge_macaroon_raw,
+        use_usso=False,
+        description=None,
+    ):
         """Exchange root+discharge macaroons for a new Charmhub-only macaroon.
 
         :param root_macaroon: A serialized root macaroon from Charmhub.
         :param unbound_discharge_macaroon: A corresponding serialized
-            unbound discharge macaroon from Candid.
+            unbound discharge macaroon from Candid or Ubuntu SSO.
+        :param use_usso: If true, the macaroons were discharged by Ubuntu
+            SSO and are exchanged using the Ubuntu SSO exchange endpoint.
+        :param description: A human-readable label for the token, sent as
+            client-description when exchanging Ubuntu SSO macaroons. This
+            replaces the description that the Candid flow sent earlier when
+            requesting upload permission, and is ignored for Candid.
         :return: A serialized macaroon from Charmhub with no third-party
-            Candid caveat.
+            caveat.
         """
 
     def uploadFile(lfa):
