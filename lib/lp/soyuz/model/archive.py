@@ -132,6 +132,7 @@ from lp.soyuz.enums import (
     archive_suffixes,
 )
 from lp.soyuz.interfaces.archive import (
+    DEFAULT_PIN_PRIORITY,
     FULL_COMPONENT_SUPPORT,
     IPPA,
     MAIN_ARCHIVE_PURPOSES,
@@ -1667,9 +1668,16 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         dependency.destroySelf()
 
     def addArchiveDependency(
-        self, dependency, pocket, component=None, pin_priority=500
+        self,
+        dependency,
+        pocket,
+        component=None,
+        pin_priority=DEFAULT_PIN_PRIORITY,
     ):
         """See `IArchive`."""
+        if pin_priority is None:
+            pin_priority = DEFAULT_PIN_PRIORITY
+
         if dependency == self:
             raise ArchiveDependencyError(
                 "An archive should not depend on itself."

@@ -105,7 +105,7 @@
                 <tr tal:repeat="item view/dependency_items"
                     class="ppa-dependency-row"
                     tal:attributes="id string:ppa-dependency-${repeat/item/index}">
-                  <td class="dependency-name-cell"
+                  <td class="dependency-name-cell ppa-dependencies"
                       tal:define="dependency_url item/url|nothing">
                     <!-- Public PPA: normal link. -->
                     <a tal:condition="dependency_url"
@@ -147,7 +147,7 @@
                   <td class="action-cell">
                     <label class="remove-on-save">
                       <input type="checkbox"
-                             class="line-through-when-checked ppa-dependencies"
+                             class="line-through-when-checked"
                              name="field.selected_dependencies"
                              tal:attributes="value item/token;
                                              aria-describedby
