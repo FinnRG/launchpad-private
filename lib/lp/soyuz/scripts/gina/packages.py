@@ -309,6 +309,7 @@ class SourcePackageData(AbstractPackageData):
     build_conflicts = ""
     build_conflicts_indep = ""
     standards_version = ""
+    homepage = None
     section = None
     format = None
 

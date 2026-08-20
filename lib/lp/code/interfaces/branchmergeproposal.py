@@ -6,6 +6,7 @@
 __all__ = [
     "BRANCH_MERGE_PROPOSAL_FINAL_STATES",
     "BRANCH_MERGE_PROPOSAL_OBSOLETE_STATES",
+    "PROPOSAL_MERGE_ENABLED_FEATURE_FLAG",
     "IBranchMergeProposal",
     "IBranchMergeProposalGetter",
     "IBranchMergeProposalJob",
@@ -23,6 +24,7 @@ __all__ = [
     "IReviewRequestedEmailJobSource",
     "IUpdatePreviewDiffJob",
     "IUpdatePreviewDiffJobSource",
+    "SATISFIED_CODE_REVIEW_VOTES",
 ]
 
 
@@ -48,6 +50,7 @@ from zope.schema import (
     Datetime,
     Dict,
     Int,
+    List,
     Object,
     Text,
     TextLine,
@@ -73,6 +76,9 @@ from lp.services.job.interfaces.job import IJob, IJobSource, IRunnableJob
 from lp.services.webapp.interfaces import ITableBatchNavigator
 from lp.services.webservice.apihelpers import patch_reference_property
 
+PROPOSAL_MERGE_ENABLED_FEATURE_FLAG = "merge_proposal.merge.enabled"
+
+
 BRANCH_MERGE_PROPOSAL_FINAL_STATES = (
     BranchMergeProposalStatus.REJECTED,
     BranchMergeProposalStatus.MERGED,
@@ -83,6 +89,13 @@ BRANCH_MERGE_PROPOSAL_FINAL_STATES = (
 BRANCH_MERGE_PROPOSAL_OBSOLETE_STATES = (
     BranchMergeProposalStatus.MERGE_FAILED,
     BranchMergeProposalStatus.QUEUED,
+)
+
+
+# Votes that do not need to be cast again for a proposal to make progress,
+# so `requestReviewAgain` leaves them alone by default.
+SATISFIED_CODE_REVIEW_VOTES = frozenset(
+    (CodeReviewVote.APPROVE, CodeReviewVote.ABSTAIN)
 )
 
 
@@ -318,6 +331,33 @@ class IBranchMergeProposalView(Interface):
             required=True,
             readonly=True,
             description=_("The current state of the proposal."),
+        )
+    )
+
+    merger = exported(
+        PublicPersonChoice(
+            title=_("Merger"),
+            required=False,
+            readonly=True,
+            vocabulary="ValidPersonOrTeam",
+            description=_(
+                "The person who last requested that this proposal be "
+                "merged through the merge API."
+            ),
+        )
+    )
+
+    date_merge_requested = exported(
+        Datetime(
+            title=_("Date merge requested"),
+            required=False,
+            readonly=True,
+            description=_(
+                "When a merge of this proposal was last requested "
+                "through the merge API.  The merge itself is performed "
+                "asynchronously by the code hosting service after this "
+                "time."
+            ),
         )
     )
 
@@ -636,6 +676,20 @@ class IBranchMergeProposalView(Interface):
             'criteria' key contains details about each check."
         """
 
+    @export_read_operation()
+    @operation_for_version("devel")
+    def getMergeRequestStatus():
+        """Get the status of any merge requested through the merge API.
+
+        :return: A dictionary with keys: `pending` (True if a merge request
+            was made and has neither been confirmed merged nor expired),
+            `merged` (True if the proposal has been merged), `date_requested`
+            (ISO timestamp of the last request, or None), and `requested_by`
+            (name of the requesting person, or None).  An expired request
+            that never reached the merged state is reported as neither
+            pending nor merged; it is never assumed to have succeeded.
+        """
+
     def checkMergeCriteria():
         """Check if the merge proposal meets all criteria for merging.
 
@@ -795,6 +849,32 @@ class IBranchMergeProposalEdit(Interface):
         Requesting a review sets the date_review_requested.
         """
 
+    @operation_parameters(
+        reviewers=List(
+            title=_("The reviewers to ask again."),
+            description=_(
+                "Defaults to everyone whose review did not approve or "
+                "abstain."
+            ),
+            value_type=Reference(schema=IPerson),
+            required=False,
+        )
+    )
+    @export_write_operation()
+    @operation_for_version("devel")
+    def requestReviewAgain(reviewers=None):
+        """Ask reviewers who have already voted to review the proposal again.
+
+        Their completed reviews become pending again and they are notified as
+        they would be for a new review request.  The comments carrying their
+        original votes are left in place.  The proposal is put back into
+        'Needs review'.
+
+        :param reviewers: The people or teams to ask again.  If None, ask
+            everyone whose vote was neither Approve nor Abstain.
+        :return: The reopened `ICodeReviewVoteReference` objects.
+        """
+
     def approveBranch(reviewer, revision_id):
         """Mark the proposal as 'Code approved'.
 
@@ -804,8 +884,9 @@ class IBranchMergeProposalEdit(Interface):
         :param revision_id: The revision id of the branch that was
                             reviewed by the `reviewer`.
 
-        :raises: UserNotBranchReviewer if the reviewer is not in the team of
-                 the branch reviewer for the target branch.
+        :raises BadStateTransition: if the reviewer is not a trusted
+            reviewer of the target branch, or if the current state does
+            not allow transitioning to code approved.
         """
 
     def rejectBranch(reviewer, revision_id):
@@ -813,12 +894,15 @@ class IBranchMergeProposalEdit(Interface):
 
         The time that the branch was rejected is recoreded in `date_reviewed`.
 
-        :param reviewer: A person authorised to review branches for merging.
+        :param reviewer: A person authorised to review branches for merging,
+            or the proposal registrant rejecting their own proposal.
         :param revision_id: The revision id of the branch that was
                             reviewed by the `reviewer`.
 
-        :raises: UserNotBranchReviewer if the reviewer is not in the team of
-                 the branch reviewer for the target branch.
+        :raises BadStateTransition: if the reviewer is not a trusted
+            reviewer of the target branch (and is not the proposal
+            registrant), or if the current state does not allow
+            transitioning to rejected.
         """
 
     def markAsMerged(merged_revno=None, date_merged=None, merge_reporter=None):
@@ -1124,6 +1208,21 @@ class IBranchMergeProposalGetter(Interface):
 
         :param participant: An `IPerson` that is participating in the merge
             proposal, either a reviewer or reviewee.
+        :param status: An iterable of queue_status of the proposals to return.
+            If None is specified, all the proposals of all possible states
+            are returned.
+        :param visible_by_user: If a person is not supplied, only merge
+            proposals based on public branches are returned.  If a person is
+            supplied, merge proposals based on both public branches, and the
+            private branches that the person is entitled to see are returned.
+            Private branches are only visible to the owner and subscribers of
+            the branch, and to LP admins.
+        """
+
+    def getProposalsForReviewer(reviewer, status=None, visible_by_user=None):
+        """Return BranchMergeProposals that `reviewer` is reviewing.
+
+        :param reviewer: An `IPerson` who is a reviewer.
         :param status: An iterable of queue_status of the proposals to return.
             If None is specified, all the proposals of all possible states
             are returned.

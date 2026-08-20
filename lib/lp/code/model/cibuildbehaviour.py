@@ -41,6 +41,19 @@ def replace_auth_placeholder(s: str) -> str:
     return s % {"read_auth": config.artifactory.read_credentials}
 
 
+def build_channels(distribution_name: str) -> dict:
+    # Load source snap channels from a JSON Object.  Unlike the settings
+    # below, channels never contain credentials, so no authentication
+    # placeholder substitution is needed.
+    try:
+        pairs = config["cibuild." + distribution_name]["channels"]
+    except NoSectionError:
+        return {}
+    if pairs is None:
+        return {}
+    return dict(json.loads(pairs))
+
+
 def build_environment_variables(distribution_name: str) -> dict:
     # - load key/value pairs from JSON Object
     # - replace authentication placeholder
@@ -182,8 +195,16 @@ class CIBuildBehaviour(BuilderProxyMixin, BuildFarmJobBehaviourBase):
             args["git_repository"] = build.git_repository.git_https_url
         args["git_path"] = build.commit_sha1
         args["private"] = build.is_private
+        # CI build settings live in per-distribution [cibuild.<distro>]
+        # sections. Channels default to those of the distribution being
+        # built against (e.g. ubuntu).
+        channels = build_channels(build.distribution.name)
         if IDistributionSourcePackage.providedBy(build.git_repository.target):
+            # A repository that targets a distribution source package
+            # (e.g. soss) uses that distribution's settings, and can
+            # override individual channels while inheriting the rest.
             distribution_name = build.git_repository.target.distribution.name
+            channels.update(build_channels(distribution_name))
             args["environment_variables"] = build_environment_variables(
                 distribution_name
             )
@@ -193,6 +214,8 @@ class CIBuildBehaviour(BuilderProxyMixin, BuildFarmJobBehaviourBase):
             args["plugin_settings"] = build_plugin_settings(distribution_name)
             args["secrets"] = build_secrets(distribution_name)
             args["scan_malware"] = should_scan_malware(distribution_name)
+        if channels:
+            args["channels"] = channels
         return args
 
     def verifySuccessfulBuild(self):

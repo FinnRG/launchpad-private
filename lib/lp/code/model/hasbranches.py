@@ -105,13 +105,15 @@ class HasRequestedReviewsMixin:
 
     def getRequestedReviews(self, status=None, visible_by_user=None):
         """See `IHasRequestedReviews`."""
+        # Circular import.
+        from lp.code.model.branchmergeproposal import BranchMergeProposalGetter
+
         if not status:
             status = (BranchMergeProposalStatus.NEEDS_REVIEW,)
 
-        visible_branches = getUtility(IAllBranches).visibleByUser(
-            visible_by_user
+        return BranchMergeProposalGetter.getProposalsForReviewer(
+            self, status=status, visible_by_user=visible_by_user
         )
-        return visible_branches.getMergeProposalsForReviewer(self, status)
 
     def getOwnedAndRequestedReviews(
         self, status=None, visible_by_user=None, project=None, eager_load=False

@@ -59,12 +59,12 @@ from lp.code.interfaces.branchmergeproposal import (
     BRANCH_MERGE_PROPOSAL_OBSOLETE_STATES as OBSOLETE_STATES,
 )
 from lp.code.interfaces.branchmergeproposal import (
+    PROPOSAL_MERGE_ENABLED_FEATURE_FLAG,
     IBranchMergeProposal,
     IBranchMergeProposalGetter,
     IBranchMergeProposalJobSource,
 )
 from lp.code.model.branchmergeproposal import (
-    PROPOSAL_MERGE_ENABLED_FEATURE_FLAG,
     BranchMergeProposal,
     BranchMergeProposalGetter,
     is_valid_transition,
@@ -441,6 +441,42 @@ class TestBranchMergeProposalTransitions(TestCaseWithFactory):
             BranchMergeProposalStatus.REJECTED,
             proposal.source_branch.owner,
         )
+
+    def test_transition_to_rejected_by_registrant(self):
+        # The registrant (owner) of a proposal can reject their own
+        # proposal even if they are not a trusted reviewer of the target.
+        proposal = self.factory.makeBranchMergeProposal()
+        registrant = proposal.registrant
+        obsolete_states = (
+            BranchMergeProposalStatus.MERGE_FAILED,
+            BranchMergeProposalStatus.QUEUED,
+        )
+        expected = {
+            s
+            for s in BranchMergeProposalStatus.items
+            if s not in obsolete_states
+        }
+        expected.add(BranchMergeProposalStatus.REJECTED)
+        self.assertValidTransitions(
+            expected,
+            proposal,
+            BranchMergeProposalStatus.REJECTED,
+            registrant,
+        )
+
+    def test_rejectBranch_by_registrant(self):
+        # The registrant can reject their own merge proposal via
+        # rejectBranch even without being a trusted reviewer of the target.
+        proposal = self.factory.makeBranchMergeProposal()
+        registrant = proposal.registrant
+        login_person(registrant)
+        self.assertProposalState(
+            proposal, BranchMergeProposalStatus.WORK_IN_PROGRESS
+        )
+        proposal.rejectBranch(registrant, "1")
+        self.assertProposalState(proposal, BranchMergeProposalStatus.REJECTED)
+        self.assertEqual(registrant, proposal.reviewer)
+        self.assertEqual("1", proposal.reviewed_revision_id)
 
     def test_transitions_to_wip_resets_reviewer(self):
         # When a proposal was approved and is moved back into work in progress
@@ -1993,6 +2029,165 @@ class TestBranchMergeProposalGetterGetProposals(TestCaseWithFactory):
         )
         self.assertEqual(beave_proposals.count(), 1)
 
+    def test_getProposalsForReviewer(self):
+        # getProposalsForReviewer returns merge proposals, both Bazaar and
+        # Git, that the given person has been asked to review.
+        reviewer = self.factory.makePerson()
+        bzr_bmp = self.factory.makeBranchMergeProposal(
+            set_state=BranchMergeProposalStatus.NEEDS_REVIEW
+        )
+        bzr_bmp.nominateReviewer(reviewer, bzr_bmp.registrant)
+        git_bmp = self.factory.makeBranchMergeProposalForGit(
+            set_state=BranchMergeProposalStatus.NEEDS_REVIEW
+        )
+        git_bmp.nominateReviewer(reviewer, git_bmp.registrant)
+        # Proposals that the reviewer hasn't been asked to review are not
+        # returned.
+        self.factory.makeBranchMergeProposal(
+            set_state=BranchMergeProposalStatus.NEEDS_REVIEW
+        )
+        self.factory.makeBranchMergeProposalForGit(
+            set_state=BranchMergeProposalStatus.NEEDS_REVIEW
+        )
+
+        getter = BranchMergeProposalGetter
+        self.assertContentEqual(
+            [bzr_bmp, git_bmp],
+            getter.getProposalsForReviewer(
+                reviewer, [BranchMergeProposalStatus.NEEDS_REVIEW]
+            ),
+        )
+        # The status filter is honoured.
+        self.assertContentEqual(
+            [],
+            getter.getProposalsForReviewer(
+                reviewer, [BranchMergeProposalStatus.MERGED]
+            ),
+        )
+
+    def test_getProposalsForReviewer_orders_by_vote(self):
+        # getProposalsForReviewer sorts by the reviewer's vote, descending.
+        # Bazaar and Git proposals are sorted together
+        reviewer = self.factory.makePerson()
+
+        def make_proposal(factory_method, vote):
+            bmp = factory_method(
+                set_state=BranchMergeProposalStatus.NEEDS_REVIEW
+            )
+            bmp.nominateReviewer(reviewer, bmp.registrant)
+            bmp.createComment(reviewer, vote=vote)
+            return bmp
+
+        bzr_disapprove = make_proposal(
+            self.factory.makeBranchMergeProposal, CodeReviewVote.DISAPPROVE
+        )
+        git_abstain = make_proposal(
+            self.factory.makeBranchMergeProposalForGit, CodeReviewVote.ABSTAIN
+        )
+        bzr_approve = make_proposal(
+            self.factory.makeBranchMergeProposal, CodeReviewVote.APPROVE
+        )
+        git_needs_fixing = make_proposal(
+            self.factory.makeBranchMergeProposalForGit,
+            CodeReviewVote.NEEDS_FIXING,
+        )
+
+        proposals = list(
+            BranchMergeProposalGetter.getProposalsForReviewer(
+                reviewer, [BranchMergeProposalStatus.NEEDS_REVIEW]
+            )
+        )
+        self.assertEqual(
+            [
+                CodeReviewVote.NEEDS_FIXING,
+                CodeReviewVote.APPROVE,
+                CodeReviewVote.ABSTAIN,
+                CodeReviewVote.DISAPPROVE,
+            ],
+            [
+                proposal.getUsersVoteReference(reviewer).comment.vote
+                for proposal in proposals
+            ],
+        )
+        self.assertEqual(
+            [git_needs_fixing, bzr_approve, git_abstain, bzr_disapprove],
+            proposals,
+        )
+
+    def test_getProposalsForReviewer_respects_visibility_bzr(self):
+        # getProposalsForReviewer only returns Bazaar proposals whose source
+        # branch is visible to the requesting user.
+        reviewer = self.factory.makePerson()
+        owner = self.factory.makePerson()
+        product = self.factory.makeProduct()
+        source_branch = self.factory.makeProductBranch(
+            product=product,
+            owner=owner,
+            information_type=InformationType.USERDATA,
+        )
+        target_branch = self.factory.makeProductBranch(product=product)
+        bzr_bmp = self.factory.makeBranchMergeProposal(
+            source_branch=source_branch,
+            target_branch=target_branch,
+            set_state=BranchMergeProposalStatus.NEEDS_REVIEW,
+        )
+        bzr_bmp.nominateReviewer(reviewer, bzr_bmp.registrant)
+
+        getter = BranchMergeProposalGetter
+        # The owner can see it.
+        self.assertContentEqual(
+            [bzr_bmp],
+            getter.getProposalsForReviewer(
+                reviewer,
+                [BranchMergeProposalStatus.NEEDS_REVIEW],
+                visible_by_user=owner,
+            ),
+        )
+        # An anonymous request cannot.
+        self.assertContentEqual(
+            [],
+            getter.getProposalsForReviewer(
+                reviewer, [BranchMergeProposalStatus.NEEDS_REVIEW]
+            ),
+        )
+
+    def test_getProposalsForReviewer_respects_visibility_git(self):
+        # getProposalsForReviewer only returns Git proposals whose source
+        # repository is visible to the requesting user.
+        reviewer = self.factory.makePerson()
+        owner = self.factory.makePerson()
+        project = self.factory.makeProduct()
+        [source_ref] = self.factory.makeGitRefs(
+            owner=owner,
+            target=project,
+            information_type=InformationType.USERDATA,
+        )
+        [target_ref] = self.factory.makeGitRefs(target=project)
+        git_bmp = self.factory.makeBranchMergeProposalForGit(
+            source_ref=source_ref,
+            target_ref=target_ref,
+            set_state=BranchMergeProposalStatus.NEEDS_REVIEW,
+        )
+        git_bmp.nominateReviewer(reviewer, git_bmp.registrant)
+
+        getter = BranchMergeProposalGetter
+        # The owner can see it.
+        self.assertContentEqual(
+            [git_bmp],
+            getter.getProposalsForReviewer(
+                reviewer,
+                [BranchMergeProposalStatus.NEEDS_REVIEW],
+                visible_by_user=owner,
+            ),
+        )
+        # An anonymous request cannot.
+        self.assertContentEqual(
+            [],
+            getter.getProposalsForReviewer(
+                reviewer, [BranchMergeProposalStatus.NEEDS_REVIEW]
+            ),
+        )
+
     def test_created_proposal_default_status(self):
         # When we create a merge proposal using the helper method, the default
         # status of the proposal is work in progress.
@@ -2808,6 +3003,139 @@ class TestBranchMergeProposalNominateReviewer(
         )
         self.assertContentEqual(votes_1, merge_proposal_1.votes)
         self.assertContentEqual(votes_2, merge_proposal_2.votes)
+
+
+class TestBranchMergeProposalRequestReviewAgain(
+    WithVCSScenarios, TestCaseWithFactory
+):
+    """Tests for `BranchMergeProposal.requestReviewAgain`."""
+
+    layer = DatabaseFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        if self.git:
+            self.hosting_fixture = self.useFixture(GitHostingFixture())
+
+    def makeProposalWithVotes(self, votes):
+        """Make a proposal with one cast vote per entry in `votes`.
+
+        :param votes: A list of `CodeReviewVote`s.
+        :return: (proposal, [reviewer, ...]) in the same order as `votes`.
+        """
+        proposal = make_merge_proposal_without_reviewers(
+            factory=self.factory, for_git=self.git
+        )
+        login_person(proposal.registrant)
+        proposal.requestReview(datetime(2020, 1, 1, tzinfo=timezone.utc))
+        reviewers = []
+        for vote in votes:
+            reviewer = self.factory.makePerson()
+            login_person(reviewer)
+            proposal.createComment(reviewer, "Subject", "Content", vote=vote)
+            reviewers.append(reviewer)
+        login_person(proposal.registrant)
+        return proposal, reviewers
+
+    def test_reopens_unsatisfied_votes_by_default(self):
+        # By default every vote that asked for something to change becomes
+        # pending again.
+        proposal, _ = self.makeProposalWithVotes(
+            [
+                CodeReviewVote.NEEDS_FIXING,
+                CodeReviewVote.NEEDS_INFO,
+                CodeReviewVote.DISAPPROVE,
+                CodeReviewVote.NEEDS_RESUBMITTING,
+            ]
+        )
+        proposal.requestReviewAgain()
+        self.assertEqual(
+            [True] * 4, [vote.is_pending for vote in proposal.votes]
+        )
+
+    def test_keeps_approvals_and_abstentions(self):
+        # An existing approval is not silently discarded.
+        proposal, (approver, abstainer, fixer) = self.makeProposalWithVotes(
+            [
+                CodeReviewVote.APPROVE,
+                CodeReviewVote.ABSTAIN,
+                CodeReviewVote.NEEDS_FIXING,
+            ]
+        )
+        reopened = proposal.requestReviewAgain()
+        self.assertEqual([fixer], [vote.reviewer for vote in reopened])
+        self.assertEqual(
+            {approver: False, abstainer: False, fixer: True},
+            {vote.reviewer: vote.is_pending for vote in proposal.votes},
+        )
+
+    def test_reopens_only_the_named_reviewers(self):
+        # Passing reviewers explicitly overrides the default selection, in
+        # both directions.
+        proposal, (approver, fixer) = self.makeProposalWithVotes(
+            [CodeReviewVote.APPROVE, CodeReviewVote.NEEDS_FIXING]
+        )
+        reopened = proposal.requestReviewAgain(reviewers=[approver])
+        self.assertEqual([approver], [vote.reviewer for vote in reopened])
+        self.assertEqual(
+            {approver: True, fixer: False},
+            {vote.reviewer: vote.is_pending for vote in proposal.votes},
+        )
+
+    def test_ignores_pending_votes(self):
+        # Reviewers who have not voted yet are left alone; they have already
+        # been asked.
+        proposal, [fixer] = self.makeProposalWithVotes(
+            [CodeReviewVote.NEEDS_FIXING]
+        )
+        pending_reviewer = self.factory.makePerson()
+        proposal.nominateReviewer(
+            reviewer=pending_reviewer, registrant=proposal.registrant
+        )
+        reopened = proposal.requestReviewAgain(
+            reviewers=[fixer, pending_reviewer]
+        )
+        self.assertEqual([fixer], [vote.reviewer for vote in reopened])
+
+    def test_sets_needs_review(self):
+        # A proposal that had been approved goes back to needs-review.
+        proposal, _ = self.makeProposalWithVotes([CodeReviewVote.NEEDS_FIXING])
+        target_owner = proposal.merge_target.owner
+        login_person(target_owner)
+        proposal.setStatus(
+            BranchMergeProposalStatus.CODE_APPROVED, target_owner
+        )
+        proposal.requestReviewAgain()
+        self.assertEqual(
+            BranchMergeProposalStatus.NEEDS_REVIEW, proposal.queue_status
+        )
+
+    def test_notifies_per_reopened_vote(self):
+        # Each reopened reviewer is notified as for a new review request.
+        proposal, _ = self.makeProposalWithVotes(
+            [CodeReviewVote.NEEDS_FIXING, CodeReviewVote.NEEDS_INFO]
+        )
+        reopened, events = self.assertNotifies(
+            [ReviewerNominatedEvent, ReviewerNominatedEvent],
+            False,
+            proposal.requestReviewAgain,
+        )
+        self.assertContentEqual(reopened, [event.object for event in events])
+
+    def test_keeps_the_comments(self):
+        # The comment carrying the original vote stays in the conversation.
+        proposal, _ = self.makeProposalWithVotes([CodeReviewVote.NEEDS_FIXING])
+        [comment] = list(proposal.all_comments)
+        proposal.requestReviewAgain()
+        self.assertEqual([comment], list(proposal.all_comments))
+
+    def test_requires_edit_permission(self):
+        # A random logged-in person cannot ask for a review again.
+        proposal, _ = self.makeProposalWithVotes([CodeReviewVote.NEEDS_FIXING])
+        login_person(self.factory.makePerson())
+        self.assertRaises(
+            Unauthorized, getattr, proposal, "requestReviewAgain"
+        )
 
 
 class TestBranchMergeProposalResubmit(TestCaseWithFactory):
@@ -4417,6 +4745,18 @@ class TestBranchMergeProposalRequestMerge(TestCaseWithFactory):
             rule=rule, grantee=self.person, can_create=True, can_push=True
         )
 
+    def _requestMerge(self):
+        self.proposal.createComment(
+            owner=self.reviewer,
+            vote=CodeReviewVote.APPROVE,
+        )
+        self.proposal.next_preview_diff_job.start()
+        self.proposal.next_preview_diff_job.complete()
+        with person_logged_in(self.person):
+            result = self.proposal.requestMerge(self.person)
+        Store.of(self.proposal).flush()
+        return result
+
     def test_requestMerge_feature_flag(self):
         self.useFixture(
             FeatureFixture({PROPOSAL_MERGE_ENABLED_FEATURE_FLAG: ""})
@@ -4426,6 +4766,69 @@ class TestBranchMergeProposalRequestMerge(TestCaseWithFactory):
             self.proposal.requestMerge,
             self.person,
         )
+
+    def test_getMergeRequestStatus_no_request(self):
+        self.assertEqual(
+            {
+                "pending": False,
+                "merged": False,
+                "date_requested": None,
+                "requested_by": None,
+            },
+            self.proposal.getMergeRequestStatus(),
+        )
+
+    def test_requestMerge_records_pending_request(self):
+        self.assertEqual("Merge successfully queued", self._requestMerge())
+
+        status = self.proposal.getMergeRequestStatus()
+        self.assertTrue(status["pending"])
+        self.assertFalse(status["merged"])
+        self.assertIsNotNone(status["date_requested"])
+        self.assertEqual(self.person.name, status["requested_by"])
+        self.assertEqual(self.person, self.proposal.merger)
+        self.assertIsNotNone(self.proposal.date_merge_requested)
+
+    def test_getMergeRequestStatus_exported(self):
+        self._requestMerge()
+        person_name = self.person.name
+        webservice = webservice_for_person(
+            self.person, permission=OAuthPermission.WRITE_PUBLIC
+        )
+        with person_logged_in(self.person):
+            proposal_url = api_url(self.proposal)
+
+        response = webservice.named_get(
+            proposal_url,
+            "getMergeRequestStatus",
+            api_version="devel",
+        )
+
+        self.assertEqual(200, response.status)
+        status = response.jsonBody()
+        self.assertTrue(status["pending"])
+        self.assertFalse(status["merged"])
+        self.assertIsNotNone(status["date_requested"])
+        self.assertEqual(person_name, status["requested_by"])
+
+    def test_getMergeRequestStatus_expired(self):
+        self._requestMerge()
+        self.proposal.date_merge_requested = datetime.now(
+            timezone.utc
+        ) - timedelta(minutes=16)
+
+        self.assertFalse(self.proposal.getMergeRequestStatus()["pending"])
+        self.assertFalse(self.proposal.getMergeRequestStatus()["merged"])
+
+    def test_getMergeRequestStatus_merged(self):
+        self._requestMerge()
+        self.proposal.markAsMerged(merge_reporter=self.person)
+
+        status = self.proposal.getMergeRequestStatus()
+        self.assertFalse(status["pending"])
+        self.assertTrue(status["merged"])
+        self.assertIsNotNone(status["date_requested"])
+        self.assertEqual(self.person.name, status["requested_by"])
 
     def test_requestMerge_success(self):
         repository = self.proposal.target_git_repository
@@ -4553,6 +4956,8 @@ class TestBranchMergeProposalRequestMerge(TestCaseWithFactory):
                 self.proposal.requestMerge,
                 self.person,
             )
+        self.assertIsNone(self.proposal.merger)
+        self.assertIsNone(self.proposal.date_merge_requested)
 
     def test_requestMerge_already_merged(self):
         self.proposal.createComment(

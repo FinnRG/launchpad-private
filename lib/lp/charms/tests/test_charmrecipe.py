@@ -8,6 +8,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from textwrap import dedent
 from unittest import TestCase
+from urllib.parse import urlsplit
 
 import iso8601
 import responses
@@ -56,6 +57,7 @@ from lp.charms.interfaces.charmrecipe import (
     CHARM_RECIPE_ALLOW_CREATE,
     CHARM_RECIPE_BUILD_DISTRIBUTION,
     CHARM_RECIPE_PRIVATE_FEATURE_FLAG,
+    CHARM_RECIPE_USSO_FEATURE_FLAG,
     CHARM_RECIPE_WEBHOOKS_FEATURE_FLAG,
     BadCharmRecipeSearchContext,
     CannotAuthorizeCharmhubUploads,
@@ -1414,7 +1416,10 @@ class TestCharmRecipeAuthorization(TestCaseWithFactory):
             responses.calls,
             MatchesListwise([MatchesStructure(request=tokens_matcher)]),
         )
-        self.assertEqual({"root": root_macaroon_raw}, recipe.store_secrets)
+        self.assertEqual(
+            {"root": root_macaroon_raw, "auth_method": "candid"},
+            recipe.store_secrets,
+        )
 
     def test_beginAuthorization(self):
         recipe = self.factory.makeCharmRecipe(
@@ -1432,6 +1437,216 @@ class TestCharmRecipeAuthorization(TestCaseWithFactory):
             self.assertRaises(
                 Unauthorized, getattr, recipe, "beginAuthorization"
             )
+
+    @responses.activate
+    def test_beginAuthorization_usso(self):
+        # With the Ubuntu SSO feature flag on, beginAuthorization uses the
+        # new endpoint and returns the Ubuntu SSO caveat identifier.
+        self.useFixture(
+            FeatureFixture(
+                {
+                    CHARM_RECIPE_ALLOW_CREATE: "on",
+                    CHARM_RECIPE_USSO_FEATURE_FLAG: "on",
+                }
+            )
+        )
+        recipe = self.factory.makeCharmRecipe(
+            store_upload=True, store_name=self.factory.getUniqueUnicode()
+        )
+        root_macaroon = Macaroon(version=2)
+        root_macaroon.add_third_party_caveat(
+            urlsplit(config.launchpad.openid_provider_root).netloc,
+            "",
+            "dummy",
+        )
+        root_macaroon_raw = root_macaroon.serialize()
+        responses.add(
+            "POST",
+            "http://charmhub.example/v1/tokens/usso",
+            json={"macaroon": root_macaroon_raw},
+        )
+        with person_logged_in(recipe.registrant):
+            sso_caveat_id = recipe.beginAuthorization()
+        tokens_matcher = MatchesStructure(
+            url=Equals("http://charmhub.example/v1/tokens/usso"),
+            method=Equals("POST"),
+            body=AfterPreprocessing(
+                json.loads,
+                Equals(
+                    {
+                        "ttl": 31536000,
+                        "packages": [
+                            {"type": "charm", "name": recipe.store_name},
+                        ],
+                        "permissions": [
+                            "package-manage-releases",
+                            "package-manage-revisions",
+                            "package-view-revisions",
+                        ],
+                    }
+                ),
+            ),
+        )
+        self.assertThat(
+            responses.calls,
+            MatchesListwise([MatchesStructure(request=tokens_matcher)]),
+        )
+        self.assertEqual(
+            root_macaroon.third_party_caveats()[0].caveat_id, sso_caveat_id
+        )
+        self.assertEqual(
+            {"root": root_macaroon_raw, "auth_method": "usso"},
+            recipe.store_secrets,
+        )
+
+    @responses.activate
+    def test_beginAuthorization_usso_no_sso_caveat(self):
+        # A macaroon with no Ubuntu SSO caveat is rejected.
+        self.useFixture(
+            FeatureFixture(
+                {
+                    CHARM_RECIPE_ALLOW_CREATE: "on",
+                    CHARM_RECIPE_USSO_FEATURE_FLAG: "on",
+                }
+            )
+        )
+        recipe = self.factory.makeCharmRecipe(
+            store_upload=True, store_name=self.factory.getUniqueUnicode()
+        )
+        root_macaroon_raw = Macaroon(version=2).serialize()
+        responses.add(
+            "POST",
+            "http://charmhub.example/v1/tokens/usso",
+            json={"macaroon": root_macaroon_raw},
+        )
+        with person_logged_in(recipe.registrant):
+            self.assertRaisesWithContent(
+                CannotAuthorizeCharmhubUploads,
+                "Macaroon has no SSO caveats.",
+                recipe.beginAuthorization,
+            )
+
+    @responses.activate
+    def test_beginAuthorization_usso_multiple_sso_caveats(self):
+        # A macaroon with more than one Ubuntu SSO caveat is rejected.
+        self.useFixture(
+            FeatureFixture(
+                {
+                    CHARM_RECIPE_ALLOW_CREATE: "on",
+                    CHARM_RECIPE_USSO_FEATURE_FLAG: "on",
+                }
+            )
+        )
+        recipe = self.factory.makeCharmRecipe(
+            store_upload=True, store_name=self.factory.getUniqueUnicode()
+        )
+        root_macaroon = Macaroon(version=2)
+        sso_location = urlsplit(config.launchpad.openid_provider_root).netloc
+        root_macaroon.add_third_party_caveat(sso_location, "", "dummy")
+        root_macaroon.add_third_party_caveat(sso_location, "", "dummy2")
+        root_macaroon_raw = root_macaroon.serialize()
+        responses.add(
+            "POST",
+            "http://charmhub.example/v1/tokens/usso",
+            json={"macaroon": root_macaroon_raw},
+        )
+        with person_logged_in(recipe.registrant):
+            self.assertRaisesWithContent(
+                CannotAuthorizeCharmhubUploads,
+                "Macaroon has multiple SSO caveats.",
+                recipe.beginAuthorization,
+            )
+
+    @responses.activate
+    def test_beginAuthorization_usso_team_scope_member(self):
+        # A team scoped Ubuntu SSO rule drives a team member down the
+        # Ubuntu SSO path.
+        team = self.factory.makeTeam()
+        member = self.factory.makePerson(member_of=[team])
+        self.useFixture(
+            FeatureFixture(
+                {CHARM_RECIPE_ALLOW_CREATE: "on"},
+                full_feature_rules=[
+                    dict(
+                        flag=CHARM_RECIPE_USSO_FEATURE_FLAG,
+                        scope="team:%s" % team.name,
+                        priority=999,
+                        value="on",
+                    ),
+                ],
+            )
+        )
+        root_macaroon = Macaroon(version=2)
+        root_macaroon.add_third_party_caveat(
+            urlsplit(config.launchpad.openid_provider_root).netloc,
+            "",
+            "dummy",
+        )
+        root_macaroon_raw = root_macaroon.serialize()
+        responses.add(
+            "POST",
+            "http://charmhub.example/v1/tokens/usso",
+            json={"macaroon": root_macaroon_raw},
+        )
+        with person_logged_in(member):
+            recipe = self.factory.makeCharmRecipe(
+                registrant=member,
+                owner=member,
+                store_upload=True,
+                store_name=self.factory.getUniqueUnicode(),
+            )
+            sso_caveat_id = recipe.beginAuthorization()
+        self.assertEqual(
+            "http://charmhub.example/v1/tokens/usso",
+            responses.calls[-1].request.url,
+        )
+        self.assertEqual(
+            root_macaroon.third_party_caveats()[0].caveat_id, sso_caveat_id
+        )
+        self.assertEqual("usso", recipe.store_secrets["auth_method"])
+
+    @responses.activate
+    def test_beginAuthorization_candid_team_scope_non_member(self):
+        # A team scoped Ubuntu SSO rule leaves a person outside the team on
+        # the Candid path.
+        team = self.factory.makeTeam()
+        non_member = self.factory.makePerson()
+        self.useFixture(
+            FeatureFixture(
+                {CHARM_RECIPE_ALLOW_CREATE: "on"},
+                full_feature_rules=[
+                    dict(
+                        flag=CHARM_RECIPE_USSO_FEATURE_FLAG,
+                        scope="team:%s" % team.name,
+                        priority=999,
+                        value="on",
+                    ),
+                ],
+            )
+        )
+        root_macaroon = Macaroon(version=2)
+        root_macaroon.add_third_party_caveat(
+            "https://candid.test/", "", "identity"
+        )
+        root_macaroon_raw = root_macaroon.serialize(JsonSerializer())
+        responses.add(
+            "POST",
+            "http://charmhub.example/v1/tokens",
+            json={"macaroon": root_macaroon_raw},
+        )
+        with person_logged_in(non_member):
+            recipe = self.factory.makeCharmRecipe(
+                registrant=non_member,
+                owner=non_member,
+                store_upload=True,
+                store_name=self.factory.getUniqueUnicode(),
+            )
+            recipe.beginAuthorization()
+        self.assertEqual(
+            "http://charmhub.example/v1/tokens",
+            responses.calls[-1].request.url,
+        )
+        self.assertEqual("candid", recipe.store_secrets["auth_method"])
 
     @responses.activate
     def test_completeAuthorization(self):
@@ -1458,6 +1673,9 @@ class TestCharmRecipeAuthorization(TestCaseWithFactory):
             "http://charmhub.example/v1/tokens/exchange",
             json={"macaroon": exchanged_macaroon_raw},
         )
+        # completeAuthorization falls back to the Candid exchange endpoint if
+        # the authorization has no auth_method in store_secrets, maintaining
+        # backwards-compatibility.
         recipe = self.factory.makeCharmRecipe(
             store_upload=True,
             store_name=self.factory.getUniqueUnicode(),
@@ -1551,6 +1769,166 @@ class TestCharmRecipeAuthorization(TestCaseWithFactory):
                 recipe.completeAuthorization,
                 "nonsense",
             )
+
+    @responses.activate
+    def test_completeAuthorization_usso(self):
+        # An authorization recorded as "usso" is completed against the new
+        # Ubuntu SSO exchange endpoint and stores the resulting token.
+        private_key = PrivateKey.generate()
+        self.pushConfig(
+            "charms",
+            charmhub_secrets_public_key=base64.b64encode(
+                bytes(private_key.public_key)
+            ).decode(),
+        )
+        root_macaroon = Macaroon(version=2)
+        root_macaroon_raw = root_macaroon.serialize()
+        unbound_discharge_macaroon = Macaroon(version=2)
+        unbound_discharge_macaroon_raw = unbound_discharge_macaroon.serialize()
+        discharge_macaroon_raw = root_macaroon.prepare_for_request(
+            unbound_discharge_macaroon
+        ).serialize()
+        exchanged_macaroon = Macaroon(version=2)
+        exchanged_macaroon_raw = exchanged_macaroon.serialize(JsonSerializer())
+        responses.add(
+            "POST",
+            "http://charmhub.example/v1/tokens/usso/exchange",
+            json={"macaroon": exchanged_macaroon_raw},
+        )
+        store_name = self.factory.getUniqueUnicode()
+        recipe = self.factory.makeCharmRecipe(
+            store_upload=True,
+            store_name=store_name,
+            store_secrets={"root": root_macaroon_raw, "auth_method": "usso"},
+        )
+        with person_logged_in(recipe.registrant):
+            recipe.completeAuthorization(unbound_discharge_macaroon_raw)
+            self.pushConfig(
+                "charms",
+                charmhub_secrets_private_key=base64.b64encode(
+                    bytes(private_key)
+                ).decode(),
+            )
+            container = getUtility(IEncryptedContainer, "charmhub-secrets")
+            self.assertThat(
+                recipe.store_secrets,
+                MatchesDict(
+                    {
+                        "exchanged_encrypted": AfterPreprocessing(
+                            lambda data: container.decrypt(data).decode(),
+                            Equals(exchanged_macaroon_raw),
+                        ),
+                    }
+                ),
+            )
+        exchange_matcher = MatchesStructure(
+            url=Equals("http://charmhub.example/v1/tokens/usso/exchange"),
+            method=Equals("POST"),
+            headers=ContainsDict(
+                {
+                    "Authorization": Equals(
+                        'Macaroon root="%s", discharge="%s"'
+                        % (root_macaroon_raw, discharge_macaroon_raw)
+                    ),
+                }
+            ),
+            body=AfterPreprocessing(
+                json.loads,
+                Equals(
+                    {
+                        "client-description": "%s for %s"
+                        % (store_name, config.vhost.mainsite.hostname)
+                    }
+                ),
+            ),
+        )
+        self.assertThat(
+            responses.calls,
+            MatchesListwise([MatchesStructure(request=exchange_matcher)]),
+        )
+
+    @responses.activate
+    def test_completeAuthorization_candid_auth_method_flag_on(self):
+        # completeAuthorization follows the auth_method recorded at
+        # beginAuthorization instead of the live feature flag. Even with the
+        # USSO flag on, a "candid" auth_method still exchanges via the Candid
+        # endpoint. This ensures that the authorizations which are already in
+        # progress are not broken.
+        self.useFixture(
+            FeatureFixture(
+                {
+                    CHARM_RECIPE_ALLOW_CREATE: "on",
+                    CHARM_RECIPE_USSO_FEATURE_FLAG: "on",
+                }
+            )
+        )
+        private_key = PrivateKey.generate()
+        self.pushConfig(
+            "charms",
+            charmhub_secrets_public_key=base64.b64encode(
+                bytes(private_key.public_key)
+            ).decode(),
+        )
+        root_macaroon = Macaroon(version=2)
+        root_macaroon_raw = root_macaroon.serialize(JsonSerializer())
+        unbound_discharge_macaroon = Macaroon(version=2)
+        unbound_discharge_macaroon_raw = unbound_discharge_macaroon.serialize(
+            JsonSerializer()
+        )
+        exchanged_macaroon_raw = Macaroon(version=2).serialize(
+            JsonSerializer()
+        )
+        responses.add(
+            "POST",
+            "http://charmhub.example/v1/tokens/exchange",
+            json={"macaroon": exchanged_macaroon_raw},
+        )
+        recipe = self.factory.makeCharmRecipe(
+            store_upload=True,
+            store_name=self.factory.getUniqueUnicode(),
+            store_secrets={"root": root_macaroon_raw, "auth_method": "candid"},
+        )
+        with person_logged_in(recipe.registrant):
+            recipe.completeAuthorization(unbound_discharge_macaroon_raw)
+        self.assertEqual(
+            "http://charmhub.example/v1/tokens/exchange",
+            responses.calls[-1].request.url,
+        )
+
+    @responses.activate
+    def test_completeAuthorization_usso_auth_method_flag_off(self):
+        # The mirror case with the USSO flag off. A "usso" auth_method is
+        # recorded, and the exchange still goes to the Ubuntu SSO endpoint.
+        private_key = PrivateKey.generate()
+        self.pushConfig(
+            "charms",
+            charmhub_secrets_public_key=base64.b64encode(
+                bytes(private_key.public_key)
+            ).decode(),
+        )
+        root_macaroon = Macaroon(version=2)
+        root_macaroon_raw = root_macaroon.serialize()
+        unbound_discharge_macaroon = Macaroon(version=2)
+        unbound_discharge_macaroon_raw = unbound_discharge_macaroon.serialize()
+        exchanged_macaroon_raw = Macaroon(version=2).serialize(
+            JsonSerializer()
+        )
+        responses.add(
+            "POST",
+            "http://charmhub.example/v1/tokens/usso/exchange",
+            json={"macaroon": exchanged_macaroon_raw},
+        )
+        recipe = self.factory.makeCharmRecipe(
+            store_upload=True,
+            store_name=self.factory.getUniqueUnicode(),
+            store_secrets={"root": root_macaroon_raw, "auth_method": "usso"},
+        )
+        with person_logged_in(recipe.registrant):
+            recipe.completeAuthorization(unbound_discharge_macaroon_raw)
+        self.assertEqual(
+            "http://charmhub.example/v1/tokens/usso/exchange",
+            responses.calls[-1].request.url,
+        )
 
 
 class TestCharmRecipeDeleteWithBuilds(TestCaseWithFactory):
@@ -2586,7 +2964,10 @@ class TestCharmRecipeWebservice(TestCaseWithFactory):
                 ],
             }
             self.assertEqual(expected_body, json.loads(call.request.body))
-            self.assertEqual({"root": root_macaroon_raw}, recipe.store_secrets)
+            self.assertEqual(
+                {"root": root_macaroon_raw, "auth_method": "candid"},
+                recipe.store_secrets,
+            )
         return response, root_macaroon_raw
 
     def test_beginAuthorization(self):

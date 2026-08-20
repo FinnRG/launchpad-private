@@ -157,6 +157,13 @@ class BuilderOverviewMenu(ApplicationMenu):
         return Link("+mode", text, icon="edit")
 
 
+# Processors that are emulated or otherwise known to be slow, and use a
+# higher threshold before a build is considered long-running.
+_SLOW_PROCESSORS = frozenset(["riscv64"])
+_SLOW_BUILD_THRESHOLD = timedelta(days=7)
+_DEFAULT_BUILD_THRESHOLD = timedelta(days=1)
+
+
 class CleanInfoMixin:
     """View support for showing information about a builder's cleaning status.
 
@@ -178,6 +185,28 @@ class CleanInfoMixin:
             )
         else:
             return "Cleaning"
+
+    def getBuildInfo(self, builder, buildqueue):
+        """Return build duration info for a building builder.
+
+        Known slow/emulated processors (e.g. riscv64) use a higher threshold
+        before being considered long-running.
+        """
+        duration = buildqueue.current_build_duration
+        if duration is None:
+            return None
+        is_slow = any(p.name in _SLOW_PROCESSORS for p in builder.processors)
+        threshold = (
+            _SLOW_BUILD_THRESHOLD if is_slow else _DEFAULT_BUILD_THRESHOLD
+        )
+        is_long = duration > threshold
+        return {
+            "duration": DurationFormatterAPI(duration).approximateduration(),
+            "is_long": is_long,
+            "style": (
+                "color: darkorange; font-weight: bold" if is_long else None
+            ),
+        }
 
 
 class BuilderSetView(CleanInfoMixin, LaunchpadView):

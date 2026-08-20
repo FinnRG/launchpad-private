@@ -1034,6 +1034,12 @@ class IDistroSeriesPublic(
 
         Set this distroseries to be the `upload_distroseries`.
 
+        Note that gina (the Debian importer) does not use this method.
+        It constructs `SourcePackageRelease` directly (see
+        lp.soyuz.scripts.gina.handlers.SourcePackageHandler.
+        createSourcePackageRelease).  When adding a new parameter here,
+        mirror it in gina as well.
+
         Arguments are extracted/built when processing an uploaded source
         package:
 

@@ -14,6 +14,7 @@ from zope.interface import implementer
 
 from lp.code.errors import (
     ClaimReviewFailed,
+    ReviewAlreadyPending,
     ReviewNotPending,
     UserHasExistingReview,
 )
@@ -65,6 +66,14 @@ class CodeReviewVoteReference(StormBase):
         """See `ICodeReviewVote`"""
         # Reviews are pending if there is no associated comment.
         return self.comment is None
+
+    def resetToPending(self):
+        """See `ICodeReviewVote`"""
+        if self.is_pending:
+            raise ReviewAlreadyPending("The review is already pending.")
+        # Only the slot is reopened, so the original vote stays in the
+        # conversation.
+        self.comment = None
 
     def _validatePending(self):
         """Raise if the review is not pending."""

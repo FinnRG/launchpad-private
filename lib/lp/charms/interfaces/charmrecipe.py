@@ -12,6 +12,7 @@ __all__ = [
     "CHARM_RECIPE_ALLOW_CREATE",
     "CHARM_RECIPE_BUILD_DISTRIBUTION",
     "CHARM_RECIPE_PRIVATE_FEATURE_FLAG",
+    "CHARM_RECIPE_USSO_FEATURE_FLAG",
     "CHARM_RECIPE_WEBHOOKS_FEATURE_FLAG",
     "CharmRecipeBuildAlreadyPending",
     "CharmRecipeBuildDisallowedArchitecture",
@@ -93,6 +94,7 @@ CHARM_RECIPE_ALLOW_CREATE = "charm.recipe.create.enabled"
 CHARM_RECIPE_PRIVATE_FEATURE_FLAG = "charm.recipe.allow_private"
 CHARM_RECIPE_BUILD_DISTRIBUTION = "charm.default_build_distribution"
 CHARM_RECIPE_WEBHOOKS_FEATURE_FLAG = "charm.recipe.webhooks.enabled"
+CHARM_RECIPE_USSO_FEATURE_FLAG = "charm.charmhub.usso.enabled"
 
 
 @error_status(http.client.UNAUTHORIZED)
@@ -556,9 +558,13 @@ class ICharmRecipeEdit(IWebhookTarget):
             macaroon.
         :raises BadCandidMacaroon: if the macaroon returned by Charmhub has
             unsuitable Candid caveats.
-        :return: The serialized macaroon returned by the store.  The caller
-            should acquire a discharge macaroon for this caveat from Candid
-            and then call `completeAuthorization`.
+        :return: The value from the store that should be discharged before
+            calling `completeAuthorization`.  If the
+            charm.charmhub.usso.enabled feature flag is enabled for the
+            requesting user, this is the Ubuntu SSO caveat ID from the
+            returned macaroon, which should be discharged by Ubuntu SSO.
+            Otherwise it is the serialized root macaroon returned by the
+            store, whose Candid caveat should be discharged by Candid.
         """
 
     @rename_parameters_as(unbound_discharge_macaroon_raw="discharge_macaroon")

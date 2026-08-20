@@ -516,6 +516,19 @@ form.archive-subscription-activation button:hover {
     text-decoration: underline;
 }
 
+/* A submit button that should sit among plain icon links without looking
+ * like a button; the icon's alt text and the button's title carry the
+ * meaning. */
+button.bare-icon-button {
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    line-height: 0;
+    vertical-align: baseline;
+    cursor: pointer;
+}
+
 /* Shaded logging area. */
 div.logtail {
     margin: 0.5em;
@@ -691,6 +704,15 @@ table.diff .line-no.active, table.diff .ss-line-no.active {
 table.diff .diff-chunk, table.diff .diff-file, table.diff .diff-header {
   background: #f4f6f9;
   font-weight: 600;
+}
+table.diff .diff-header a.diff-file-link,
+table.diff .diff-chunk a.diff-file-link {
+  color: inherit;
+  text-decoration: none;
+}
+table.diff .diff-header a.diff-file-link:hover,
+table.diff .diff-chunk a.diff-file-link:hover {
+  text-decoration: underline;
 }
 table.diff .diff-added { background-color: #cff7cf; }
 table.diff .diff-removed { background-color: #ffb8b8; }

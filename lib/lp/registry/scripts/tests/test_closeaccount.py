@@ -27,8 +27,15 @@ from lp.code.enums import (
     TargetRevisionControlSystems,
 )
 from lp.code.interfaces.codeimportjob import ICodeImportJobWorkflow
+from lp.code.interfaces.codereviewinlinecomment import (
+    ICodeReviewInlineCommentSet,
+)
 from lp.code.tests.helpers import GitHostingFixture
 from lp.registry.interfaces.person import IPersonSet
+from lp.registry.interfaces.socialaccount import (
+    ISocialAccountSet,
+    SocialPlatformType,
+)
 from lp.registry.interfaces.teammembership import ITeamMembershipSet
 from lp.registry.model.productrelease import ProductRelease
 from lp.registry.model.teammembership import TeamParticipation
@@ -1377,3 +1384,83 @@ class TestCloseAccount(TestCaseWithFactory):
         with dbuser("launchpad"):
             self.runScript(script)
         self.assertRemoved(person.account.id, person.id)
+
+    def test_handles_social_accounts(self):
+        person = self.factory.makePerson()
+        person_id = person.id
+        account_id = person.account.id
+        getUtility(ISocialAccountSet).new(
+            person,
+            SocialPlatformType.MATRIX,
+            {"username": "test-nickname", "homeserver": "ubuntu.com"},
+        )
+        getUtility(ISocialAccountSet).new(
+            person, SocialPlatformType.GITHUB, {"username": "test-nickname"}
+        )
+        self.assertEqual(2, len(person.social_accounts))
+        script = self.makeScript([person.name])
+        with dbuser("launchpad"):
+            self.runScript(script)
+        self.assertRemoved(account_id, person_id)
+        self.assertEqual([], person.social_accounts)
+
+    def test_skips_code_review_inline_comments(self):
+        person = self.factory.makePerson()
+        person_id = person.id
+        account_id = person.account.id
+        previewdiff = self.factory.makePreviewDiff()
+        comment = previewdiff.branch_merge_proposal.createComment(
+            person, "A review"
+        )
+        inline_comment_set = getUtility(ICodeReviewInlineCommentSet)
+        inline_comment_set.ensureDraft(
+            previewdiff, person, {"2": "Needs a docstring."}
+        )
+        inline_comment_set.publishDraft(previewdiff, person, comment)
+        script = self.makeScript([person.name])
+        with dbuser("launchpad"):
+            self.runScript(script)
+        self.assertRemoved(account_id, person_id)
+        [inline_comment] = inline_comment_set.getPublished(previewdiff)
+        self.assertEqual(person, inline_comment["person"])
+        self.assertEqual("Needs a docstring.", inline_comment["text"])
+
+    def test_handles_code_review_inline_comment_drafts(self):
+        # Unpublished drafts are only ever visible to their author, who can
+        # no longer publish them, so they are removed.
+        person = self.factory.makePerson()
+        person_id = person.id
+        account_id = person.account.id
+        previewdiff = self.factory.makePreviewDiff()
+        getUtility(ICodeReviewInlineCommentSet).ensureDraft(
+            previewdiff, person, {"2": "Half-written thought."}
+        )
+        self.assertEqual(
+            {"2": "Half-written thought."},
+            getUtility(ICodeReviewInlineCommentSet).getDraft(
+                previewdiff, person
+            ),
+        )
+        script = self.makeScript([person.name])
+        with dbuser("launchpad"):
+            self.runScript(script)
+        self.assertRemoved(account_id, person_id)
+        self.assertIsNone(
+            getUtility(ICodeReviewInlineCommentSet).getDraft(
+                previewdiff, person
+            )
+        )
+
+    def test_skips_revision_status_report_creator(self):
+        person = self.factory.makePerson()
+        person_id = person.id
+        account_id = person.account.id
+        repository = self.factory.makeGitRepository()
+        report = self.factory.makeRevisionStatusReport(
+            user=person, git_repository=repository
+        )
+        script = self.makeScript([person.name])
+        with dbuser("launchpad"):
+            self.runScript(script)
+        self.assertRemoved(account_id, person_id)
+        self.assertEqual(person, report.creator)

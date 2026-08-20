@@ -27,7 +27,7 @@ __all__ = [
 import json
 import operator
 from functools import wraps
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, quote_plus, urlsplit, urlunsplit
 
 from lazr.delegates import delegate_to
 from lazr.restful.interface import copy_field
@@ -50,6 +50,7 @@ from lp.app.browser.lazrjs import (
     TextAreaEditorWidget,
     vocabulary_to_choice_edit_items,
 )
+from lp.app.browser.stringformatter import FormattersAPI
 from lp.app.browser.tales import DateTimeFormatterAPI
 from lp.code.adapters.branch import BranchMergeProposalNoPreviewDiffDelta
 from lp.code.browser.codereviewcomment import CodeReviewDisplayComment
@@ -71,7 +72,10 @@ from lp.code.errors import (
     WrongBranchMergeProposal,
 )
 from lp.code.interfaces.branch import IBranch
-from lp.code.interfaces.branchmergeproposal import IBranchMergeProposal
+from lp.code.interfaces.branchmergeproposal import (
+    PROPOSAL_MERGE_ENABLED_FEATURE_FLAG,
+    IBranchMergeProposal,
+)
 from lp.code.interfaces.codereviewcomment import ICodeReviewComment
 from lp.code.interfaces.codereviewinlinecomment import (
     ICodeReviewInlineCommentSet,
@@ -99,7 +103,10 @@ from lp.services.webapp import (
     enabled_with_permission,
     stepthrough,
 )
-from lp.services.webapp.authorization import check_permission
+from lp.services.webapp.authorization import (
+    check_permission,
+    precache_permission_for_objects,
+)
 from lp.services.webapp.breadcrumb import Breadcrumb
 from lp.services.webapp.escaping import structured
 from lp.services.webapp.interfaces import ILaunchBag
@@ -265,6 +272,18 @@ class BranchMergeProposalMenuMixin:
         enabled = self._enabledForStatus(BranchMergeProposalStatus.MERGED)
         return Link("+merged", text, enabled=enabled)
 
+    def request_merge(self):
+        text = "Request merge"
+        bmp = self.branch_merge_proposal
+        enabled = (
+            bool(getFeatureFlag(PROPOSAL_MERGE_ENABLED_FEATURE_FLAG))
+            and bmp.source_branch is None
+            and bmp.isInProgress()
+            and self.user is not None
+            and bmp.canIMerge(self.user)
+        )
+        return Link("+index", text, icon="merge-proposal", enabled=enabled)
+
     @enabled_with_permission("launchpad.Edit")
     def update_merge_revno(self):
         if IBranch.providedBy(self.context.merge_target):
@@ -292,7 +311,7 @@ class BranchMergeProposalEditMenu(
     usedfor = IBranchMergeProposal
     title = "Edit Proposal"
     facet = "branches"
-    links = ["resubmit", "delete"]
+    links = ["request_merge", "resubmit", "delete"]
 
     @property
     def branch_merge_proposal(self):
@@ -569,6 +588,66 @@ class DiffRenderingMixin:
         diff_text = self.preview_diff_text
         return diff_text.count("\n") >= config.diff.max_format_lines
 
+    def _getGitFileURLGetter(self, preview_diff):
+        """Return a callback linking diff file headers to the code browser.
+
+        The callback maps a repository path, a side ("a" for the old side,
+        "b" for the new side) and an optional line number to a Git
+        code-browse URL.  Returns None for proposals that are not Git-backed.
+        """
+        bmp = preview_diff.branch_merge_proposal
+        if bmp.source_git_ref is None:
+            return None
+        # The merge diff shows the target ("a") side merged with the source
+        # ("b") side, so each side links to its own repository, ref and
+        # commit.
+        sides = {
+            "a": (
+                bmp.target_git_repository,
+                bmp.target_git_ref,
+                preview_diff.target_revision_id,
+            ),
+            "b": (
+                bmp.source_git_repository,
+                bmp.source_git_ref,
+                preview_diff.source_revision_id,
+            ),
+        }
+
+        def get_file_url(path, side, line=None):
+            repository, ref, commit = sides[side]
+            if repository is None or not commit:
+                return None
+            url = "%s/tree/%s" % (repository.getCodebrowseUrl(), quote(path))
+            params = []
+            if ref is not None:
+                params.append("h=%s" % ref.url_quoted_name)
+            params.append("id=%s" % quote_plus(commit))
+            url = "%s?%s" % (url, "&".join(params))
+            if line is not None:
+                url += "#n%s" % line
+            return url
+
+        return get_file_url
+
+    @property
+    def rendered_diff(self):
+        """The preview diff as HTML, with Git file headers linked.
+
+        Uses the side-by-side layout when the ``ss`` request variable is set.
+        """
+        text = self.preview_diff_text
+        if text is None:
+            return None
+        get_file_url = None
+        preview_diff = self.preview_diff
+        if preview_diff is not None:
+            get_file_url = self._getGitFileURLGetter(preview_diff)
+        formatter = FormattersAPI(text)
+        if self.request.get("ss"):
+            return formatter.format_ssdiff(get_file_url=get_file_url)
+        return formatter.format_diff(get_file_url=get_file_url)
+
 
 class ICodeReviewNewRevisions(IComment):
     """Marker interface used to register views for CodeReviewNewRevisions."""
@@ -633,6 +712,9 @@ class BranchMergeProposalView(
         super().initialize()
         cache = IJSONRequestCache(self.request)
         cache.objects["branch_name"] = self.context.merge_source.name
+        cache.objects["merge_request_enabled"] = bool(
+            getFeatureFlag(PROPOSAL_MERGE_ENABLED_FEATURE_FLAG)
+        )
         if IBranch.providedBy(self.context.merge_source) and getFeatureFlag(
             "code.bzr.diff.disable_proxy"
         ):
@@ -658,6 +740,18 @@ class BranchMergeProposalView(
                 request.claimReview(self.user)
             except ClaimReviewFailed as e:
                 self.request.response.addErrorNotification(str(e))
+        self.next_url = canonical_url(self.context)
+
+    @action("Request again", name="request_again")
+    @notify
+    def request_again_action(self, action, data):
+        """Ask a reviewer who has already voted to review this again."""
+        vote = self.context.getVoteReference(data["review_id"])
+        if vote is not None:
+            self.context.requestReviewAgain(reviewers=[vote.reviewer])
+            self.request.response.addNotification(
+                "Requested another review from %s." % vote.reviewer.displayname
+            )
         self.next_url = canonical_url(self.context)
 
     @property
@@ -973,6 +1067,14 @@ class DecoratedCodeReviewVoteReference:
     def status_text(self):
         """The text shown in the table of the users vote."""
         return self.status_text_map[self.context.comment.vote]
+
+    @cachedproperty
+    def can_request_again(self):
+        """Checks if the viewer can ask this reviewer
+        to look at the proposal again"""
+        return not self.context.is_pending and check_permission(
+            "launchpad.Edit", self.context.branch_merge_proposal
+        )
 
 
 class BranchMergeProposalVoteView(LaunchpadView):
@@ -1385,6 +1487,22 @@ class BranchMergeProposalSubscribersView(LaunchpadView):
         self._status_subscribers = (
             self._status_subscribers - self._full_subscribers
         )
+        # Cache permissions so private subscribers can be filtered out
+        # without running expensive SQL queries for each one.
+        all_subscribers = self._full_subscribers | self._status_subscribers
+        if all_subscribers:
+            person_ids = [person.id for person in all_subscribers]
+            list(
+                getUtility(IPersonSet).getPrecachedPersonsFromIDs(
+                    person_ids, need_validity=True
+                )
+            )
+            if self.user is not None:
+                precache_permission_for_objects(
+                    self.request,
+                    "launchpad.LimitedView",
+                    list(all_subscribers),
+                )
 
     def _add_subscribers_for_branch(self, branch):
         """Add the subscribers to the subscription sets for the branch."""
@@ -1399,18 +1517,28 @@ class BranchMergeProposalSubscribersView(LaunchpadView):
                 # don't want to see anything.
                 pass
 
+    def _visible_subscribers(self, subscribers):
+        """Filter subscribers to only those visible to the current user."""
+        return [
+            person
+            for person in subscribers
+            if check_permission("launchpad.LimitedView", person)
+        ]
+
     @cachedproperty
     def full_subscribers(self):
         """A list of full subscribers ordered by displayname."""
         return sorted(
-            self._full_subscribers, key=operator.attrgetter("displayname")
+            self._visible_subscribers(self._full_subscribers),
+            key=operator.attrgetter("displayname"),
         )
 
     @cachedproperty
     def status_subscribers(self):
-        """A list of full subscribers ordered by displayname."""
+        """A list of status subscribers ordered by displayname."""
         return sorted(
-            self._status_subscribers, key=operator.attrgetter("displayname")
+            self._visible_subscribers(self._status_subscribers),
+            key=operator.attrgetter("displayname"),
         )
 
     @property

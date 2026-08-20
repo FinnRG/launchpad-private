@@ -59,6 +59,7 @@ __all__ = [
     "NoSuchGitRepository",
     "PrivateBranchRecipe",
     "PrivateGitRepositoryRecipe",
+    "ReviewAlreadyPending",
     "ReviewNotPending",
     "StaleLastMirrored",
     "TooNewRecipeFormat",
@@ -357,6 +358,11 @@ class PrivateGitRepositoryRecipe(Exception):
         )
         self.repository = repository
         Exception.__init__(self, message)
+
+
+@error_status(http.client.BAD_REQUEST)
+class ReviewAlreadyPending(Exception):
+    """The requested review is already in a pending state."""
 
 
 @error_status(http.client.BAD_REQUEST)

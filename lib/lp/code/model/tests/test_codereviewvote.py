@@ -8,6 +8,7 @@ from lp.app.enums import InformationType
 from lp.code.enums import CodeReviewVote
 from lp.code.errors import (
     ClaimReviewFailed,
+    ReviewAlreadyPending,
     ReviewNotPending,
     UserHasExistingReview,
 )
@@ -401,6 +402,104 @@ class TestCodeReviewVoteReferenceReassignReview(
         bmp.nominateReviewer(reviewer=reviewer_team, registrant=bmp.registrant)
         review.reassignReview(reviewer_team)
         self.assertEqual(reviewer_team, review.reviewer)
+
+
+class TestCodeReviewVoteReferenceResetToPending(
+    WithScenarios, TestCaseWithFactory
+):
+    """Tests for CodeReviewVoteReference.resetToPending."""
+
+    layer = DatabaseFunctionalLayer
+
+    scenarios = [
+        ("bazaar", {"cvs": "BAZAAR"}),
+        ("git", {"cvs": "GIT"}),
+    ]
+
+    def setUp(self):
+        super().setUp()
+        self.for_git = self.cvs == "GIT"
+
+    def makeMergeProposalWithCompletedReview(self):
+        """Return a proposal and a review that has been voted on."""
+        bmp = make_merge_proposal_without_reviewers(
+            self.factory, for_git=self.for_git
+        )
+        reviewer = self.factory.makePerson()
+        login_person(reviewer)
+        bmp.createComment(
+            reviewer,
+            "Message subject",
+            "Message content",
+            vote=CodeReviewVote.NEEDS_FIXING,
+        )
+        [review] = list(bmp.votes)
+        return bmp, review
+
+    def getTargetOwner(self, bmp):
+        """The owner of the target, who can edit any of its reviews."""
+        if self.for_git:
+            return bmp.target_git_repository.owner
+        else:
+            return bmp.target_branch.owner
+
+    def test_reset_completed_review(self):
+        # Resetting a completed review makes it pending again.
+        bmp, review = self.makeMergeProposalWithCompletedReview()
+        review.resetToPending()
+        self.assertTrue(review.is_pending)
+
+    def test_reset_keeps_the_comment(self):
+        # The comment carrying the original vote stays in the conversation.
+        bmp, review = self.makeMergeProposalWithCompletedReview()
+        [comment] = list(bmp.all_comments)
+        review.resetToPending()
+        self.assertEqual([comment], list(bmp.all_comments))
+        self.assertEqual(CodeReviewVote.NEEDS_FIXING, comment.vote)
+
+    def test_reset_pending_review(self):
+        # A review that is already pending cannot be reset.
+        bmp = make_merge_proposal_without_reviewers(
+            self.factory, for_git=self.for_git
+        )
+        login_person(bmp.registrant)
+        review = bmp.nominateReviewer(
+            reviewer=self.factory.makePerson(), registrant=bmp.registrant
+        )
+        self.assertRaisesWithContent(
+            ReviewAlreadyPending,
+            "The review is already pending.",
+            review.resetToPending,
+        )
+
+    def test_reset_by_others_unauthorized(self):
+        # Someone unrelated to the review cannot reopen it.
+        bmp, review = self.makeMergeProposalWithCompletedReview()
+        login_person(self.factory.makePerson())
+        self.assertRaises(Unauthorized, getattr, review, "resetToPending")
+
+    def test_reset_by_target_owner(self):
+        # Anyone with edit permissions on the target can reopen a review.
+        bmp, review = self.makeMergeProposalWithCompletedReview()
+        login_person(self.getTargetOwner(bmp))
+        review.resetToPending()
+        self.assertTrue(review.is_pending)
+
+    def test_reset_then_vote_again_reuses_the_slot(self):
+        # Voting again after a reset reattaches to the reopened slot rather
+        # than creating a second one.
+        bmp, review = self.makeMergeProposalWithCompletedReview()
+        reviewer = review.reviewer
+        review.resetToPending()
+        bmp.createComment(
+            reviewer,
+            "Message subject",
+            "Looks good now",
+            vote=CodeReviewVote.APPROVE,
+        )
+        self.assertEqual([review], list(bmp.votes))
+        self.assertFalse(review.is_pending)
+        self.assertEqual(CodeReviewVote.APPROVE, review.comment.vote)
 
 
 class TestCodeReviewVoteReferenceDeleteWebservice(TestCaseWithFactory):

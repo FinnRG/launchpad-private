@@ -5671,7 +5671,24 @@ class TestGitRepositoryWebservice(TestCaseWithFactory):
         with person_logged_in(admin):
             repository_db.repackRepository()
         self.assertEqual(
-            [((repository_db.getInternalPath(),), {})],
+            [((repository_db.getInternalPath(),), {"no_reuse_delta": False})],
+            hosting_fixture.repackRepository.calls,
+        )
+        self.assertEqual(1, hosting_fixture.repackRepository.call_count)
+
+    def test_repackRepository_no_reuse_delta(self):
+        # A repack can be requested with no_reuse_delta=True, which is
+        # forwarded to the hosting client.
+        hosting_fixture = self.useFixture(GitHostingFixture())
+        owner_db = self.factory.makePerson()
+        repository_db = self.factory.makeGitRepository(
+            owner=owner_db, name="repository"
+        )
+        admin = getUtility(ILaunchpadCelebrities).admin.teamowner
+        with person_logged_in(admin):
+            repository_db.repackRepository(no_reuse_delta=True)
+        self.assertEqual(
+            [((repository_db.getInternalPath(),), {"no_reuse_delta": True})],
             hosting_fixture.repackRepository.calls,
         )
         self.assertEqual(1, hosting_fixture.repackRepository.call_count)
@@ -5692,7 +5709,7 @@ class TestGitRepositoryWebservice(TestCaseWithFactory):
         with person_logged_in(person):
             repository_db.repackRepository()
         self.assertEqual(
-            [((repository_db.getInternalPath(),), {})],
+            [((repository_db.getInternalPath(),), {"no_reuse_delta": False})],
             hosting_fixture.repackRepository.calls,
         )
         self.assertEqual(1, hosting_fixture.repackRepository.call_count)

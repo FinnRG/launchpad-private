@@ -93,8 +93,9 @@
     # {src_pkg_name} and {version} segments:
     #   /{distro}/+source[/{src_pkg_name}[/{version}]]
     # +-prefixed sub-pages (e.g. +subscribe) and the distroseries form
-    # (/{distro}/{series}/+source/...) are left on Launchpad Classic.
-    RewriteRule ^(/[^/]+/\+source(?:/[^/]+(?:/[^+/][^/]*)?)?)/?$ {{ lui_endpoint.rstrip("/") }}$1 [P,L,NE,E=LUI_PROXY:%{HTTP_HOST}]
+    # (/{distro}/{series}/+source/...) are left on Launchpad Classic. Keep an
+    # optional trailing slash in $1 so SvelteKit can normalize it itself.
+    RewriteRule ^(/[^/]+/\+source(?:/[^/]+(?:/[^+/][^/]*)?)?/?)$ {{ lui_endpoint.rstrip("/") }}$1 [P,L,NE,E=LUI_PROXY:%{HTTP_HOST}]
 {%- endif %}
 
     # Most anonymous requests are cacheable.

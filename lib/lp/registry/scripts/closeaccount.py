@@ -123,6 +123,7 @@ def close_account(username, log):
         ("codeimportjob", "requesting_user"),
         ("codeimportevent", "person"),
         ("codeimportresult", "requesting_user"),
+        ("codereviewinlinecomment", "person"),
         ("codereviewvote", "registrant"),
         ("codereviewvote", "reviewer"),
         ("distroarchseriesfilter", "creator"),
@@ -155,6 +156,7 @@ def close_account(username, log):
         ("question", "answerer"),
         ("questionreopening", "answerer"),
         ("questionreopening", "reopener"),
+        ("revisionstatusreport", "creator"),
         ("snapbuild", "requester"),
         ("sourcepackagepublishinghistory", "creator"),
         ("sourcepackagepublishinghistory", "removed_by"),
@@ -323,6 +325,7 @@ def close_account(username, log):
         ("IrcId", "person"),
         ("JabberId", "person"),
         ("WikiName", "person"),
+        ("SocialAccount", "person"),
         ("PersonLanguage", "person"),
         ("PersonLocation", "person"),
         ("SshKey", "person"),
@@ -336,6 +339,9 @@ def close_account(username, log):
         ("AnswerContact", "person"),
         # Pending items in queues
         ("POExportRequest", "person"),
+        # Unpublished drafts, only ever visible to their author, who
+        # can no longer publish them.
+        ("CodeReviewInlineCommentDraft", "person"),
         # Access grants
         ("AccessArtifactGrant", "grantee"),
         ("AccessPolicyGrant", "grantee"),

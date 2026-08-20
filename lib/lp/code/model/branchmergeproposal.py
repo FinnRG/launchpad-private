@@ -7,12 +7,11 @@ __all__ = [
     "BranchMergeProposal",
     "BranchMergeProposalGetter",
     "is_valid_transition",
-    "PROPOSAL_MERGE_ENABLED_FEATURE_FLAG",
 ]
 
 import sys
 from collections import defaultdict
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import make_msgid
 from operator import attrgetter
 
@@ -25,6 +24,7 @@ from zope.error.interfaces import IErrorReportingUtility
 from zope.event import notify
 from zope.interface import implementer
 from zope.security.interfaces import Unauthorized
+from zope.security.proxy import removeSecurityProxy
 
 from lp.app.enums import PRIVATE_INFORMATION_TYPES
 from lp.app.errors import NotFoundError
@@ -52,7 +52,6 @@ from lp.code.errors import (
     BranchMergeProposalMergeFailed,
     BranchMergeProposalNotMergeable,
     DiffNotFound,
-    UserNotBranchReviewer,
     WrongBranchMergeProposal,
 )
 from lp.code.event.branchmergeproposal import (
@@ -65,6 +64,8 @@ from lp.code.interfaces.branchmergeproposal import (
     BRANCH_MERGE_PROPOSAL_FINAL_STATES as FINAL_STATES,
 )
 from lp.code.interfaces.branchmergeproposal import (
+    PROPOSAL_MERGE_ENABLED_FEATURE_FLAG,
+    SATISFIED_CODE_REVIEW_VOTES,
     IBranchMergeProposal,
     IBranchMergeProposalGetter,
 )
@@ -73,6 +74,7 @@ from lp.code.interfaces.codereviewcomment import ICodeReviewComment
 from lp.code.interfaces.codereviewinlinecomment import (
     ICodeReviewInlineCommentSet,
 )
+from lp.code.interfaces.gitcollection import IAllGitRepositories
 from lp.code.interfaces.githosting import IGitHostingClient
 from lp.code.interfaces.gitref import IGitRef
 from lp.code.mail.branch import RecipientReason
@@ -108,7 +110,12 @@ from lp.services.webapp.errorlog import ScriptRequest
 from lp.services.xref.interfaces import IXRefSet
 from lp.soyuz.enums import re_bug_numbers, re_lp_closes
 
-PROPOSAL_MERGE_ENABLED_FEATURE_FLAG = "merge_proposal.merge.enabled"
+# How long a queued merge request is considered to be in progress.  Turnip
+# performs the merge asynchronously and does not report failures back to
+# Launchpad, so a request that expires without the proposal being confirmed
+# merged is reported as neither pending nor merged (it is never assumed to
+# have succeeded), allowing a new request to be made.
+MERGE_REQUEST_PENDING_WINDOW = timedelta(minutes=15)
 
 
 def is_valid_transition(proposal, from_state, next_state, user=None):
@@ -151,8 +158,11 @@ def is_valid_transition(proposal, from_state, next_state, user=None):
         # to transition away from them either.
         if next_state in obsolete_states or from_state in obsolete_states:
             return False
-        # Non-reviewers cannot reject proposals [XXX: what about their own?]
+        # The registrant (owner) of a proposal is allowed to reject their
+        # own proposal.  Other non-reviewers cannot reject.
         if next_state == rejected:
+            if user is not None and user.inTeam(proposal.registrant):
+                return True
             return False
         # Non-reviewers cannot approve proposals, but can otherwise move
         # things around relatively freely.
@@ -383,6 +393,20 @@ class BranchMergeProposal(StormBase, BugLinkTargetMixin):
         default=None,
     )
     merge_reporter = Reference(merge_reporter_id, "Person.id")
+
+    merger_id = Int(
+        name="merger",
+        validator=validate_public_person,
+        allow_none=True,
+        default=None,
+    )
+    merger = Reference(merger_id, "Person.id")
+
+    # Reuses the legacy date_merge_started column; records when a merge
+    # was last requested through the merge API.
+    date_merge_requested = DateTime(
+        name="date_merge_started", default=None, tzinfo=timezone.utc
+    )
 
     def __init__(
         self,
@@ -1078,6 +1102,8 @@ class BranchMergeProposal(StormBase, BugLinkTargetMixin):
             )
 
         if response["queued"]:
+            self.merger = person
+            self.date_merge_requested = UTC_NOW
             return "Merge successfully queued"
 
         if not response["already_merged"]:
@@ -1090,6 +1116,26 @@ class BranchMergeProposal(StormBase, BugLinkTargetMixin):
         # Force a rescan in that case.
         self.target_git_repository.rescan()
         return "Proposal already merged, waiting for rescan"
+
+    def getMergeRequestStatus(self):
+        """See `IBranchMergeProposal`."""
+        date_requested = self.date_merge_requested
+        pending = (
+            date_requested is not None
+            and self.queue_status != BranchMergeProposalStatus.MERGED
+            and datetime.now(timezone.utc)
+            < date_requested + MERGE_REQUEST_PENDING_WINDOW
+        )
+        return {
+            "pending": pending,
+            "merged": (self.queue_status == BranchMergeProposalStatus.MERGED),
+            "date_requested": (
+                date_requested.isoformat()
+                if date_requested is not None
+                else None
+            ),
+            "requested_by": self.merger.name if self.merger else None,
+        }
 
     def merge(self, person, commit_message=None, force=False):
         """See `IBranchMergeProposal`.
@@ -1179,9 +1225,6 @@ class BranchMergeProposal(StormBase, BugLinkTargetMixin):
         self, reviewer, next_state, revision_id, _date_reviewed=None
     ):
         """Set the proposal to next_state."""
-        # Check the reviewer can review the code for the target branch.
-        if not self.merge_target.isPersonTrustedReviewer(reviewer):
-            raise UserNotBranchReviewer
         # Check the current state of the proposal.
         self._transitionToState(next_state, reviewer)
         # Record the reviewer
@@ -1403,6 +1446,34 @@ class BranchMergeProposal(StormBase, BugLinkTargetMixin):
         if _notify_listeners:
             notify(ReviewerNominatedEvent(vote_reference))
         return vote_reference
+
+    def requestReviewAgain(self, reviewers=None):
+        """See `IBranchMergeProposal`."""
+        if reviewers is None:
+            votes = [
+                vote
+                for vote in self.votes
+                if not vote.is_pending
+                and vote.comment.vote not in SATISFIED_CODE_REVIEW_VOTES
+            ]
+        else:
+            wanted = {reviewer.id for reviewer in reviewers}
+            votes = [
+                vote
+                for vote in self.votes
+                if not vote.is_pending and vote.reviewer.id in wanted
+            ]
+        # Put the proposal back in the review queue first, so that a rejected
+        # transition leaves the votes alone.
+        self.requestReview()
+        self.date_review_requested = UTC_NOW
+        for vote in votes:
+            vote.resetToPending()
+        if votes:
+            Store.of(self).flush()
+            for vote in votes:
+                notify(ReviewerNominatedEvent(vote))
+        return votes
 
     def deleteProposal(self):
         """See `IBranchMergeProposal`."""
@@ -2047,6 +2118,53 @@ class BranchMergeProposalGetter:
             ),
         )
         return query
+
+    @staticmethod
+    def getProposalsForReviewer(reviewer, status=None, visible_by_user=None):
+        """See `IBranchMergeProposalGetter`."""
+        # Merge proposals for both Bazaar and Git are stored in the same
+        # table, so we combine the per-collection restrictions with OR rather
+        # than UNIONing two result sets.  This lets us preserve the ordering
+        # by CodeReviewComment.vote, which a UNION would drop because that
+        # column is not part of the result set.
+        bzr_collection = removeSecurityProxy(
+            getUtility(IAllBranches).visibleByUser(visible_by_user)
+        )
+        git_collection = removeSecurityProxy(
+            getUtility(IAllGitRepositories).visibleByUser(visible_by_user)
+        )
+        tables = [
+            BranchMergeProposal,
+            Join(
+                CodeReviewVoteReference,
+                CodeReviewVoteReference.branch_merge_proposal
+                == BranchMergeProposal.id,
+            ),
+            LeftJoin(
+                CodeReviewComment,
+                CodeReviewVoteReference.comment == CodeReviewComment.id,
+            ),
+        ]
+        expressions = [
+            CodeReviewVoteReference.reviewer == reviewer,
+            Or(
+                And(
+                    *bzr_collection._getMergeProposalsForReviewerExpressions()
+                ),
+                And(
+                    *git_collection._getMergeProposalsForReviewerExpressions()
+                ),
+            ),
+        ]
+        if status is not None:
+            expressions.append(BranchMergeProposal.queue_status.is_in(status))
+        proposals = (
+            IStore(BranchMergeProposal)
+            .using(*tables)
+            .find(BranchMergeProposal, *expressions)
+        )
+        proposals.order_by(Desc(CodeReviewComment.vote))
+        return proposals
 
     @staticmethod
     def getVotesForProposals(proposals):

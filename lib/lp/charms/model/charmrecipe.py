@@ -12,6 +12,7 @@ __all__ = [
 import base64
 from datetime import datetime, timedelta, timezone
 from operator import attrgetter, itemgetter
+from urllib.parse import urlsplit
 
 import yaml
 from lazr.lifecycle.event import ObjectCreatedEvent
@@ -58,6 +59,7 @@ from lp.charms.interfaces.charmrecipe import (
     CHARM_RECIPE_ALLOW_CREATE,
     CHARM_RECIPE_BUILD_DISTRIBUTION,
     CHARM_RECIPE_PRIVATE_FEATURE_FLAG,
+    CHARM_RECIPE_USSO_FEATURE_FLAG,
     BadCharmRecipeSearchContext,
     CannotAuthorizeCharmhubUploads,
     CannotFetchCharmcraftYaml,
@@ -121,6 +123,7 @@ from lp.services.features import getFeatureFlag
 from lp.services.job.interfaces.job import JobStatus
 from lp.services.job.model.job import Job
 from lp.services.librarian.model import LibraryFileAlias
+from lp.services.openid.adapters.openid import CurrentOpenIDEndPoint
 from lp.services.propertycache import cachedproperty, get_property_cache
 from lp.services.webapp.candid import extract_candid_caveat
 from lp.services.webhooks.interfaces import IWebhookSet
@@ -845,6 +848,18 @@ class CharmRecipe(StormBase, WebhookTargetMixin):
         order_by = Desc(CharmRecipeBuild.id)
         return self._getBuilds(filter_term, order_by)
 
+    @staticmethod
+    def extractSSOCaveats(macaroon):
+        locations = [
+            urlsplit(root).netloc
+            for root in CurrentOpenIDEndPoint.getAllRootURLs()
+        ]
+        return [
+            caveat
+            for caveat in macaroon.third_party_caveats()
+            if caveat.location in locations
+        ]
+
     def beginAuthorization(self):
         """See `ICharmRecipe`."""
         if self.store_name is None:
@@ -852,16 +867,44 @@ class CharmRecipe(StormBase, WebhookTargetMixin):
                 "Cannot authorize uploads of a charm recipe with no store "
                 "name."
             )
+        use_usso = bool(getFeatureFlag(CHARM_RECIPE_USSO_FEATURE_FLAG))
         charmhub_client = getUtility(ICharmhubClient)
         root_macaroon_raw = charmhub_client.requestPackageUploadPermission(
-            self.store_name
+            self.store_name, use_usso=use_usso
         )
-        # Check that the macaroon has exactly one Candid caveat.
-        extract_candid_caveat(
-            Macaroon.deserialize(root_macaroon_raw, JsonSerializer())
-        )
-        self.store_secrets = {"root": root_macaroon_raw}
-        return root_macaroon_raw
+        if use_usso:
+            # The Ubuntu SSO branch mirrors how snap recipes authorize
+            # uploads to the snap store, which also discharge an Ubuntu SSO
+            # caveat on a root macaroon from the store.
+            sso_caveats = self.extractSSOCaveats(
+                Macaroon.deserialize(root_macaroon_raw)
+            )
+            # We must have exactly one SSO caveat; more than one should never
+            # be required and could be an attempt to substitute weaker
+            # caveats.
+            if not sso_caveats:
+                raise CannotAuthorizeCharmhubUploads(
+                    "Macaroon has no SSO caveats."
+                )
+            elif len(sso_caveats) > 1:
+                raise CannotAuthorizeCharmhubUploads(
+                    "Macaroon has multiple SSO caveats."
+                )
+            self.store_secrets = {
+                "root": root_macaroon_raw,
+                "auth_method": "usso",
+            }
+            return sso_caveats[0].caveat_id
+        else:
+            # Check that the macaroon has exactly one Candid caveat.
+            extract_candid_caveat(
+                Macaroon.deserialize(root_macaroon_raw, JsonSerializer())
+            )
+            self.store_secrets = {
+                "root": root_macaroon_raw,
+                "auth_method": "candid",
+            }
+            return root_macaroon_raw
 
     def completeAuthorization(self, unbound_discharge_macaroon_raw):
         """See `ICharmRecipe`."""
@@ -870,17 +913,30 @@ class CharmRecipe(StormBase, WebhookTargetMixin):
                 "beginAuthorization must be called before "
                 "completeAuthorization."
             )
+        # Use the method recorded when the authorization began, so that a
+        # change to the feature flag partway through does not break an
+        # authorization that is already in progress.
+        use_usso = self.store_secrets.get("auth_method") == "usso"
         try:
-            Macaroon.deserialize(
-                unbound_discharge_macaroon_raw, JsonSerializer()
-            )
+            if use_usso:
+                Macaroon.deserialize(unbound_discharge_macaroon_raw)
+            else:
+                Macaroon.deserialize(
+                    unbound_discharge_macaroon_raw, JsonSerializer()
+                )
         except Exception:
             raise CannotAuthorizeCharmhubUploads(
                 "Discharge macaroon is invalid."
             )
         charmhub_client = getUtility(ICharmhubClient)
+        description = "{} for {}".format(
+            self.store_name, config.vhost.mainsite.hostname
+        )
         exchanged_macaroon_raw = charmhub_client.exchangeMacaroons(
-            self.store_secrets["root"], unbound_discharge_macaroon_raw
+            self.store_secrets["root"],
+            unbound_discharge_macaroon_raw,
+            use_usso=use_usso,
+            description=description,
         )
         container = getUtility(IEncryptedContainer, "charmhub-secrets")
         assert container.can_encrypt
@@ -888,6 +944,7 @@ class CharmRecipe(StormBase, WebhookTargetMixin):
             container.encrypt(exchanged_macaroon_raw.encode())
         )
         self.store_secrets.pop("root", None)
+        self.store_secrets.pop("auth_method", None)
 
     @property
     def can_upload_to_store(self):

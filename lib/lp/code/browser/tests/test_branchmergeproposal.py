@@ -49,12 +49,15 @@ from lp.code.browser.codereviewcomment import CodeReviewDisplayComment
 from lp.code.browser.gitref import GitRefRegisterMergeProposalView
 from lp.code.enums import (
     BranchMergeProposalStatus,
+    BranchSubscriptionNotificationLevel,
+    CodeReviewNotificationLevel,
     CodeReviewVote,
     RevisionStatusResult,
 )
 from lp.code.errors import GitRepositoryScanFault, InvalidBranchMergeProposal
 from lp.code.interfaces.branchjob import IBranchScanJobSource
 from lp.code.interfaces.branchmergeproposal import (
+    PROPOSAL_MERGE_ENABLED_FEATURE_FLAG,
     IBranchMergeProposal,
     IMergeProposalNeedsReviewEmailJobSource,
     IMergeProposalUpdatedEmailJobSource,
@@ -144,6 +147,35 @@ class TestDecoratedCodeReviewVoteReference(TestCaseWithFactory):
             )
             self.assertTrue(d.user_can_review)
             self.assertTrue(d.can_change_review)
+
+    def makeCastVote(self, vote=CodeReviewVote.NEEDS_FIXING):
+        """Return a vote reference that has been voted on."""
+        bmp = make_merge_proposal_without_reviewers(self.factory)
+        reviewer = self.factory.makePerson()
+        with person_logged_in(reviewer):
+            bmp.createComment(reviewer, "Subject", "Content", vote=vote)
+        [request] = list(bmp.votes)
+        return request
+
+    def test_can_request_again(self):
+        # Somebody who can edit the proposal can ask for another review.
+        request = self.factory.makeCodeReviewVoteReference()
+        bmp = request.branch_merge_proposal
+        with person_logged_in(bmp.registrant):
+            # A pending review cannot be requested again; it already is.
+            d = DecoratedCodeReviewVoteReference(request, bmp.registrant, None)
+            self.assertFalse(d.can_request_again)
+        cast = self.makeCastVote()
+        bmp = cast.branch_merge_proposal
+        with person_logged_in(bmp.registrant):
+            d = DecoratedCodeReviewVoteReference(cast, bmp.registrant, None)
+            self.assertTrue(d.can_request_again)
+
+    def test_can_request_again_needs_edit_permission(self):
+        cast = self.makeCastVote()
+        with person_logged_in(self.factory.makePerson()) as person:
+            d = DecoratedCodeReviewVoteReference(cast, person, None)
+            self.assertFalse(d.can_request_again)
 
 
 class TestBranchMergeProposalMergedViewMixin:
@@ -550,6 +582,200 @@ class TestBranchMergeProposalVoteView(TestCaseWithFactory):
         )
         # We just test that rendering does not raise.
         view.render()
+
+
+class TestBranchMergeProposalSubscribersView(TestCaseWithFactory):
+    """Tests for the subscribers pagelet on the merge proposal page."""
+
+    layer = DatabaseFunctionalLayer
+
+    def setUp(self):
+        TestCaseWithFactory.setUp(self, user="admin@canonical.com")
+
+    def test_private_subscriber_hidden_from_anonymous(self):
+        # A private team subscribed to a repository is not shown in the
+        # merge proposal subscribers list for anonymous users.
+        private_team = self.factory.makeTeam(
+            visibility=PersonVisibility.PRIVATE,
+            membership_policy=TeamMembershipPolicy.MODERATED,
+        )
+        bmp = self.factory.makeBranchMergeProposalForGit()
+        repository = bmp.source_git_repository
+        with person_logged_in(repository.owner):
+            repository.subscribe(
+                removeSecurityProxy(private_team),
+                BranchSubscriptionNotificationLevel.NOEMAIL,
+                None,
+                CodeReviewNotificationLevel.FULL,
+                repository.owner,
+            )
+        # Anonymous view should not include the private subscriber.
+        view = create_initialized_view(
+            bmp, "+pagelet-subscribers", current_request=True
+        )
+
+        # The source and target repository owners are automatically
+        # subscribed. Their presence here is expected and intentional.
+        self.assertIn(bmp.source_git_repository.owner, view.full_subscribers)
+        self.assertIn(bmp.target_git_repository.owner, view.full_subscribers)
+
+        # Private subscribers should not be visible to anonymous users.
+        self.assertNotIn(private_team, view.full_subscribers)
+        self.assertNotIn(private_team, view.status_subscribers)
+
+        # Only the source and target repository owners.
+        self.assertEqual(len(view.full_subscribers), 2)
+        self.assertEqual(len(view.status_subscribers), 0)
+
+    def test_public_subscriber_visible_to_anonymous(self):
+        # A public subscriber is visible to anonymous users.
+        public_person = self.factory.makePerson(displayname="Public Person")
+        bmp = self.factory.makeBranchMergeProposalForGit()
+        repository = bmp.source_git_repository
+        with person_logged_in(repository.owner):
+            repository.subscribe(
+                removeSecurityProxy(public_person),
+                BranchSubscriptionNotificationLevel.NOEMAIL,
+                None,
+                CodeReviewNotificationLevel.FULL,
+                repository.owner,
+            )
+        # Anonymous view should include the public subscriber.
+        view = create_initialized_view(
+            bmp, "+pagelet-subscribers", current_request=True
+        )
+        self.assertIn(public_person, view.full_subscribers)
+
+    def test_private_subscriber_hidden_from_non_member(self):
+        # A logged-in user who is not a member of the private team
+        # should not see the private team subscriber.
+        private_team = self.factory.makeTeam(
+            visibility=PersonVisibility.PRIVATE,
+            membership_policy=TeamMembershipPolicy.MODERATED,
+        )
+        bmp = self.factory.makeBranchMergeProposalForGit()
+        repository = bmp.source_git_repository
+        with person_logged_in(repository.owner):
+            repository.subscribe(
+                removeSecurityProxy(private_team),
+                BranchSubscriptionNotificationLevel.NOEMAIL,
+                None,
+                CodeReviewNotificationLevel.FULL,
+                repository.owner,
+            )
+        other_user = self.factory.makePerson()
+        login_person(other_user)
+        view = create_initialized_view(bmp, "+pagelet-subscribers")
+        self.assertNotIn(private_team, view.full_subscribers)
+
+    def test_private_subscriber_visible_to_member(self):
+        # A member of the private team can see the team in the
+        # subscribers list when logged in.
+        private_team = self.factory.makeTeam(
+            visibility=PersonVisibility.PRIVATE,
+            membership_policy=TeamMembershipPolicy.MODERATED,
+        )
+        bmp = self.factory.makeBranchMergeProposalForGit()
+        repository = bmp.source_git_repository
+        with person_logged_in(repository.owner):
+            repository.subscribe(
+                removeSecurityProxy(private_team),
+                BranchSubscriptionNotificationLevel.NOEMAIL,
+                None,
+                CodeReviewNotificationLevel.FULL,
+                repository.owner,
+            )
+        login_person(private_team.teamowner)
+        view = create_initialized_view(bmp, "+pagelet-subscribers")
+        self.assertIn(private_team, view.full_subscribers)
+
+    def test_mixed_subscribers_only_visible_shown_to_anonymous(self):
+        # With a mix of public and private subscribers, only public ones
+        # are visible to anonymous users.
+        private_team = self.factory.makeTeam(
+            visibility=PersonVisibility.PRIVATE,
+            membership_policy=TeamMembershipPolicy.MODERATED,
+        )
+        public_person = self.factory.makePerson(displayname="Public Person")
+        bmp = self.factory.makeBranchMergeProposalForGit()
+        repository = bmp.source_git_repository
+        with person_logged_in(repository.owner):
+            repository.subscribe(
+                removeSecurityProxy(private_team),
+                BranchSubscriptionNotificationLevel.NOEMAIL,
+                None,
+                CodeReviewNotificationLevel.FULL,
+                repository.owner,
+            )
+            repository.subscribe(
+                removeSecurityProxy(public_person),
+                BranchSubscriptionNotificationLevel.NOEMAIL,
+                None,
+                CodeReviewNotificationLevel.FULL,
+                repository.owner,
+            )
+        # Anonymous view should include the public subscriber but not the
+        # private team. The source and target repository owners are also
+        # present as auto-subscribers.
+        view = create_initialized_view(
+            bmp, "+pagelet-subscribers", current_request=True
+        )
+        self.assertIn(public_person, view.full_subscribers)
+        self.assertIn(bmp.source_git_repository.owner, view.full_subscribers)
+        self.assertIn(bmp.target_git_repository.owner, view.full_subscribers)
+        self.assertNotIn(private_team, view.full_subscribers)
+
+        self.assertEqual(len(view.full_subscribers), 3)
+        self.assertEqual(len(view.status_subscribers), 0)
+
+    def test_logged_in_user_sees_own_team_not_other_private_team(self):
+        # A logged-in user sees a private team they belong to, does not see
+        # a private team they are not a member of, and sees public subscribers.
+        # regardless of the type of subscription being "full" or "status".
+        their_team = self.factory.makeTeam(
+            visibility=PersonVisibility.PRIVATE,
+            membership_policy=TeamMembershipPolicy.MODERATED,
+        )
+        other_private_team = self.factory.makeTeam(
+            visibility=PersonVisibility.PRIVATE,
+            membership_policy=TeamMembershipPolicy.MODERATED,
+        )
+        public_person = self.factory.makePerson(displayname="Public Person")
+        bmp = self.factory.makeBranchMergeProposalForGit()
+        repository = bmp.source_git_repository
+        with person_logged_in(repository.owner):
+            repository.subscribe(
+                removeSecurityProxy(their_team),
+                BranchSubscriptionNotificationLevel.NOEMAIL,
+                None,
+                CodeReviewNotificationLevel.FULL,
+                repository.owner,
+            )
+            repository.subscribe(
+                removeSecurityProxy(other_private_team),
+                BranchSubscriptionNotificationLevel.NOEMAIL,
+                None,
+                CodeReviewNotificationLevel.FULL,
+                repository.owner,
+            )
+            repository.subscribe(
+                removeSecurityProxy(public_person),
+                BranchSubscriptionNotificationLevel.NOEMAIL,
+                None,
+                CodeReviewNotificationLevel.STATUS,
+                repository.owner,
+            )
+        login_person(their_team.teamowner)
+        view = create_initialized_view(bmp, "+pagelet-subscribers")
+        self.assertIn(their_team, view.full_subscribers)
+        self.assertNotIn(other_private_team, view.full_subscribers)
+        self.assertIn(public_person, view.status_subscribers)
+
+        # their_team + 2 repo owners
+        self.assertEqual(len(view.full_subscribers), 3)
+
+        # Only the public_person
+        self.assertEqual(len(view.status_subscribers), 1)
 
 
 class TestRegisterBranchMergeProposalViewMixin:
@@ -1570,6 +1796,111 @@ class TestResubmitBrowserGit(GitHostingClientMixin, BrowserTestCase):
             self.assertEqual("flibble", bmp.superseded_by.description)
 
 
+class TestBranchMergeProposalDiffLinks(TestCaseWithFactory):
+    """The diff view links Git file headers to the code browser."""
+
+    layer = LaunchpadFunctionalLayer
+
+    diff_bytes = (
+        b"diff --git a/FUNDING.json b/FUNDING.json\n"
+        b"index aaaaaaa..bbbbbbb 100644\n"
+        b"--- a/FUNDING.json\n"
+        b"+++ b/FUNDING.json\n"
+        b"@@ -1,1 +1,1 @@\n"
+        b"-old\n"
+        b"+new\n"
+    )
+
+    def _makeGitPreviewDiff(self, **kwargs):
+        bmp = self.factory.makeBranchMergeProposalForGit(**kwargs)
+        preview_diff = PreviewDiff.create(
+            bmp,
+            self.diff_bytes,
+            bmp.source_git_commit_sha1,
+            bmp.target_git_commit_sha1,
+            None,
+            "",
+        )
+        transaction.commit()
+        return bmp, preview_diff
+
+    def _getHeaderLinks(self, markup):
+        return [
+            header.find("a")
+            for header in find_tags_by_class(markup, "diff-header")
+        ]
+
+    def test_links_both_sides_cross_repo(self):
+        # By default the source and target are in different repositories, so
+        # the two file headers link to different repositories.
+        bmp, preview_diff = self._makeGitPreviewDiff()
+        with person_logged_in(bmp.registrant):
+            target_url = "%s/tree/FUNDING.json?h=%s&id=%s" % (
+                bmp.target_git_repository.getCodebrowseUrl(),
+                bmp.target_git_ref.url_quoted_name,
+                bmp.target_git_commit_sha1,
+            )
+            source_url = "%s/tree/FUNDING.json?h=%s&id=%s" % (
+                bmp.source_git_repository.getCodebrowseUrl(),
+                bmp.source_git_ref.url_quoted_name,
+                bmp.source_git_commit_sha1,
+            )
+            view = create_initialized_view(preview_diff, "+diff")
+            links = self._getHeaderLinks(view.rendered_diff)
+        self.assertEqual(
+            [target_url, source_url], [link["href"] for link in links]
+        )
+
+    def test_ssdiff_links_both_sides(self):
+        # The side-by-side rendering (ss=1) is linked the same way.
+        bmp, preview_diff = self._makeGitPreviewDiff()
+        with person_logged_in(bmp.registrant):
+            view = create_initialized_view(
+                preview_diff, "+diff", form={"ss": "1"}
+            )
+            markup = view.rendered_diff
+        self.assertIn("ssdiff", markup)
+        links = self._getHeaderLinks(markup)
+        self.assertEqual(2, len(links))
+        self.assertTrue(all(link is not None for link in links))
+
+    def test_index_view_links_diff(self):
+        # The merge proposal index page renders the same linked diff.
+        bmp, preview_diff = self._makeGitPreviewDiff()
+        with person_logged_in(bmp.registrant):
+            view = create_initialized_view(bmp, "+index")
+            links = self._getHeaderLinks(view.rendered_diff)
+        self.assertEqual(2, len(links))
+        self.assertTrue(all(link is not None for link in links))
+
+    def test_hunk_header_links_to_source_line(self):
+        # The "@@" hunk header deep-links to the source file at the hunk's
+        # new start line.
+        bmp, preview_diff = self._makeGitPreviewDiff()
+        with person_logged_in(bmp.registrant):
+            expected = "%s/tree/FUNDING.json?h=%s&id=%s#n1" % (
+                bmp.source_git_repository.getCodebrowseUrl(),
+                bmp.source_git_ref.url_quoted_name,
+                bmp.source_git_commit_sha1,
+            )
+            view = create_initialized_view(preview_diff, "+diff")
+            markup = view.rendered_diff
+        (chunk,) = find_tags_by_class(markup, "diff-chunk")
+        self.assertEqual(expected, chunk.find("a")["href"])
+
+    def test_bzr_diff_not_linked(self):
+        # Bazaar proposals keep the previous, unlinked rendering.
+        bmp = self.factory.makeBranchMergeProposal()
+        preview_diff = PreviewDiff.create(
+            bmp, self.diff_bytes, "a", "b", None, ""
+        )
+        transaction.commit()
+        with person_logged_in(bmp.registrant):
+            view = create_initialized_view(preview_diff, "+diff")
+            links = self._getHeaderLinks(view.rendered_diff)
+        self.assertEqual([None, None], links)
+
+
 class TestBranchMergeProposalView(TestCaseWithFactory):
     layer = LaunchpadFunctionalLayer
 
@@ -2030,6 +2361,26 @@ class TestBranchMergeProposalView(TestCaseWithFactory):
                 }
             ),
         )
+
+    def test_client_cache_merge_request_enabled(self):
+        self.useFixture(
+            FeatureFixture({PROPOSAL_MERGE_ENABLED_FEATURE_FLAG: "on"})
+        )
+        bmp = self.factory.makeBranchMergeProposalForGit()
+        view = create_initialized_view(bmp, "+index")
+
+        cache = IJSONRequestCache(view.request)
+        self.assertTrue(cache.objects["merge_request_enabled"])
+
+    def test_client_cache_merge_request_disabled(self):
+        self.useFixture(
+            FeatureFixture({PROPOSAL_MERGE_ENABLED_FEATURE_FLAG: ""})
+        )
+        bmp = self.factory.makeBranchMergeProposalForGit()
+        view = create_initialized_view(bmp, "+index")
+
+        cache = IJSONRequestCache(view.request)
+        self.assertFalse(cache.objects["merge_request_enabled"])
 
     def test_breadcrumbs_bzr(self):
         bmp = self.factory.makeBranchMergeProposal()
@@ -2498,15 +2849,16 @@ class TestBranchMergeProposalChangeStatusView(TestCaseWithFactory):
         self.assertStatusVocabTokens(desired_statuses, user)
 
     def test_createStatusVocabulary_non_reviewer(self):
-        # Neither the source branch owner nor the registrant should be
-        # able to approve or reject their own code (assuming they don't have
-        # rights on the target branch).
+        # The source branch owner cannot approve or reject code they don't
+        # review (assuming they don't have rights on the target branch).
         status_options = ["WORK_IN_PROGRESS", "NEEDS_REVIEW", "MERGED"]
         self.assertStatusVocabTokens(
             status_options, user=self.proposal.source_branch.owner
         )
+        # The registrant can additionally reject their own proposal.
+        registrant_options = status_options + ["REJECTED"]
         self.assertStatusVocabTokens(
-            status_options, user=self.proposal.registrant
+            registrant_options, user=self.proposal.registrant
         )
 
     def test_createStatusVocabulary_reviewer(self):
@@ -2517,7 +2869,8 @@ class TestBranchMergeProposalChangeStatusView(TestCaseWithFactory):
 
     def test_createStatusVocabulary_non_reviewer_approved(self):
         # Once the branch has been approved, the source owner or the
-        # registrant can queue the branch.
+        # registrant can queue the branch.  The registrant can additionally
+        # reject their own proposal.
         self.proposal.approveBranch(
             self.proposal.target_branch.owner, "some-revision"
         )
@@ -2530,8 +2883,9 @@ class TestBranchMergeProposalChangeStatusView(TestCaseWithFactory):
         self.assertStatusVocabTokens(
             status_options, user=self.proposal.source_branch.owner
         )
+        registrant_options = status_options + ["REJECTED"]
         self.assertStatusVocabTokens(
-            status_options, user=self.proposal.registrant
+            registrant_options, user=self.proposal.registrant
         )
 
     def test_createStatusVocabulary_reviewer_approved(self):
@@ -2744,6 +3098,75 @@ class TestBranchMergeCandidateView(TestCaseWithFactory):
         )
         view = create_initialized_view(bmp, "+link-summary")
         self.assertEqual("Eric on 2008-09-10", view.status_title)
+
+
+class TestBranchMergeProposalGlobalActions(BrowserTestCase):
+    layer = LaunchpadFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        self.useFixture(GitHostingFixture())
+        self.proposal = self.factory.makeBranchMergeProposalForGit()
+        self.owner = self.proposal.target_git_repository.owner
+
+    def _getGlobalActions(self, user):
+        browser = self.getViewBrowser(self.proposal, user=user)
+        return find_tag_by_id(browser.contents, "global-actions")
+
+    def _getGlobalActionsText(self, user):
+        actions = self._getGlobalActions(user)
+        return "" if actions is None else extract_text(actions)
+
+    def test_request_merge_enabled_for_target_owner(self):
+        self.useFixture(
+            FeatureFixture({PROPOSAL_MERGE_ENABLED_FEATURE_FLAG: "on"})
+        )
+
+        actions = self._getGlobalActions(self.owner)
+        self.assertIn("Request merge", extract_text(actions))
+        [request_merge] = find_tags_by_class(
+            str(actions), "menu-link-request_merge"
+        )
+        self.assertIn("merge-proposal", request_merge["class"])
+
+    def test_request_merge_disabled_by_feature_flag(self):
+        self.useFixture(
+            FeatureFixture({PROPOSAL_MERGE_ENABLED_FEATURE_FLAG: ""})
+        )
+
+        self.assertNotIn(
+            "Request merge", self._getGlobalActionsText(self.owner)
+        )
+
+    def test_request_merge_disabled_without_push_permission(self):
+        self.useFixture(
+            FeatureFixture({PROPOSAL_MERGE_ENABLED_FEATURE_FLAG: "on"})
+        )
+        user = self.factory.makePerson()
+
+        self.assertNotIn("Request merge", self._getGlobalActionsText(user))
+
+    def test_request_merge_disabled_when_not_in_progress(self):
+        self.useFixture(
+            FeatureFixture({PROPOSAL_MERGE_ENABLED_FEATURE_FLAG: "on"})
+        )
+        with person_logged_in(self.owner):
+            self.proposal.markAsMerged(merge_reporter=self.owner)
+
+        self.assertNotIn(
+            "Request merge", self._getGlobalActionsText(self.owner)
+        )
+
+    def test_request_merge_disabled_for_bzr(self):
+        self.useFixture(
+            FeatureFixture({PROPOSAL_MERGE_ENABLED_FEATURE_FLAG: "on"})
+        )
+        self.proposal = self.factory.makeBranchMergeProposal()
+        self.owner = self.proposal.target_branch.owner
+
+        self.assertNotIn(
+            "Request merge", self._getGlobalActionsText(self.owner)
+        )
 
 
 class TestBranchMergeProposal(BrowserTestCase):
