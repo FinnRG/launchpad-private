@@ -7,40 +7,43 @@
   i18n:domain="launchpad"
   >
 <body>
-
+<tal:head-epilogue metal:fill-slot="head_epilogue">
+  <link rel="stylesheet" type="text/css"
+        tal:attributes="href
+          string:${icingroot}/css/components/archive-edit-dependencies.css" />
+</tal:head-epilogue>
 <div metal:fill-slot="main">
 <div class="top-portlet">
-  <div metal:use-macro="context/@@launchpad_form/form">
 
+    <div metal:use-macro="context/@@launchpad_form/form">
     <div class="form" metal:fill-slot="widgets">
-
       <table>
-
         <tal:primary_dependency
           define="widget nocall:view/widgets/primary_dependencies|nothing"
           condition="widget">
           <metal:widget
             metal:use-macro="context/@@launchpad_form/widget_row" />
         </tal:primary_dependency>
-
         <tal:primary_components
           define="widget nocall:view/widgets/primary_components|nothing"
           condition="widget">
           <metal:widget
             metal:use-macro="context/@@launchpad_form/widget_row" />
         </tal:primary_components>
-
         <tr style="height: 2em;">
           <td colspan="2">&nbsp;</td>
         </tr>
-
+        <tr>
+          <td colspan="2">
+            <h2 i18n:translate="">Dependencies on other PPAs</h2>
+          </td>
+        </tr>
         <tal:add_dependency
           define="widget nocall:view/widgets/dependency_candidate|nothing"
           condition="widget">
           <metal:widget
             metal:use-macro="context/@@launchpad_form/widget_row" />
         </tal:add_dependency>
-
         <tr tal:condition="not: view/has_dependencies">
           <td></td>
           <td>
@@ -48,75 +51,135 @@
             ><i>No dependencies recorded for this PPA yet.</i></p>
           </td>
         </tr>
-
-        <tal:dependencies
-          define="widget nocall:view/widgets/selected_dependencies|nothing"
-          condition="view/has_dependencies">
-          <metal:widget
-            metal:use-macro="context/@@launchpad_form/widget_row" />
-        </tal:dependencies>
+      <tr tal:condition="view/dependency_items">
+          <td colspan="2">
+            <p i18n:translate="">
+              Change pin priorities or mark dependencies for removal,
+              then select &#8220;Save changes&#8221;.
+            </p>
+            <table class="listing" id="ppa-dependencies"
+                   tal:attributes="data-priority-minimum
+                     view/pin_priority_settings/minimum;
+                     data-priority-maximum
+                     view/pin_priority_settings/maximum">
+              <caption class="sr-only" i18n:translate="">
+                Extra dependencies for this PPA, with their pin priority
+                and a per-row removal control.
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col" i18n:translate="">Dependency</th>
+                  <th scope="col">
+                    <span i18n:translate="">Pin priority</span><span
+                      class="help-tip"><button
+                        type="button"
+                        class="help-trigger"
+                        aria-describedby="pin-priority-help"
+                        ><span aria-hidden="true">&#9432;</span><span
+                          class="sr-only" i18n:translate=""
+                          >About pin priority</span></button><span
+                        class="help-bubble"
+                        role="tooltip"
+                        id="pin-priority-help"
+                        i18n:translate=""
+                        >Controls how APT chooses dependency versions from
+                        this PPA relative to Ubuntu and other PPAs. Higher
+                        values are preferred. The default is
+                        <tal:default_priority
+                          i18n:name="default_priority"
+                          tal:replace="view/pin_priority_settings/default"
+                          >500</tal:default_priority>. Allowed values:
+                        <tal:minimum_priority
+                          i18n:name="minimum_priority"
+                          tal:replace="view/pin_priority_settings/minimum"
+                          >-100</tal:minimum_priority> to
+                        <tal:maximum_priority
+                          i18n:name="maximum_priority"
+                          tal:replace="view/pin_priority_settings/maximum"
+                          >2000</tal:maximum_priority>.</span></span>
+                  </th>
+                  <th scope="col" i18n:translate="">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr tal:repeat="item view/dependency_items"
+                    class="ppa-dependency-row"
+                    tal:attributes="id string:ppa-dependency-${repeat/item/index}">
+                  <td class="dependency-name-cell"
+                      tal:define="dependency_url item/url|nothing">
+                    <!-- Public PPA: normal link. -->
+                    <a tal:condition="dependency_url"
+                       class="dependency-name"
+                       tal:attributes="href dependency_url"
+                       tal:content="item/title">Dependency title</a>
+                    <!-- Private PPA: no link is rendered, so state why
+                         rather than silently degrading to plain text. -->
+                    <tal:private condition="not: dependency_url">
+                      <span class="private-dependency"
+                            tal:attributes="aria-describedby
+                              string:private-ppa-help-${repeat/item/index}">
+                        <span class="sprite private" aria-hidden="true"></span>
+                        <span class="dependency-name"
+                              tal:content="item/title">Dependency title</span>
+                        <span class="private-badge"
+                              i18n:translate="">Private</span>
+                      </span>
+                      <span class="sr-only"
+                            i18n:translate=""
+                            tal:attributes="id
+                              string:private-ppa-help-${repeat/item/index}">
+                        This is a private PPA. You do not have permission to
+                        view its page, so no link is available. You can still
+                        remove it from this list but not change its pin priority.
+                      </span>
+                    </tal:private>
+                  </td>
+                  <td class="pin-priority-cell"
+                      tal:define="widget nocall:item/priority_widget|nothing">
+                    <tal:priority condition="widget">
+                      <div class="message"
+                           tal:define="error python:widget.error()"
+                           tal:condition="error"
+                           tal:content="structure error" />
+                      <tal:input replace="structure python:widget()" />
+                    </tal:priority>
+                  </td>
+                  <td class="action-cell">
+                    <label class="remove-on-save">
+                      <input type="checkbox"
+                             class="line-through-when-checked ppa-dependencies"
+                             name="field.selected_dependencies"
+                             tal:attributes="value item/token;
+                                             aria-describedby
+                               string:pending-removal-status-${repeat/item/index}" />
+                      <span i18n:translate="">Remove on save</span>
+                    </label>
+                    <!-- Empty on load so the later injection is announced
+                         by the polite live region. -->
+                    <span class="pending-removal-status"
+                          role="status"
+                          aria-live="polite"
+                          tal:attributes="id
+                            string:pending-removal-status-${repeat/item/index}"
+                          ></span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </td>
+        </tr>
       </table>
-
    </div> <!-- widgets -->
-
   </div> <!-- launchpad_form -->
-
 <script type="text/javascript">
-   LPJS.use("node", function(Y) {
-
-       // Highlight (setting bold font-weight) the label for the
-       // selected option in a given NodesList. Assumes the input is
-       // contained by the label.
-       function highlight_checked (nodes) {
-           nodes.each(function(input) {
-               var label = Y.one(input.get("parentNode"));
-               if (input.get("checked")) {
-                   label.setStyle("fontWeight", "bold");
-               }
-               else {
-                   label.setStyle("fontWeight", "normal");
-               }
-           });
-       };
-
-       var main_area = Y.one("#mainarea");
-
-       // Highlight the selected radio button input on page load.
-       var inputs = main_area.all("input.highlight-selected");
-       highlight_checked(inputs);
-
-       // Install signal handlers for all radio-button inputs to
-       // recalculate with options should be highlighted when one of
-       // them is clicked.
-       inputs.on("click", function(e) {
-           highlight_checked(inputs);
-       }, this);
-
-       // Install handlers to decorate selected check-box inputs when
-       // they get clicked. Selected options text (next sibling) will
-       // be decorated with 'line-through' style and rendered in
-       // 'red'. Options not selected (or unselected) text will be
-       // rendered in 'blue' and without any decoration.
-       main_area.all(
-           "input.line-through-when-checked").on('click', function(e) {
-               var input = e.currentTarget;
-               var link = input.next();
-               if (input.get("checked")) {
-                   link.setStyle("color", "red");
-                   link.setStyle("textDecoration", "line-through");
-               }
-               else {
-                   link.setStyle("color", "blue");
-                   link.setStyle("textDecoration", "none");
-               }
-           });
-       });
-   });
+  LPJS.use("lp.soyuz.archive_edit_dependencies", function(Y) {
+      Y.on("domready", function() {
+          Y.lp.soyuz.archive_edit_dependencies
+              .setup_archive_edit_dependencies();
+      });
+  });
 </script>
-
-
 </div> <!--top-portlet -->
 </div> <!--main -->
-
 </body>
 </html>

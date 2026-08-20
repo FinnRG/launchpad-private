@@ -13,7 +13,13 @@ from zope.schema import Choice, Datetime, Int, TextLine
 from lp import _
 from lp.registry.interfaces.pocket import PackagePublishingPocket
 from lp.soyuz.enums import ArchivePurpose
-from lp.soyuz.interfaces.archive import ArchiveDependencyError, IArchive
+from lp.soyuz.interfaces.archive import (
+    DEFAULT_PIN_PRIORITY,
+    MAXIMUM_PIN_PRIORITY,
+    MINIMUM_PIN_PRIORITY,
+    ArchiveDependencyError,
+    IArchive,
+)
 
 
 @exported_as_webservice_entry(as_of="beta", publish_web_link=False)
@@ -98,8 +104,8 @@ class IArchiveDependency(Interface):
             ),
             required=False,
             readonly=False,
-            min=-100,
-            max=2000,
+            min=MINIMUM_PIN_PRIORITY,
+            max=MAXIMUM_PIN_PRIORITY,
         )
     )
 
@@ -107,12 +113,18 @@ class IArchiveDependency(Interface):
 def validate_pin_priority(dependency, value):
     """Validate a pin priority for an archive dependency."""
 
-    if not -100 <= value <= 2000:
+    if value is None:
+        raise ArchiveDependencyError("Pin priority cannot be None.")
+    if not MINIMUM_PIN_PRIORITY <= value <= MAXIMUM_PIN_PRIORITY:
         raise ArchiveDependencyError(
-            "Pin priority must be in the range [-100, 2000]."
+            "Pin priority must be in the range [%d, %d]."
+            % (MINIMUM_PIN_PRIORITY, MAXIMUM_PIN_PRIORITY)
         )
 
-    if value != 500 and dependency.purpose != ArchivePurpose.PPA:
+    if (
+        value != DEFAULT_PIN_PRIORITY
+        and dependency.purpose != ArchivePurpose.PPA
+    ):
         raise ArchiveDependencyError(
             "Pin priorities are only supported for PPA dependencies."
         )
