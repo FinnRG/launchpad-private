@@ -16,7 +16,7 @@ from lp.services.database.enumcol import DBEnum
 from lp.services.database.stormbase import StormBase
 from lp.snappy.interfaces.snapbase import ISnapBase
 from lp.soyuz.adapters.archivedependencies import get_components_for_context
-from lp.soyuz.interfaces.archive import IArchive
+from lp.soyuz.interfaces.archive import DEFAULT_PIN_PRIORITY, IArchive
 from lp.soyuz.interfaces.archivedependency import (
     IArchiveDependency,
     validate_pin_priority,
@@ -67,7 +67,12 @@ class ArchiveDependency(StormBase):
     )
 
     def __init__(
-        self, parent, dependency, pocket, component=None, pin_priority=500
+        self,
+        parent,
+        dependency,
+        pocket,
+        component=None,
+        pin_priority=DEFAULT_PIN_PRIORITY,
     ):
         super().__init__()
         self.parent = parent

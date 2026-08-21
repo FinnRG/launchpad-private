@@ -38,7 +38,7 @@ from zope.formlib.widget import CustomWidgetFactory
 from zope.formlib.widgets import TextAreaWidget
 from zope.interface import Interface, implementer
 from zope.publisher.interfaces import NotFound
-from zope.schema import Bool, Choice, List, TextLine
+from zope.schema import Bool, Choice, Int, List, TextLine
 from zope.schema.interfaces import IContextSourceBinder
 from zope.schema.vocabulary import SimpleTerm, SimpleVocabulary
 from zope.security.interfaces import Unauthorized
@@ -132,6 +132,9 @@ from lp.soyuz.enums import (
 from lp.soyuz.interfaces.archive import (
     ARCHIVE_BUGS_FEATURE_FLAG,
     ARCHIVE_WEBHOOKS_FEATURE_FLAG,
+    DEFAULT_PIN_PRIORITY,
+    MAXIMUM_PIN_PRIORITY,
+    MINIMUM_PIN_PRIORITY,
     ArchiveDependencyError,
     CannotCopy,
     IArchive,
@@ -1867,18 +1870,47 @@ class ArchiveEditDependenciesView(ArchiveViewBase, LaunchpadFormView):
         """Override `LaunchpadFormView`.
 
         In addition to setting schema fields, also initialize the
-        'selected_dependencies' field.
+        'selected_dependencies' field and one 'priority_<id>' Int field
+        for each recorded dependency.
 
-        See `createSelectedSourcesField` method.
+        See `createSelectedDependenciesField` and `createPriorityFields`.
         """
         LaunchpadFormView.setUpFields(self)
-
         self.form_fields = (
             self.createSelectedDependenciesField()
             + self.createPrimaryDependenciesField()
             + self.createPrimaryComponentsField()
+            + self.createPriorityFields()
             + self.form_fields
         )
+
+    def createPriorityFields(self):
+        """Create one 'priority_<dependency_id>' Int field per dependency.
+
+        Each field is named after the corresponding `IArchive` id (e.g.
+        'priority_123') so the template can render it next to the
+        dependency's title, and is pre-populated with the current
+        `IArchiveDependency.pin_priority`. Allowed values are restricted
+        to the [MINIMUM_PIN_PRIORITY, MAXIMUM_PIN_PRIORITY] range.
+        """
+        fields = []
+        for archive_dependency in self.context.dependencies:
+            dependency = archive_dependency.dependency
+            if not dependency.is_ppa:
+                continue
+            if not check_permission("launchpad.View", dependency):
+                continue
+            fields.append(
+                Int(
+                    __name__="priority_%d" % dependency.id,
+                    title=_("Priority"),
+                    required=False,
+                    default=archive_dependency.pin_priority,
+                    min=MINIMUM_PIN_PRIORITY,
+                    max=MAXIMUM_PIN_PRIORITY,
+                )
+            )
+        return form.Fields(*fields)
 
     def focusedElementScript(self):
         """Override `LaunchpadFormView`.
@@ -2078,9 +2110,47 @@ class ArchiveEditDependenciesView(ArchiveViewBase, LaunchpadFormView):
         )
 
     @cachedproperty
+    def pin_priority_settings(self):
+        """Pin-priority values shared with the model and template."""
+        return {
+            "default": DEFAULT_PIN_PRIORITY,
+            "minimum": MINIMUM_PIN_PRIORITY,
+            "maximum": MAXIMUM_PIN_PRIORITY,
+        }
+
+    @cachedproperty
     def has_dependencies(self):
         """Whether or not the PPA has recorded dependencies."""
         return not self.context.dependencies.is_empty()
+
+    @cachedproperty
+    def dependency_items(self):
+        """Data for rendering the dependency listing table.
+
+        One item per PPA dependency, containing its linked
+        title if visible, the vocabulary token used by the deletion
+        checkbox, and the widget for the dynamic 'priority_<id>' field
+        created in `createPriorityFields`.
+        """
+        items = []
+        for archive_dependency in self.context.dependencies:
+            dependency = archive_dependency.dependency
+            if not dependency.is_ppa:
+                continue
+            can_view = check_permission("launchpad.View", dependency)
+            item = {
+                "title": archive_dependency.title,
+                "token": dependency.reference,
+                "priority_widget": self.widgets.get(
+                    "priority_%d" % dependency.id
+                ),
+            }
+            if can_view:
+                item["url"] = canonical_url(dependency)
+            else:
+                item["url"] = None
+            items.append(item)
+        return items
 
     @property
     def messages(self):
@@ -2181,18 +2251,76 @@ class ArchiveEditDependenciesView(ArchiveViewBase, LaunchpadFormView):
             )
         )
 
+    def _update_dependencies_priorities(self, data):
+        """Update the pin priority of existing dependencies.
+
+        Extracts the dynamic 'priority_<id>' values from the form data,
+        checks them against the allowed range, and stores
+        the changed values. Dependencies selected for removal in the
+        same submission are skipped.
+
+        Returns True if all given priorities are valid, False otherwise.
+        """
+        selected_dependencies = data.get("selected_dependencies", [])
+        updates = []
+        has_errors = False
+        for archive_dependency in self.context.dependencies:
+            dependency = archive_dependency.dependency
+            field_name = "priority_%d" % dependency.id
+            if field_name not in data:
+                continue
+            if dependency in selected_dependencies:
+                continue
+            new_priority = data[field_name]
+            if new_priority is None:
+                continue
+            if (
+                not MINIMUM_PIN_PRIORITY
+                <= new_priority
+                <= MAXIMUM_PIN_PRIORITY
+            ):
+                self.setFieldError(
+                    field_name,
+                    _(
+                        "Priority must be between %d and %d."
+                        % (
+                            MINIMUM_PIN_PRIORITY,
+                            MAXIMUM_PIN_PRIORITY,
+                        )
+                    ),
+                )
+                has_errors = True
+                continue
+            if new_priority != archive_dependency.pin_priority:
+                updates.append((archive_dependency, new_priority))
+        if has_errors:
+            return False
+        for archive_dependency, new_priority in updates:
+            archive_dependency.pin_priority = new_priority
+            self._messages.append(
+                structured(
+                    "<p>Priority updated: %s (%s)</p>",
+                    archive_dependency.dependency.displayname,
+                    new_priority,
+                )
+            )
+        return True
+
     @action(_("Save"), name="save")
     def save_action(self, action, data):
         """Save dependency configuration changes.
 
-        See `_remove_dependencies`, `_add_ppa_dependencies` and
-        `_add_primary_dependencies`.
+        See `_remove_dependencies`, `_add_ppa_dependencies`,
+        `_add_primary_dependencies` and `_update_dependencies_priorities`.
 
         Redirect to the same page once the form is processed, to avoid widget
         refreshing. And render a page notification with the summary of the
         changes made.
         """
-        # Process the form.
+        # Process the form. Bail out before applying any change if one
+        # of the priority values is invalid.
+        if not self._update_dependencies_priorities(data):
+            return
         self._add_primary_dependencies(data)
         try:
             self._add_ppa_dependencies(data)

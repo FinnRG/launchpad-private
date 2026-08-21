@@ -20,6 +20,7 @@ __all__ = [
     "CannotUploadToPPA",
     "CannotUploadToPocket",
     "CannotUploadToSeries",
+    "DEFAULT_PIN_PRIORITY",
     "DuplicateTokenName",
     "FULL_COMPONENT_SUPPORT",
     "IArchive",
@@ -39,6 +40,8 @@ __all__ = [
     "InvalidPocketForPPA",
     "IPPA",
     "MAIN_ARCHIVE_PURPOSES",
+    "MAXIMUM_PIN_PRIORITY",
+    "MINIMUM_PIN_PRIORITY",
     "NAMED_AUTH_TOKEN_FEATURE_FLAG",
     "NamedAuthTokenFeatureDisabled",
     "NoRightsForArchive",
@@ -125,6 +128,15 @@ from lp.soyuz.interfaces.component import IComponent
 NAMED_AUTH_TOKEN_FEATURE_FLAG = "soyuz.named_auth_token.allow_new"
 ARCHIVE_WEBHOOKS_FEATURE_FLAG = "archive.webhooks.enabled"
 ARCHIVE_BUGS_FEATURE_FLAG = "archive.bugs.enabled"
+
+# Allowed range and default for `IArchiveDependency.pin_priority`
+# DEFAULT_PIN_PRIORITY matches APT's default priorrity for a
+# normal archive. The range is mirrored by the CHECK constraint on
+# ArchiveDependency.pin_priority
+
+MINIMUM_PIN_PRIORITY = -100
+MAXIMUM_PIN_PRIORITY = 2000
+DEFAULT_PIN_PRIORITY = 500
 
 
 @error_status(http.client.BAD_REQUEST)
@@ -2658,7 +2670,7 @@ class IArchiveEdit(IWebhookTarget):
         """Disable the archive."""
 
     def addArchiveDependency(
-        dependency, pocket, component=None, pin_priority=500
+        dependency, pocket, component=None, pin_priority=None
     ):
         """Record an archive dependency record for the context archive.
 
@@ -2667,9 +2679,10 @@ class IArchiveEdit(IWebhookTarget):
         :param component: is an optional `IComponent` object, if not given
             the archive dependency will be tied to the component used
             for a corresponding source in primary archive.
-        :param pin_priority: is an optional integer, sets the priority
-             of the dependency. If not given the archive dependency
-             will default to a priority of 500.
+        :param pin_priority: is an optional integer, in the
+             [ `MINIMUM_PIN_PRIORITY`, `MAXIMUM_PIN_PRIORITY` ] range,
+             sets the priority of the dependency. If None,
+             `DEFAULT_PIN_PRIORITY` is used.
 
         :raise: `ArchiveDependencyError` if given 'dependency' does not fit
             the context archive.
@@ -2690,8 +2703,8 @@ class IArchiveEdit(IWebhookTarget):
         pin_priority=Int(
             title=_("Pin priority"),
             required=False,
-            min=-100,
-            max=2000,
+            min=MINIMUM_PIN_PRIORITY,
+            max=MAXIMUM_PIN_PRIORITY,
         ),
     )
     @export_operation_as("addArchiveDependency")
@@ -2699,7 +2712,7 @@ class IArchiveEdit(IWebhookTarget):
     @export_factory_operation(Interface, [])
     @operation_for_version("devel")
     def _addArchiveDependency(
-        dependency, pocket, component=None, pin_priority=500
+        dependency, pocket, component=None, pin_priority=None
     ):
         """Record an archive dependency record for the context archive.
 
