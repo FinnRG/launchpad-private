@@ -36,10 +36,13 @@
             </tr>
         </table>
         <tal:comment condition="nothing">
-            FeedEntry.content is a FeedTypedData object
-            which has a content attribute
+            FeedEntry.content is a FeedTypedData object. Use
+            html_page_content here, not content: content is escaped
+            for embedding as XML character data in the Atom template
+            (feed-entry-atom.pt), which is one escape layer too many
+            for this ordinary HTML page -- see FeedTypedData.
         </tal:comment>
-        <div tal:replace="structure item/content/content">
+        <div tal:replace="structure item/content/html_page_content">
             Bug Content from Atom Feed
         </div>
     </div>
