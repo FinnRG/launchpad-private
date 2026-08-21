@@ -768,6 +768,7 @@ class ProductSeriesSecurityAdaperTestCase(TestCaseWithFactory):
             "releases",
             "releaseverstyle",
             "searchTasks",
+            "searchTasksCounts",
             "sourcepackages",
             "specifications",
             "status",
