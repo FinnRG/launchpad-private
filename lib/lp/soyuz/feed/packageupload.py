@@ -16,6 +16,7 @@ from lp.services.feeds.feed import (
 )
 from lp.services.librarian.browser import ProxiedLibraryFileAlias
 from lp.services.webapp import canonical_url
+from lp.services.webapp.escaping import structured
 from lp.soyuz.enums import PackageUploadStatus
 from lp.soyuz.interfaces.queue import (
     PACKAGE_UPLOAD_STATUS_MAPPING_TO_STR,
@@ -199,15 +200,32 @@ class NewPackageUploadsFeed(FeedBase):
 
         lines.append(link_alternate)
 
+        changes_file_url = None
         if upload.changesfile is not None:
             changes_file_url = ProxiedLibraryFileAlias(
                 upload.changesfile, upload, rootsite="mainsite"
             ).http_url
 
-            if changes_file_url:
-                lines.append("\nChanges file: %s" % changes_file_url)
-
-        content = FeedTypedData("\n".join(lines))
+        # Wrap the body in <pre> so its line breaks and indentation
+        # survive; structured()/.escapedtext HTML-escapes everything
+        # except the changes-file link, which stays a real anchor.
+        body = "\n".join(lines)
+        if changes_file_url:
+            content = FeedTypedData(
+                structured(
+                    '<pre class="wrap">%s\n\n'
+                    'Changes file: <a href="%s">%s</a></pre>',
+                    body,
+                    changes_file_url,
+                    changes_file_url,
+                ).escapedtext,
+                content_type="html",
+            )
+        else:
+            content = FeedTypedData(
+                structured('<pre class="wrap">%s</pre>', body).escapedtext,
+                content_type="html",
+            )
 
         return FeedEntry(
             title=title,
