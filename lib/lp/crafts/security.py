@@ -6,6 +6,7 @@
 __all__ = []
 
 from lp.app.security import AuthorizationBase, DelegatedAuthorization
+from lp.buildmaster.security import AdminBuildRecord
 from lp.crafts.interfaces.craftrecipe import (
     ICraftRecipe,
     ICraftRecipeBuildRequest,
@@ -89,5 +90,5 @@ class EditCraftRecipeBuild(AdminByBuilddAdmin):
         return super().checkAuthenticated(user)
 
 
-class AdminCraftRecipeBuild(AdminByBuilddAdmin):
+class AdminCraftRecipeBuild(AdminBuildRecord):
     usedfor = ICraftRecipeBuild

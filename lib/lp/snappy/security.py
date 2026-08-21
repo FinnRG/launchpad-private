@@ -10,6 +10,7 @@ from lp.app.security import (
     AuthorizationBase,
     DelegatedAuthorization,
 )
+from lp.buildmaster.security import AdminBuildRecord
 from lp.security import AdminByBuilddAdmin
 from lp.services.webapp.security import EditByRegistryExpertsOrAdmins
 from lp.snappy.interfaces.snap import ISnap, ISnapBuildRequest
@@ -139,7 +140,7 @@ class EditSnapBuild(AdminByBuilddAdmin):
         return super().checkAuthenticated(user)
 
 
-class AdminSnapBuild(AdminByBuilddAdmin):
+class AdminSnapBuild(AdminBuildRecord):
     usedfor = ISnapBuild
 
 

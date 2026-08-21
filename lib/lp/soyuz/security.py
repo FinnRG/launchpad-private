@@ -16,7 +16,7 @@ from lp.app.security import (
     AuthorizationBase,
     DelegatedAuthorization,
 )
-from lp.buildmaster.security import EditPackageBuild
+from lp.buildmaster.security import AdminBuildRecord, EditPackageBuild
 from lp.security import (
     AdminByAdminsTeam,
     AdminByBuilddAdmin,
@@ -709,5 +709,5 @@ class EditLiveFSBuild(AdminByBuilddAdmin):
         return super().checkAuthenticated(user)
 
 
-class AdminLiveFSBuild(AdminByBuilddAdmin):
+class AdminLiveFSBuild(AdminBuildRecord):
     usedfor = ILiveFSBuild

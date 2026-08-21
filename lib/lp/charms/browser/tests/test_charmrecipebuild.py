@@ -13,6 +13,7 @@ from storm.locals import Store
 from testtools.matchers import StartsWith
 from zope.component import getUtility
 from zope.security.interfaces import Unauthorized
+from zope.security.management import checkPermission
 from zope.security.proxy import removeSecurityProxy
 from zope.testbrowser.browser import LinkNotFoundError
 
@@ -208,6 +209,9 @@ class TestCharmRecipeBuildOperations(BrowserTestCase):
         self.buildd_admin = self.factory.makePerson(
             member_of=[getUtility(ILaunchpadCelebrities).buildd_admin]
         )
+        self.launchpad_developer = self.factory.makePerson(
+            member_of=[getUtility(ILaunchpadCelebrities).launchpad_developers]
+        )
 
     def test_retry_build(self):
         # The requester of a build can retry it.
@@ -287,6 +291,22 @@ class TestCharmRecipeBuildOperations(BrowserTestCase):
         browser.getControl("Priority").value = "1024"
         browser.getControl("Rescore build").click()
         self.assertEqual(self.build_url, browser.url)
+        login(ANONYMOUS)
+        self.assertEqual(1024, self.build.buildqueue_record.lastscore)
+
+    def test_launchpad_developer_can_rescore_build(self):
+        self.build.queueBuild()
+        builder = self.factory.makeBuilder()
+        transaction.commit()
+        browser = self.getViewBrowser(
+            self.build, user=self.launchpad_developer
+        )
+        browser.getLink("Rescore build").click()
+        browser.getControl("Priority").value = "1024"
+        browser.getControl("Rescore build").click()
+        self.assertEqual(self.build_url, browser.url)
+        with person_logged_in(self.launchpad_developer):
+            self.assertFalse(checkPermission("launchpad.Admin", builder))
         login(ANONYMOUS)
         self.assertEqual(1024, self.build.buildqueue_record.lastscore)
 
