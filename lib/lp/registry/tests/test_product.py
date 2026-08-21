@@ -960,6 +960,7 @@ class TestProduct(TestCaseWithFactory):
             "bug_target_parent",
             "projectgroup",
             "searchTasks",
+            "searchTasksCounts",
             "title",
         },
         "launchpad.View": {
