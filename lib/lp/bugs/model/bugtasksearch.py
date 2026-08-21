@@ -6,6 +6,7 @@ __all__ = [
     "get_bug_privacy_filter_terms",
     "get_bug_bulk_privacy_filter_terms",
     "orderby_expression",
+    "search_bug_counts",
     "search_bugs",
 ]
 
@@ -44,6 +45,7 @@ from lp.bugs.interfaces.bugattachment import BugAttachmentType
 from lp.bugs.interfaces.bugnomination import BugNominationStatus
 from lp.bugs.interfaces.bugtask import (
     DB_INCOMPLETE_BUGTASK_STATUSES,
+    BugTaskGroupedCounts,
     BugTaskStatus,
     BugTaskStatusSearch,
 )
@@ -264,6 +266,62 @@ def search_bugs(pre_iter_hook, alternatives, just_bug_ids=False):
         lambda row: reduce(lambda task, dec: dec(task), decorators, row),
         pre_iter_hook=pre_iter_hook,
     )
+
+
+def search_bug_counts(alternatives) -> BugTaskGroupedCounts:
+    """Return status and importance counts for search alternatives."""
+    store = IStore(BugTask)
+    if len(alternatives) == 1:
+        [
+            query,
+            clause_tables,
+            _bugtask_decorator,
+            join_tables,
+            with_clauses,
+        ] = _build_query(alternatives[0])
+        if with_clauses:
+            store = store.with_(with_clauses)
+        origin = _build_origin(join_tables, clause_tables, BugTaskFlat)
+        result_store = store.using(*origin)
+        result_query = query
+    else:
+        results = []
+        for params in alternatives:
+            [
+                query,
+                clause_tables,
+                _bugtask_decorator,
+                join_tables,
+                with_clauses,
+            ] = _build_query(params)
+            local_store = store
+            if with_clauses:
+                local_store = store.with_(with_clauses)
+            origin = _build_origin(join_tables, clause_tables, BugTaskFlat)
+            results.append(local_store.using(*origin).find(BugTaskFlat, query))
+        result_set = reduce(lambda left, right: left.union(right), results)
+        origin = Alias(result_set._get_select(), "BugTaskFlat")
+        result_store = store.using(origin)
+        result_query = None
+
+    count_expression = Count(BugTaskFlat.bugtask_id)
+    columns = (
+        BugTaskFlat.status,
+        BugTaskFlat.importance,
+        count_expression,
+    )
+    if result_query is None:
+        result = result_store.find(columns)
+    else:
+        result = result_store.find(columns, result_query)
+    result.group_by(BugTaskFlat.status, BugTaskFlat.importance)
+    counts = {}
+    for status, importance, row_count in result:
+        if status in DB_INCOMPLETE_BUGTASK_STATUSES:
+            status = BugTaskStatus.INCOMPLETE
+        key = (status, importance)
+        counts[key] = counts.get(key, 0) + row_count
+    return counts
 
 
 def _build_origin(join_tables, clauseTables, start_with):

@@ -916,7 +916,12 @@ class IDistroSeriesPublic(
         """
 
     def getBugSummaryStatusImportanceCounts(user, milestone=None):
-        """Return BugSummary counts grouped by status and importance.
+        """Legacy internal API for status and importance cross-tab counts.
+
+        This internal method remains for the legacy series page and can be
+        removed when that page migrates to Launchpad UI.
+        ``IHasBugs.searchTasksCounts`` offers API consumers separate status
+        and importance totals, but it does not provide this full cross-tab.
 
         If ``milestone`` is provided, counts are restricted to bugs that
         match both this distroseries and that milestone.
@@ -1418,10 +1423,13 @@ patch_plain_parameter_type(
     IDistroSeries, "getDifferencesTo", "parent_series", IDistroSeries
 )
 
-# We assign the schema for an `IHasBugs` method argument here
+# We assign the schema for `IHasBugs` method arguments here
 # in order to avoid circular dependencies.
 patch_plain_parameter_type(
     IHasBugs, "searchTasks", "nominated_for", IDistroSeries
+)
+patch_plain_parameter_type(
+    IHasBugs, "searchTasksCounts", "nominated_for", IDistroSeries
 )
 
 

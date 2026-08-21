@@ -58,6 +58,7 @@ from lp.bugs.interfaces.bugtask import (
     DB_INCOMPLETE_BUGTASK_STATUSES,
     DB_UNRESOLVED_BUGTASK_STATUSES,
     RESOLVED_BUGTASK_STATUSES,
+    BugTaskGroupedCounts,
     BugTaskImportance,
     BugTaskStatus,
     BugTaskStatusSearch,
@@ -2067,6 +2068,12 @@ class BugTaskSet:
                 load_related(SourcePackageName, rows, ["sourcepackagename_id"])
 
         return search_bugs(eager_load, (params,) + args)
+
+    def searchCounts(self, params, *args) -> BugTaskGroupedCounts:
+        """See `IBugTaskSet`."""
+        from lp.bugs.model.bugtasksearch import search_bug_counts
+
+        return search_bug_counts((params,) + args)
 
     def searchBugIds(self, params):
         """See `IBugTaskSet`."""

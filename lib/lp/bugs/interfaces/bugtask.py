@@ -5,6 +5,7 @@
 
 __all__ = [
     "BUG_SUPERVISOR_BUGTASK_STATUSES",
+    "BugTaskGroupedCounts",
     "BugTaskImportance",
     "BugTaskStatus",
     "BugTaskStatusSearch",
@@ -33,6 +34,7 @@ __all__ = [
 ]
 
 import http.client
+import typing
 
 from lazr.enum import DBEnumeratedType, DBItem, use_template
 from lazr.restful.declarations import (
@@ -351,6 +353,11 @@ class BugTaskStatusSearchDisplay(DBEnumeratedType):
     """
 
     use_template(BugTaskStatusSearch, exclude=("INCOMPLETE"))
+
+
+BugTaskGroupedCounts = typing.Dict[
+    typing.Tuple[BugTaskStatus, BugTaskImportance], int
+]
 
 
 UNRESOLVED_BUGTASK_STATUSES = (
@@ -1162,6 +1169,15 @@ class IBugTaskSet(Interface):
         If more than one BugTaskSearchParams is given, return the union of
         IBugTasks which match any of them, with the results ordered by the
         orderby specified in the first BugTaskSearchParams object.
+        """
+
+    def searchCounts(params, *args) -> BugTaskGroupedCounts:
+        """Count matching bug tasks grouped by status and importance.
+
+        Multiple BugTaskSearchParams may be supplied; matching tasks are
+        unioned before counting, as in ``search``.
+
+        :return: A dict mapping ``(status, importance)`` tuples to counts.
         """
 
     def searchBugIds(params):
