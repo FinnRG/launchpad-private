@@ -109,57 +109,24 @@ class BugNomination(StormBase):
 
     def approve(self, approver):
         """See IBugNomination."""
-        if self.isApproved():
-            # Approving an approved nomination is a no-op.
+        # Figure out which of this bug's tasks are affected by this
+        # nomination's target but don't yet have a corresponding task in
+        # it. A bugtask may already exist here if, for example, a
+        # previously-created task for this target was deleted and the
+        # nomination is being (re)approved to top it back up.
+        new_targets = self.bug._getMissingNominationTargets(self.target)
+        if not new_targets:
+            # Approving an approved nomination that already has a
+            # task for every affected package is a no-op.
             return
-        self.status = BugNominationStatus.APPROVED
-        self.decider = approver
-        self.date_decided = datetime.now(timezone.utc)
-        targets = []
-        if self.distroseries:
-            # Figure out which packages are affected in this distro for
-            # this bug.
-            distribution = self.distroseries.distribution
-            distroseries = self.distroseries
-            for task in self.bug.bugtasks:
 
-                if task.distribution == distribution:
-                    if task.packagetype is not None:
-                        targets.append(
-                            distroseries.getExternalPackageSeries(
-                                task.sourcepackagename,
-                                task.packagetype,
-                                task.channel,
-                            )
-                        )
-                    elif task.sourcepackagename is not None:
-                        targets.append(
-                            distroseries.getSourcePackage(
-                                task.sourcepackagename
-                            )
-                        )
-                    else:
-                        targets.append(distroseries)
-                elif (
-                    task.archive
-                    and task.archive.distribution == distribution
-                    and not task.distroseries
-                ):
-                    if task.sourcepackagename is not None:
+        if not self.isApproved():
+            self.status = BugNominationStatus.APPROVED
+            self.decider = approver
+            self.date_decided = datetime.now(timezone.utc)
 
-                        targets.append(
-                            distroseries.getArchiveSourcePackageSeries(
-                                task.archive, task.sourcepackagename
-                            )
-                        )
-                    else:
-                        targets.append(
-                            distroseries.getArchiveSeries(task.archive)
-                        )
-        else:
-            targets.append(self.productseries)
         bugtasks = getUtility(IBugTaskSet).createManyTasks(
-            self.bug, approver, targets
+            self.bug, approver, new_targets
         )
         for bug_task in bugtasks:
             self.bug.addChange(BugTaskAdded(UTC_NOW, approver, bug_task))
