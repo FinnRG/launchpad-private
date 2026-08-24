@@ -215,10 +215,28 @@ class ExtractBugTrackerAndBugTest(WithScenarios, TestCase):
             },
         ),
         (
+            "GitHubWithTrailingSlash",
+            {
+                "bugtracker_type": BugTrackerType.GITHUB,
+                "bug_url": "https://github.com/user/repository/issues/12345/",
+                "base_url": "https://github.com/user/repository/issues",
+                "bug_id": "12345",
+            },
+        ),
+        (
             "GitLab",
             {
                 "bugtracker_type": BugTrackerType.GITLAB,
                 "bug_url": "https://gitlab.com/user/repository/issues/12345",
+                "base_url": "https://gitlab.com/user/repository/issues",
+                "bug_id": "12345",
+            },
+        ),
+        (
+            "GitLabWithTrailingSlash",
+            {
+                "bugtracker_type": BugTrackerType.GITLAB,
+                "bug_url": "https://gitlab.com/user/repository/issues/12345/",
                 "base_url": "https://gitlab.com/user/repository/issues",
                 "bug_id": "12345",
             },
