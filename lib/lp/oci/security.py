@@ -10,6 +10,7 @@ from lp.app.security import (
     AuthorizationBase,
     DelegatedAuthorization,
 )
+from lp.buildmaster.security import AdminBuildRecord
 from lp.oci.interfaces.ocipushrule import IOCIPushRule
 from lp.oci.interfaces.ocirecipe import IOCIRecipe, IOCIRecipeBuildRequest
 from lp.oci.interfaces.ocirecipebuild import IOCIRecipeBuild
@@ -127,7 +128,7 @@ class EditOCIRecipeBuild(AdminByBuilddAdmin):
         return super().checkAuthenticated(user)
 
 
-class AdminOCIRecipeBuild(AdminByBuilddAdmin):
+class AdminOCIRecipeBuild(AdminBuildRecord):
     usedfor = IOCIRecipeBuild
 
 
