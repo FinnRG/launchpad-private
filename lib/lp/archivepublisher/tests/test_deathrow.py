@@ -5,8 +5,11 @@
 
 import shutil
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
+from fixtures import MonkeyPatch
+from testtools.matchers import Equals
 from zope.component import getUtility
 
 from lp.archivepublisher.artifactory import ArtifactoryPool
@@ -14,16 +17,20 @@ from lp.archivepublisher.deathrow import DeathRow
 from lp.archivepublisher.diskpool import DiskPool
 from lp.registry.interfaces.distribution import IDistributionSet
 from lp.registry.interfaces.sourcepackage import SourcePackageType
+from lp.services.database.interfaces import IStore
 from lp.services.log.logger import BufferLogger
 from lp.soyuz.enums import (
     ArchivePublishingMethod,
     ArchivePurpose,
     ArchiveRepositoryFormat,
+    PackagePublishingStatus,
 )
 from lp.soyuz.interfaces.component import IComponentSet
+from lp.soyuz.model.publishing import SourcePackagePublishingHistory
 from lp.soyuz.tests.test_publishing import SoyuzTestPublisher
-from lp.testing import TestCaseWithFactory
+from lp.testing import StormStatementRecorder, TestCaseWithFactory
 from lp.testing.layers import LaunchpadZopelessLayer
+from lp.testing.matchers import HasQueryCount
 
 
 class TestDeathRow(TestCaseWithFactory):
@@ -171,3 +178,123 @@ class TestDeathRow(TestCaseWithFactory):
         self.assertIsNone(pub_source.dateremoved)
         deathrow.reap()
         self.assertIsNotNone(pub_source.dateremoved)
+
+    def makeCondemnedSources(self, stp, count):
+        """Create `count` independent, immediately-reapable sources."""
+        past_date = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        pubs = []
+        for i in range(count):
+            pub = stp.getPubSource(
+                sourcename="condemned-%d" % i,
+                status=PackagePublishingStatus.SUPERSEDED,
+                filecontent=("content-%d" % i).encode(),
+                scheduleddeletiondate=past_date,
+            )
+            pubs.append(pub)
+        self.layer.commit()
+        return pubs
+
+    def test_reap_query_count_does_not_scale_with_files(self):
+        # reap() batches its eligibility checks and removal-marking, so
+        # the number of queries it issues does not grow linearly with
+        # the number of condemned files.
+        ubuntu = getUtility(IDistributionSet).getByName("ubuntu")
+        hoary = ubuntu.getSeries("hoary")
+        stp = self.getTestPublisher(hoary)
+
+        self.makeCondemnedSources(stp, 1)
+        with StormStatementRecorder() as recorder_one:
+            self.getDeathRow(hoary.main_archive).reap()
+
+        self.makeCondemnedSources(stp, 10)
+        with StormStatementRecorder() as recorder_many:
+            self.getDeathRow(hoary.main_archive).reap()
+
+        # The number of queries reap() issues is fixed (a handful of bulk
+        # queries), regardless of how many files are condemned.
+        self.assertThat(
+            recorder_many, HasQueryCount(Equals(recorder_one.count))
+        )
+
+    def test_findRemovableFiles_batches_large_file_sets(self):
+        # _findRemovableFiles splits its eligibility check into batches
+        # of at most REMOVABLE_FILES_BATCH_SIZE keys, rather than a
+        # single query covering every condemned file.
+        ubuntu = getUtility(IDistributionSet).getByName("ubuntu")
+        hoary = ubuntu.getSeries("hoary")
+        deathrow = self.getDeathRow(hoary.main_archive)
+
+        self.useFixture(
+            MonkeyPatch(
+                "lp.archivepublisher.deathrow.REMOVABLE_FILES_BATCH_SIZE", 3
+            )
+        )
+
+        # None of these files exist in the database, so each batch's
+        # query will return no rows and every key will be treated as
+        # removable; we only care here about how many queries and
+        # batches that takes.
+        file_keys = {("file-%d.dsc" % i, "sha-%d" % i) for i in range(7)}
+
+        with StormStatementRecorder() as recorder:
+            removable = deathrow._findRemovableFiles(
+                SourcePackagePublishingHistory, file_keys
+            )
+
+        # ceil(7 / 3) == 3 batches, so 3 queries: none of the 7 keys are
+        # lost or duplicated across the batch boundaries.
+        self.assertThat(recorder, HasQueryCount(Equals(3)))
+        self.assertEqual(file_keys, removable)
+
+    def test_prefetchFiles_batches_related_queries(self):
+        ubuntu = getUtility(IDistributionSet).getByName("ubuntu")
+        hoary = ubuntu.getSeries("hoary")
+        stp = self.getTestPublisher(hoary)
+        pubs = self.makeCondemnedSources(stp, 7)
+        pub_ids = [pub.id for pub in pubs]
+        archive_id = hoary.main_archive.id
+
+        store = IStore(SourcePackagePublishingHistory)
+        store.reset()
+        pubs = list(
+            store.find(
+                SourcePackagePublishingHistory,
+                SourcePackagePublishingHistory.id.is_in(pub_ids),
+            ).order_by(SourcePackagePublishingHistory.id)
+        )
+        deathrow = self.getDeathRow(pubs[0].archive)
+
+        self.useFixture(
+            MonkeyPatch(
+                "lp.archivepublisher.deathrow.RELATED_OBJECTS_BATCH_SIZE", 3
+            )
+        )
+
+        with StormStatementRecorder() as recorder:
+            pub_files = deathrow._prefetchFiles(pubs, [])
+
+        self.assertThat(recorder, HasQueryCount(Equals(15)))
+        self.assertEqual(7, len(pub_files))
+        self.assertContentEqual(pubs, pub_files)
+        self.assertEqual(archive_id, pubs[0].archive.id)
+
+    def test_markPublicationRemoved_batches_updates(self):
+        ubuntu = getUtility(IDistributionSet).getByName("ubuntu")
+        hoary = ubuntu.getSeries("hoary")
+        stp = self.getTestPublisher(hoary)
+        pubs = self.makeCondemnedSources(stp, 7)
+        deathrow = self.getDeathRow(hoary.main_archive)
+
+        self.useFixture(
+            MonkeyPatch(
+                "lp.archivepublisher.deathrow.MARK_REMOVED_BATCH_SIZE", 3
+            )
+        )
+
+        with StormStatementRecorder() as recorder:
+            deathrow._markPublicationRemoved(pubs)
+            IStore(SourcePackagePublishingHistory).flush()
+
+        self.assertThat(recorder, HasQueryCount(Equals(3)))
+        for pub in pubs:
+            self.assertIsNotNone(pub.dateremoved)
