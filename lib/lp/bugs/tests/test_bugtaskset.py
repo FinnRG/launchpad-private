@@ -7,7 +7,11 @@ from zope.component import getUtility
 
 from lp.app.interfaces.launchpad import ILaunchpadCelebrities
 from lp.bugs.interfaces.bug import CreateBugParams, IBugSet
-from lp.bugs.interfaces.bugtask import IBugTaskSet, IllegalTarget
+from lp.bugs.interfaces.bugtask import (
+    BugTaskStatus,
+    IBugTaskSet,
+    IllegalTarget,
+)
 from lp.registry.interfaces.person import IPersonSet
 from lp.registry.interfaces.product import IProductSet
 from lp.services.webapp.interfaces import ILaunchBag
@@ -97,6 +101,45 @@ class TestSortingBugTasks(TestCase):
                 "mozilla-firefox (Debian)",
             ],
         )
+
+
+class TestFindSimilar(TestCaseWithFactory):
+    """Tests for BugTaskSet.findSimilar."""
+
+    layer = DatabaseFunctionalLayer
+
+    def test_excludes_invalid_bugtasks(self):
+        product = self.factory.makeProduct()
+        user = self.factory.makePerson()
+
+        valid_bug = self.factory.makeBug(
+            target=product,
+            title="Wireless adapter does not work",
+        )
+        invalid_bug = self.factory.makeBug(
+            target=product,
+            title="Wireless adapter does not work",
+        )
+
+        valid_task = valid_bug.bugtasks[0]
+        invalid_task = invalid_bug.bugtasks[0]
+
+        with person_logged_in(product.owner):
+            invalid_task.transitionToStatus(
+                BugTaskStatus.INVALID,
+                product.owner,
+            )
+
+        results = list(
+            getUtility(IBugTaskSet).findSimilar(
+                user,
+                "Wireless adapter does not work",
+                product=product,
+            )
+        )
+
+        self.assertIn(valid_task, results)
+        self.assertNotIn(invalid_task, results)
 
 
 class TestEolDistributionPackage(TestCaseWithFactory):

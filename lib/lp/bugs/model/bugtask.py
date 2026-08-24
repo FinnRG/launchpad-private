@@ -125,7 +125,7 @@ from lp.services.database.stormbase import StormBase
 from lp.services.database.stormexpr import ImmutablePgJSON
 from lp.services.helpers import shortlist
 from lp.services.propertycache import get_property_cache
-from lp.services.searchbuilder import any
+from lp.services.searchbuilder import any, not_equals
 from lp.services.webapp.interfaces import ILaunchBag
 from lp.services.webapp.snapshot import notify_modified
 from lp.services.xref.interfaces import IXRefSet
@@ -2037,6 +2037,7 @@ class BugTaskSet:
         search_params.fast_searchtext = nl_phrase_search(
             summary, Bug, constraint_clauses
         )
+        search_params.status = not_equals(BugTaskStatus.INVALID)
         return self.search(search_params, _noprejoins=True)
 
     def search(self, params, *args, **kwargs):
