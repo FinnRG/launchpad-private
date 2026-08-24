@@ -154,6 +154,7 @@ from lp.services.webapp.interfaces import (
     IMultiFacetedBreadcrumb,
     IStructuredString,
 )
+from lp.services.webapp.login import isFreshLogin, require_fresh_login
 from lp.snappy.browser.hassnaps import HasSnapsMenuMixin
 
 
@@ -2223,6 +2224,19 @@ class TeamAddMyTeamsView(LaunchpadFormView):
 
 class TeamLeaveView(LaunchpadFormView, TeamJoinMixin):
     schema = Interface
+
+    def initialize(self):
+        # Bug #1793647: leaving a team must not be possible from a stale
+        # (non-fresh) login, exactly like the other security-sensitive
+        # account actions (+editsshkeys, +editpgpkeys, +editemails).
+        # A team can gate a security-sensitive feature flag (for example,
+        # enrolling members in mandatory two-factor authentication), so
+        # leaving must force reauthentication rather than merely
+        # requesting it and then processing the action anyway.
+        if not isFreshLogin(self.request):
+            require_fresh_login(self.request, self.context, "+leave")
+            return
+        super().initialize()
 
     @property
     def is_private_team(self):
