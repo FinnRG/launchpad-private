@@ -1,6 +1,8 @@
 # Copyright 2010-2021 Canonical Ltd.  This software is licensed under the
 # GNU Affero General Public License version 3 (see the file LICENSE).
 
+from datetime import datetime, timedelta
+
 import soupmatchers
 import transaction
 from testtools.matchers import Not
@@ -28,7 +30,9 @@ from lp.services.features.testing import FeatureFixture
 from lp.services.propertycache import get_property_cache
 from lp.services.webapp.authorization import check_permission
 from lp.services.webapp.escaping import html_escape
+from lp.services.webapp.login import OpenIDCallbackView, isFreshLogin
 from lp.services.webapp.publisher import canonical_url
+from lp.services.webapp.servers import LaunchpadTestRequest
 from lp.soyuz.enums import ArchiveStatus
 from lp.testing import (
     ANONYMOUS,
@@ -1034,3 +1038,102 @@ class TestTeamContactAddressView(TestCaseWithFactory):
             )
             expected_msg %= (someone_email, someone_url)
             self.assertEqual([expected_msg], view.errors)
+
+
+class TestTeamLeaveView(TestCaseWithFactory):
+    """Tests for TeamLeaveView.
+
+    Regression tests for bug #1793647: leaving a team must require a
+    fresh (recently re-authenticated) login, just like other
+    security-sensitive account actions such as +editsshkeys,
+    +editpgpkeys and +editemails. A team can be used to scope a
+    security-sensitive feature flag (for example, to enrol a cohort of
+    users in mandatory two-factor authentication), so a member must not
+    be able to opt themselves out of such a requirement using a session
+    that was authenticated a long time ago.
+    """
+
+    layer = DatabaseFunctionalLayer
+
+    def _loginWithStaleSession(self, user, request):
+        """Log in on `request`'s session as though it happened long ago.
+
+        `isFreshLogin` treats a login older than 120 seconds as stale,
+        which is exactly the state of an existing browser session that
+        was authenticated well before the current request.
+        """
+        with person_logged_in(user):
+            OpenIDCallbackView(user, request).login(
+                user, datetime.utcnow() - timedelta(seconds=180)
+            )
+
+    def _makeTeamAndMember(self):
+        team = self.factory.makeTeam(name="two-factor-testers")
+        member = self.factory.makePerson()
+        with person_logged_in(team.teamowner):
+            team.addMember(member, reviewer=team.teamowner)
+        transaction.commit()
+        return team, member
+
+    def test_leave_requires_fresh_login(self):
+        # A member with a stale (non-fresh) login is redirected to
+        # reauthenticate, and does not leave the team, just as a stale
+        # login blocks +editsshkeys (see
+        # test_editsshkeys_requires_fresh_login below).
+        team, member = self._makeTeamAndMember()
+
+        request = LaunchpadTestRequest(
+            method="POST", form={"field.actions.leave": "Leave the Team"}
+        )
+        self._loginWithStaleSession(member, request)
+        self.assertFalse(isFreshLogin(request))
+
+        with person_logged_in(member):
+            create_initialized_view(
+                team, "+leave", request=request, principal=member
+            )
+
+        self.assertEqual(302, request.response.getStatus())
+        self.assertIn(
+            "+login?reauth=1", request.response.getHeader("Location")
+        )
+        self.assertTrue(member.inTeam(team))
+
+    def test_leave_succeeds_with_fresh_login(self):
+        # A member with a fresh login can still leave the team normally.
+        team, member = self._makeTeamAndMember()
+
+        request = LaunchpadTestRequest(
+            method="POST", form={"field.actions.leave": "Leave the Team"}
+        )
+        with person_logged_in(member):
+            OpenIDCallbackView(member, request).login(member)
+        self.assertTrue(isFreshLogin(request))
+
+        with person_logged_in(member):
+            view = create_initialized_view(
+                team, "+leave", request=request, principal=member
+            )
+
+        self.assertEqual([], view.errors)
+        self.assertFalse(member.inTeam(team))
+
+    def test_editsshkeys_requires_fresh_login(self):
+        # Contrast with test_leave_requires_fresh_login: an equally
+        # stale login is redirected to reauthenticate before
+        # +editsshkeys does anything, because that view calls
+        # require_fresh_login.
+        user = self.factory.makePerson()
+        request = LaunchpadTestRequest(method="GET")
+        self._loginWithStaleSession(user, request)
+        self.assertFalse(isFreshLogin(request))
+
+        with person_logged_in(user):
+            create_initialized_view(
+                user, "+editsshkeys", request=request, principal=user
+            )
+
+        self.assertEqual(302, request.response.getStatus())
+        self.assertIn(
+            "+login?reauth=1", request.response.getHeader("Location")
+        )
