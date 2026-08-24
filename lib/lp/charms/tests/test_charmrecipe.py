@@ -228,6 +228,49 @@ class TestCharmRecipe(TestCaseWithFactory):
             recipe, "date_last_modified", UTC_NOW
         )
 
+    def test_build_path_strips_trailing_slashes(self):
+        # A trailing slash in the build path is stripped, since it would
+        # otherwise lead to confusing build failures.
+        recipe = self.factory.makeCharmRecipe(build_path="charm/foo/")
+        self.assertEqual("charm/foo", recipe.build_path)
+        removeSecurityProxy(recipe).build_path = "charm/bar//"
+        self.assertEqual("charm/bar", recipe.build_path)
+
+    def test_build_path_only_slashes_becomes_none(self):
+        # A build path consisting only of slashes reduces to None, so it is
+        # not joined into the charmcraft.yaml lookup path.
+        recipe = self.factory.makeCharmRecipe(build_path="/")
+        self.assertIsNone(recipe.build_path)
+
+    def test_build_path_empty_becomes_none(self):
+        # An empty build path is normalised to None for the same reason.
+        recipe = self.factory.makeCharmRecipe(build_path="")
+        self.assertIsNone(recipe.build_path)
+
+    def test_getCharmcraftYaml_build_path_trailing_slash_no_double_slash(self):
+        # A trailing slash in build_path must not produce a "//" in the
+        # charmcraft.yaml lookup path; Git resolves such a path to a missing
+        # blob, which previously masked the real charmcraft.yaml.
+        requested = []
+
+        def getBlob(path, filename, *args, **kwargs):
+            requested.append(filename)
+            if filename == "charm/foo/charmcraft.yaml":
+                return b"name: test-charm"
+            raise GitRepositoryBlobNotFound("dummy", filename)
+
+        self.useFixture(GitHostingFixture()).getBlob = getBlob
+        [git_ref] = self.factory.makeGitRefs()
+        recipe = self.factory.makeCharmRecipe(
+            git_ref=git_ref, build_path="charm/foo/"
+        )
+        self.assertEqual(
+            {"name": "test-charm"},
+            getUtility(ICharmRecipeSet).getCharmcraftYaml(recipe),
+        )
+        self.assertEqual(["charm/foo/charmcraft.yaml"], requested)
+        self.assertNotIn("charm/foo//charmcraft.yaml", requested)
+
     def test__default_distribution_default(self):
         # If the CHARM_RECIPE_BUILD_DISTRIBUTION feature rule is not set, we
         # default to Ubuntu.
