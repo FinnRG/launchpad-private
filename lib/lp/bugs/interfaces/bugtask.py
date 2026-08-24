@@ -169,7 +169,7 @@ class BugTaskStatus(DBEnumeratedType):
     # INCOMPLETE is never actually stored now: INCOMPLETE_WITH_RESPONSE and
     # INCOMPLETE_WITHOUT_RESPONSE are mapped to INCOMPLETE on read, and on
     # write INCOMPLETE is mapped to INCOMPLETE_WITHOUT_RESPONSE. This permits
-    # An index on the INCOMPLETE_WITH*_RESPONSE queries that the webapp
+    # an index on the INCOMPLETE_WITH*_RESPONSE queries that the webapp
     # generates.
     INCOMPLETE = DBItem(
         15,
@@ -194,7 +194,7 @@ class BugTaskStatus(DBEnumeratedType):
         """
         Invalid
 
-        Not a bug. May be a support request or spam.
+        Couldn't reproduce or not a bug. May be a support request or spam.
         """,
     )
 
