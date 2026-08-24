@@ -71,6 +71,15 @@ def configure(argv):
         # XXX wgrant 2015-08-03: This should be set in the apply_async
         # now that we're on Celery 3.1.
         result["task_soft_time_limit"] = config[queue].timeout
+        # A hard time limit ensures that a worker that doesn't respond to
+        # SoftTimeLimitExceeded (for example because it's stuck in a
+        # blocking call that can't be interrupted by a Python signal) is
+        # forcibly killed and replaced by Celery, rather than becoming a
+        # permanently stuck zombie process.  See bug 1783315.
+        # The gap between the soft and hard limits (60 seconds in
+        # schema-lazr.conf) is a conservative, arbitrarily chosen buffer,
+        # not a measured value.
+        result["task_time_limit"] = config[queue].hard_timeout
         if config[queue].fallback_queue != "":
             result["FALLBACK_QUEUE"] = config[queue].fallback_queue
         # XXX wgrant 2015-08-03: This is mostly per-queue because we

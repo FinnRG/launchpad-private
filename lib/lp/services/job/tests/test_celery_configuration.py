@@ -71,6 +71,7 @@ class TestCeleryWorkerConfiguration(TestCase):
         self.check_default_common_parameters(config)
         self.assertEqual(expected["concurrency"], config["worker_concurrency"])
         self.assertEqual(expected["timeout"], config["task_soft_time_limit"])
+        self.assertEqual(expected["hard_timeout"], config["task_time_limit"])
         self.assertEqual(
             expected["fallback"], config.get("FALLBACK_QUEUE", None)
         )
@@ -82,6 +83,7 @@ class TestCeleryWorkerConfiguration(TestCase):
             "concurrency": 3,
             "fallback": "launchpad_job_slow",
             "timeout": 300,
+            "hard_timeout": 360,
         }
         config = configure(self.command + ["-Q", "launchpad_job"])
         self.check_default_common_parameters(config)
@@ -98,6 +100,7 @@ class TestCeleryWorkerConfiguration(TestCase):
             "concurrency": 1,
             "fallback": None,
             "timeout": 86400,
+            "hard_timeout": 86460,
         }
         config = configure(self.command + ["-Q", "launchpad_job_slow"])
         self.check_default_common_parameters(config)
