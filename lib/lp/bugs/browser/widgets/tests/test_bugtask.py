@@ -8,11 +8,13 @@ from zope.schema import Choice
 from zope.schema.vocabulary import getVocabularyRegistry
 from zope.security.proxy import removeSecurityProxy
 
+from lp.app.widgets.popup import DistributionSourcePackagePickerWidget
 from lp.bugs.browser.widgets.bugtask import (
     BugTaskTargetWidget,
     FileBugArchiveSourcePackageNameWidget,
 )
 from lp.bugs.interfaces.bugtask import IBugTask
+from lp.services.features.testing import FeatureFixture
 from lp.services.webapp.servers import LaunchpadTestRequest
 from lp.testing import TestCaseWithFactory, login_person
 from lp.testing.layers import DatabaseFunctionalLayer
@@ -60,6 +62,42 @@ class BugTaskTargetWidgetTestCase(TestCaseWithFactory):
             other_distribution in vocabulary,
             "Vocabulary contains distros that do not use Launchpad Bugs.",
         )
+
+    def test_package_picker_requires_distribution_to_target_package(self):
+        # DistributionPackage delegates its search to the
+        # DistributionSourcePackage vocabulary, which errors out without a
+        # distribution.
+        with FeatureFixture({"disclosure.dsp_picker.enabled": "on"}):
+            project_task = self.factory.makeBugTask(
+                target=self.factory.makeProduct()
+            )
+            vocabulary = getVocabularyRegistry().get(
+                project_task, "DistributionPackage"
+            )
+            self.assertRaisesWithContent(
+                AssertionError,
+                "DistributionSourcePackageVocabulary cannot be used without "
+                "setting a distribution.",
+                vocabulary.searchForTerms,
+                "evolution",
+            )
+
+    def test_package_picker_scopes_search_to_selected_distribution(self):
+        # Package field's search is scoped to the sibling distribution field
+        # when DistributionSourcePackagePickerWidget is registered for the
+        # DistributionPackage vocabulary.
+        with FeatureFixture({"disclosure.dsp_picker.enabled": "on"}):
+            bugtask = self.factory.makeBugTask(
+                target=self.factory.makeProduct()
+            )
+            target_widget = self.getWidget(bugtask)
+            target_widget.setUpSubWidgets()
+            self.assertIsInstance(
+                target_widget.package_widget,
+                DistributionSourcePackagePickerWidget,
+            )
+            markup = target_widget.package_widget()
+        self.assertIn("distribution_id = 'field.target.distribution'", markup)
 
 
 class TestFileBugArchiveSourcePackageNameWidget(TestCaseWithFactory):
