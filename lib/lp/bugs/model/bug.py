@@ -2112,55 +2112,98 @@ class Bug(StormBase, InformationTypeMixin):
         self.addChange(SeriesNominated(UTC_NOW, owner, target))
         return nomination
 
+    def _getMissingNominationTargets(self, series):
+        """Return the targets in `series` that don't yet have bug tasks.
+
+        For each of this bug's existing tasks on the bug target parent
+        (distribution or product) of `series`, work out what the
+        equivalent task on `series` would be, and return those candidate
+        targets that don't already have a matching bug task on this bug.
+
+        This is used both to decide whether a bug can be (re)nominated or
+        (re)targeted to `series` -- i.e. whether there's anything left to
+        add -- and, when approving a nomination, to work out exactly which
+        bug tasks need to be created.
+
+        Returns an empty list if `series` isn't an `IDistroSeries` or
+        `IProductSeries`, or if there are no bug target parent tasks to
+        derive candidate targets from.
+        """
+        existing_targets = {task.target for task in self.bugtasks}
+        targets = []
+
+        if IDistroSeries.providedBy(series):
+            distribution = series.distribution
+            for task in self.bugtasks:
+                if task.distribution == distribution:
+                    if task.packagetype is not None:
+                        candidate = series.getExternalPackageSeries(
+                            task.sourcepackagename,
+                            task.packagetype,
+                            task.channel,
+                        )
+                    elif task.sourcepackagename is not None:
+                        candidate = series.getSourcePackage(
+                            task.sourcepackagename
+                        )
+                    else:
+                        candidate = series
+                elif (
+                    task.archive
+                    and task.archive.distribution == distribution
+                    and not task.distroseries
+                ):
+                    if task.sourcepackagename is not None:
+                        candidate = series.getArchiveSourcePackageSeries(
+                            task.archive, task.sourcepackagename
+                        )
+                    else:
+                        candidate = series.getArchiveSeries(task.archive)
+                else:
+                    continue
+                if (
+                    candidate not in existing_targets
+                    and candidate not in targets
+                ):
+                    targets.append(candidate)
+        elif IProductSeries.providedBy(series):
+            product = series.product
+            for task in self.bugtasks:
+                if task.product == product:
+                    if series not in existing_targets:
+                        targets.append(series)
+                    break
+
+        return targets
+
     def canBeNominatedFor(self, target):
         """See `IBug`."""
         try:
             nomination = self.getNominationFor(target)
         except NotFoundError:
-            # No nomination exists. Let's see if the bug is already
-            # directly targeted to this nomination target.
-            if IDistroSeries.providedBy(target):
-                series_getter = operator.attrgetter("distroseries")
-                bug_target_parent_getter = operator.attrgetter("distribution")
-            elif IProductSeries.providedBy(target):
-                series_getter = operator.attrgetter("productseries")
-                bug_target_parent_getter = operator.attrgetter("product")
-            else:
-                return False
+            nomination = None
 
-            for task in self.bugtasks:
-                if series_getter(task) == target:
-                    # The bug is already targeted at this
-                    # nomination target.
-                    return False
-
-            # No nomination or tasks are targeted at this
-            # nomination target. But we also don't want to nominate for a
-            # series of a product or distro for which we don't have a
-            # plain bug target parent task.
-            for task in self.bugtasks:
-
-                if (
-                    task.archive
-                    and task.archive.distribution
-                    == bug_target_parent_getter(target)
-                ):
-                    return True
-
-                if bug_target_parent_getter(task) == bug_target_parent_getter(
-                    target
-                ):
-                    return True
-
-            # No tasks match the candidate's bug target parent. We must refuse.
-            return False
-        else:
+        if nomination is not None:
             # The bug may be already nominated for this nomination target.
-            # If the status is declined, the bug can be renominated, else
-            # return False
-            if nomination:
-                return nomination.status == BugNominationStatus.DECLINED
+            # If it's still pending a decision, refuse a second
+            # nomination. If it was declined, it can always be
+            # renominated.
+            if nomination.status == BugNominationStatus.PROPOSED:
+                return False
+            if nomination.status == BugNominationStatus.DECLINED:
+                return True
+            # The nomination is APPROVED. Only allow (re)targeting if
+            # there's a bug target parent task that still lacks a
+            # corresponding task in this series -- e.g. because a series
+            # task was deleted after other packages were targeted.
+
+        if not (
+            IDistroSeries.providedBy(target)
+            or IProductSeries.providedBy(target)
+        ):
             return False
+
+        return len(self._getMissingNominationTargets(target)) > 0
 
     def getNominationFor(self, target):
         """See `IBug`."""
