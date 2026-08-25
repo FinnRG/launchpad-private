@@ -1,4 +1,8 @@
 <VirtualHost *:80>
+    # Log real client IP from the upstream LB's PROXY protocol header needed for PS7.
+    <IfModule mod_remoteip.c>
+        RemoteIPProxyProtocol On
+    </IfModule>
     ServerName {{ domain }}
     ServerAlias answers.{{ domain }}
     ServerAlias blueprints.{{ domain }}
