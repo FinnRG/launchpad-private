@@ -4549,6 +4549,42 @@ class TestGetPublishedSources(TestCaseWithFactory):
             list(archive.getPublishedSources(order_by=["-date_published"])),
         )
 
+    def test_order_by_published_date_asc_tiebreak_is_id_descending(self):
+        # Passing `ArchivePublishingSort.PUBLISHED_DATE_ASC` through the
+        # `order_by` parameter does not keep the tie-break direction that
+        # the same value had in the old, pre-existing
+        # ArchivePublishingSort-based API (where ascending sorts
+        # tie-broke ascending on id, as still happens for
+        # `getAllPublishedBinaries`/`_getBinaryPublishingBaseClauses`).
+        # The new `order_by` implementation always tie-breaks descending
+        # on id, regardless of the requested sort direction, since it
+        # standardizes on a single tie-break direction rather than
+        # varying it based on the last-supplied sort key. This is
+        # intentional; this test documents and locks in that behaviour.
+        archive = self.factory.makeArchive()
+        tied_date = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        pub0 = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        pub1 = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub0).datepublished = tied_date
+        removeSecurityProxy(pub1).datepublished = tied_date
+
+        # Both records share the same date_published, so the ordering is
+        # fully determined by the tie-break: descending on id, i.e. the
+        # most-recently-created record (pub1) sorts first even though
+        # we asked for the ascending sort.
+        self.assertEqual(
+            [pub1, pub0],
+            list(
+                archive.getPublishedSources(
+                    order_by=ArchivePublishingSort.PUBLISHED_DATE_ASC
+                )
+            ),
+        )
+
     def test_order_by_unrecognized_key(self):
         archive = self.factory.makeArchive()
         self.assertRaises(
