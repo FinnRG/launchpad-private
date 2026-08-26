@@ -420,7 +420,7 @@ when a CVE is linked to a bug.
     ... )
 
     >>> print(pretty(bug_cve_linked.getBugActivity()))
-    {'newvalue': '1999-8979',
+    {'newvalue': 'CVE-1999-8979',
      'whatchanged': 'cve linked'}
 
     >>> print(bug_cve_linked.getBugNotification()["text"])
@@ -433,7 +433,7 @@ And when a CVE is unlinked from a bug.
     ... )
 
     >>> print(pretty(bug_cve_unlinked.getBugActivity()))
-    {'oldvalue': '1999-8979',
+    {'oldvalue': 'CVE-1999-8979',
      'whatchanged': 'cve unlinked'}
 
     >>> print(bug_cve_unlinked.getBugNotification()["text"])

@@ -349,7 +349,7 @@ this document:
 
     >>> from lp.bugs.interfaces.cve import CveStatus, ICveSet
     >>> cve = getUtility(ICveSet).new(
-    ...     sequence="2004-0276",
+    ...     sequence="CVE-2004-0276",
     ...     description="a brief CVE description",
     ...     status=CveStatus.ENTRY,
     ... )
