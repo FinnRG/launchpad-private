@@ -1749,6 +1749,10 @@ class PackageUploadSet:
 
         joins = [PackageUpload]
         conditions = []
+        # If the query uses a join, it can return more than one row per
+        # PackageUpload, in which case the results have to be de-duplicated
+        # using DISTINCT. This flag tracks that.
+        needs_distinct = False
 
         if created_since_date is not None:
             conditions.append(PackageUpload.date_created > created_since_date)
@@ -1775,6 +1779,7 @@ class PackageUploadSet:
                     ),
                 )
             )
+            needs_distinct = True
 
         if name:
             # Escape special characters, namely backslashes and single quotes.
@@ -1802,7 +1807,14 @@ class PackageUploadSet:
                 *conditions,
             )
             .order_by(Desc(PackageUpload.id))
-            .config(distinct=True)
+            # Only de-duplicate with DISTINCT when the query uses a JOIN, which
+            # can produce more than one row per PackageUpload.
+            # Applying DISTINCT unconditionally forces the database to
+            # fetch all the possible results and sort the whole result set,
+            # which defeats the purpose of "LIMIT" or other restrictions that
+            # the caller may add, potentially causing queries that have lots of
+            # data to time out.
+            .config(distinct=needs_distinct)
         )
 
         def preload_hook(rows):

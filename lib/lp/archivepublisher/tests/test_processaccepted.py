@@ -297,7 +297,8 @@ class TestProcessAccepted(TestCaseWithFactory):
             [
                 stmt
                 for stmt in recorder.statements
-                if "SELECT DISTINCT PackageUpload" in stmt
+                if "ORDER BY PackageUpload.id" in stmt
+                and "SELECT PackageUpload" in stmt
             ],
             MatchesListwise(
                 [

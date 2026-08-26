@@ -231,6 +231,33 @@ class TestCustomUploadsCopier(TestCaseWithFactory, CommonTestHelpers):
         self.assertContentEqual([matching_upload], candidates)
         self.assertNotIn(nonmatching_upload, candidates)
 
+    def test_getCandidateUploads_deduplicates_multiple_matching_customs(self):
+        # A PackageUpload can have several PackageUploadCustoms of
+        # copyable types attached. The query behind getCandidateUploads
+        # joins PackageUpload to PackageUploadCustom, which would return
+        # the upload once per matching custom file. getCandidateUploads
+        # must not return duplicate PackageUploads, otherwise each custom
+        # file would be copied more than once.
+        source_series = self.factory.makeDistroSeries()
+        package_upload = self.factory.makePackageUpload(
+            distroseries=source_series, archive=source_series.main_archive
+        )
+        first_custom = package_upload.addCustom(
+            self.factory.makeLibraryFileAlias(),
+            PackageUploadCustomFormat.DEBIAN_INSTALLER,
+        )
+        second_custom = package_upload.addCustom(
+            self.factory.makeLibraryFileAlias(),
+            PackageUploadCustomFormat.DIST_UPGRADER,
+        )
+        copier = CustomUploadsCopier(FakeDistroSeries())
+        candidates = list(copier.getCandidateUploads(source_series))
+        self.assertContentEqual([first_custom, second_custom], candidates)
+        self.assertEqual(
+            {package_upload},
+            {custom.packageupload for custom in candidates},
+        )
+
     def test_getCandidateUploads_orders_newest_to_oldest(self):
         # getCandidateUploads returns its PackageUploadCustoms ordered
         # from newest to oldest.
