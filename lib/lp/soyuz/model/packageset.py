@@ -146,7 +146,8 @@ class Packageset(StormBase):
         )
         store.execute(rdsq, (self.id,), noresult=True)
 
-    def _sourcesIncludedClause(self, direct_inclusion=False):
+    def sourcesIncludedClause(self, direct_inclusion=False):
+        """See `IPackageset`."""
         if direct_inclusion == False:
             source_name_query = """
                 SELECT pss.sourcepackagename
@@ -165,7 +166,7 @@ class Packageset(StormBase):
         store = IStore(Packageset)
         result_set = store.find(
             SourcePackageName,
-            self._sourcesIncludedClause(direct_inclusion=direct_inclusion),
+            self.sourcesIncludedClause(direct_inclusion=direct_inclusion),
         )
         return _order_result_set(result_set)
 
@@ -180,7 +181,7 @@ class Packageset(StormBase):
         result_set = store.find(
             SourcePackageName,
             SourcePackageName.id == sourcepackagename.id,
-            self._sourcesIncludedClause(direct_inclusion=direct_inclusion),
+            self.sourcesIncludedClause(direct_inclusion=direct_inclusion),
         )
         return not result_set.is_empty()
 

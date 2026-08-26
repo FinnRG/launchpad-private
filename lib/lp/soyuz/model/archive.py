@@ -24,6 +24,7 @@ import six
 from lazr.lifecycle.event import ObjectCreatedEvent
 from lazr.restful.declarations import error_status
 from storm.databases.postgres import JSON as PgJSON
+from storm.databases.postgres import Case
 from storm.expr import (
     Alias,
     And,
@@ -32,6 +33,7 @@ from storm.expr import (
     Count,
     Desc,
     Exists,
+    Func,
     Is,
     Join,
     Not,
@@ -156,6 +158,7 @@ from lp.soyuz.interfaces.archive import (
     InsufficientUploadRights,
     InvalidComponent,
     InvalidExternalDependencies,
+    InvalidOrderBy,
     InvalidPocketForPartnerArchive,
     InvalidPocketForPPA,
     NamedAuthTokenFeatureDisabled,
@@ -219,6 +222,71 @@ PRE_RELEASE_POCKETS = [
     PackagePublishingPocket.PROPOSED,
     PackagePublishingPocket.BACKPORTS,
 ]
+
+
+# getPublishedSources' order_by also accepts these as deprecated aliases
+# for ["-date_published"] / ["date_published"], for backwards
+# compatibility with callers using the pre-existing
+# ArchivePublishingSort-based API (both the enum item itself, for direct
+# Python callers, and its webservice string token, for old webservice
+# callers).
+PUBLISHED_SOURCES_LEGACY_ORDER_BY_ALIASES = {
+    "published_date_desc": "-date_published",
+    "published_date_asc": "date_published",
+    ArchivePublishingSort.PUBLISHED_DATE_DESC: "-date_published",
+    ArchivePublishingSort.PUBLISHED_DATE_ASC: "date_published",
+}
+
+
+def _published_sources_series_version():
+    """Return the expression sorting on a distroseries' version.
+
+    `DistroSeries.version` is a text column, so it has to be sorted
+    through `debversion_sort_key` to order "9.10" before "10.04" rather
+    than after it. The field is validated as a Debian version, so the
+    Debian sort function is the right one.
+    """
+    # `DistroSeries` cannot be imported at module level here, since
+    # importing it pulls this module back in.
+    from lp.registry.model.distroseries import DistroSeries
+
+    return Func("debversion_sort_key", DistroSeries.version)
+
+
+def _alphabetical_enum_order(column, enum_type):
+    """Return the expression sorting a DBEnum column alphabetically.
+
+    `column`'s underlying database value is the item's numeric position
+    in `enum_type`'s declaration, which usually isn't alphabetical order
+    (for example, `PackagePublishingPocket.UPDATES` is 20 and
+    `PackagePublishingPocket.BACKPORTS` is 40, even though "Backports"
+    sorts before "Updates"). Build a `CASE` expression mapping each item
+    to its rank in alphabetical order by title instead.
+    """
+    ranked_items = sorted(enum_type.items, key=lambda item: item.title)
+    return Case(
+        cases=[
+            (column == item, rank) for rank, item in enumerate(ranked_items)
+        ]
+    )
+
+
+# Maps a getPublishedSources order_by field key to a callable returning
+# the Storm expression to sort by. These are callables because "series"
+# has to import `DistroSeries` lazily to dodge a circular import, and a
+# uniform convention beats special-casing a single key at the callsite.
+PUBLISHED_SOURCES_ORDER_BY_EXPRESSIONS = {
+    "date_published": lambda: SourcePackagePublishingHistory.datepublished,
+    "date_created": lambda: SourcePackagePublishingHistory.datecreated,
+    "source_package_name": lambda: SourcePackageName.name,
+    "series": _published_sources_series_version,
+    "pocket": lambda: _alphabetical_enum_order(
+        SourcePackagePublishingHistory.pocket, PackagePublishingPocket
+    ),
+    "status": lambda: _alphabetical_enum_order(
+        SourcePackagePublishingHistory.status, PackagePublishingStatus
+    ),
+}
 
 
 @error_status(http.client.BAD_REQUEST)
@@ -738,6 +806,12 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         published_since=None,
         published_until=None,
         order_by=None,
+        maintained_by=None,
+        changed_by=None,
+        signed_by=None,
+        packageset=None,
+        maintainer_team=None,
+        ubuntu_change=None,
     ):
         """See `IArchive`."""
         # 'eager_load' and 'include_removed' arguments are always True
@@ -758,6 +832,12 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             published_since=published_since,
             published_until=published_until,
             order_by=order_by,
+            maintained_by=maintained_by,
+            changed_by=changed_by,
+            signed_by=signed_by,
+            packageset=packageset,
+            maintainer_team=maintainer_team,
+            ubuntu_change=ubuntu_change,
         )
 
         def load_api_extra_objects(rows):
@@ -819,20 +899,53 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         published_since=None,
         published_until=None,
         order_by=None,
+        maintained_by=None,
+        changed_by=None,
+        signed_by=None,
+        packageset=None,
+        maintainer_team=None,
+        ubuntu_change=None,
     ):
         """See `IArchive`."""
         clauses = [SourcePackagePublishingHistory.archive == self]
 
-        if order_by == ArchivePublishingSort.PUBLISHED_DATE_DESC:
-            order_by_list = [
-                Desc(SourcePackagePublishingHistory.datepublished),
-                Desc(SourcePackagePublishingHistory.id),
-            ]
-        elif order_by == ArchivePublishingSort.PUBLISHED_DATE_ASC:
-            order_by_list = [
-                Asc(SourcePackagePublishingHistory.datepublished),
-                Asc(SourcePackagePublishingHistory.id),
-            ]
+        explicit_order_by = (
+            order_by_date or order_by_date_ascending or bool(order_by)
+        )
+
+        order_by_source_name = False
+        order_by_series = False
+        if order_by:
+            if not isinstance(order_by, (list, tuple)):
+                order_by = [order_by]
+            order_by_list = []
+            for raw_key in order_by:
+                key = PUBLISHED_SOURCES_LEGACY_ORDER_BY_ALIASES.get(
+                    raw_key, raw_key
+                )
+                if not isinstance(key, str):
+                    raise InvalidOrderBy(
+                        "Unrecognized order_by: %r" % (raw_key,)
+                    )
+                descending = key.startswith("-")
+                field = key[1:] if descending else key
+                try:
+                    expression = PUBLISHED_SOURCES_ORDER_BY_EXPRESSIONS[
+                        field
+                    ]()
+                except KeyError:
+                    raise InvalidOrderBy(
+                        "Unrecognized order_by: %r" % (raw_key,)
+                    )
+                if field == "source_package_name":
+                    order_by_source_name = True
+                elif field == "series":
+                    order_by_series = True
+                order_by_list.append(
+                    Desc(expression) if descending else Asc(expression)
+                )
+            # tiebreak on id descending
+            order_by_list.append(Desc(SourcePackagePublishingHistory.id))
         elif order_by_date:
             order_by_list = [
                 Desc(SourcePackagePublishingHistory.datecreated),
@@ -849,18 +962,19 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                 Desc(SourcePackagePublishingHistory.id),
             ]
 
-        if (
-            not (
-                order_by_date
-                or order_by_date_ascending
-                or order_by == ArchivePublishingSort.PUBLISHED_DATE_DESC
-                or order_by == ArchivePublishingSort.PUBLISHED_DATE_ASC
-            )
-            or name is not None
-        ):
+        if not explicit_order_by or name is not None or order_by_source_name:
             clauses.append(
                 SourcePackagePublishingHistory.sourcepackagename_id
                 == SourcePackageName.id
+            )
+
+        if order_by_series:
+            # Sorting on the series version needs the series itself.
+            from lp.registry.model.distroseries import DistroSeries
+
+            clauses.append(
+                SourcePackagePublishingHistory.distroseries_id
+                == DistroSeries.id
             )
 
         if name is not None:
@@ -875,13 +989,13 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                 clauses.append(SourcePackageName.name.is_in(name))
 
         if (
-            not (
-                order_by_date
-                or order_by_date_ascending
-                or order_by == ArchivePublishingSort.PUBLISHED_DATE_DESC
-                or order_by == ArchivePublishingSort.PUBLISHED_DATE_ASC
-            )
+            not explicit_order_by
             or version is not None
+            or maintained_by is not None
+            or changed_by is not None
+            or signed_by is not None
+            or maintainer_team is not None
+            or ubuntu_change is not None
         ):
             clauses.append(
                 SourcePackagePublishingHistory.sourcepackagerelease_id
@@ -898,12 +1012,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                 Cast(SourcePackageRelease.version, "text")
                 == six.ensure_text(version)
             )
-        elif not (
-            order_by_date
-            or order_by_date_ascending
-            or order_by == ArchivePublishingSort.PUBLISHED_DATE_DESC
-            or order_by == ArchivePublishingSort.PUBLISHED_DATE_ASC
-        ):
+        elif not explicit_order_by:
             order_by_list.insert(1, Desc(SourcePackageRelease.version))
 
         order_by = order_by_list
@@ -915,6 +1024,60 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                     == Component.id,
                     Component.name == component_name,
                 ]
+            )
+
+        if maintained_by is not None:
+            clauses.append(SourcePackageRelease.maintainer == maintained_by)
+
+        if changed_by is not None:
+            clauses.append(SourcePackageRelease.creator == changed_by)
+
+        if signed_by is not None:
+            clauses.append(SourcePackageRelease.signing_key_owner == signed_by)
+
+        if maintainer_team is not None:
+            clauses.append(
+                Or(
+                    SourcePackageRelease.maintainer == maintainer_team,
+                    SourcePackageRelease.maintainer_id.is_in(
+                        Select(
+                            TeamParticipation.person_id,
+                            where=TeamParticipation.team == maintainer_team,
+                        )
+                    ),
+                )
+            )
+
+        if ubuntu_change is not None:
+            # Ubuntu-modified packages carry an "ubuntu" marker in their
+            # Debian revision, as in "1.2-3ubuntu1". Packages taken from
+            # Debian unchanged do not.
+            # There are some exceptions: old packages version format was
+            # not underspecified, so a portion of the older native
+            # packages won't have "ubuntu" in the version.
+            has_marker = Cast(
+                SourcePackageRelease.version, "text"
+            ).contains_string("ubuntu")
+            clauses.append(has_marker if ubuntu_change else Not(has_marker))
+
+        if packageset is not None:
+            # A package set belongs to a single distroseries, but its
+            # source-inclusion query only yields names. Constrain the
+            # publications to that series too, otherwise publications in
+            # other series that happen to share a source package name
+            # would match as well.
+            naked_packageset = removeSecurityProxy(packageset)
+            clauses.append(
+                SourcePackagePublishingHistory.sourcepackagename_id.is_in(
+                    Select(
+                        SourcePackageName.id,
+                        where=naked_packageset.sourcesIncludedClause(),
+                    )
+                )
+            )
+            clauses.append(
+                SourcePackagePublishingHistory.distroseries
+                == naked_packageset.distroseries
             )
 
         if status is not None:

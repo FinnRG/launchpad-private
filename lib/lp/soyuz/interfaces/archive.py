@@ -36,6 +36,7 @@ __all__ = [
     "InsufficientUploadRights",
     "InvalidComponent",
     "InvalidExternalDependencies",
+    "InvalidOrderBy",
     "InvalidPocketForPartnerArchive",
     "InvalidPocketForPPA",
     "IPPA",
@@ -224,6 +225,11 @@ class NoSuchDistroSeriesInArchive(NameLookupFailed):
 @error_status(http.client.BAD_REQUEST)
 class VersionRequiresName(Exception):
     """Raised on some queries when version is specified but name is not."""
+
+
+@error_status(http.client.BAD_REQUEST)
+class InvalidOrderBy(ValueError):
+    """Raised when getPublishedSources' order_by has an unrecognized key."""
 
 
 @error_status(http.client.BAD_REQUEST)
@@ -592,10 +598,12 @@ class IArchiveSubscriberView(Interface):
     @operation_parameters(
         name=TextLine(title=_("Source package name"), required=False),
         version=TextLine(title=_("Version"), required=False),
-        status=Choice(
+        status=List(
             title=_("Package Publishing Status"),
-            description=_("The status of this publishing record"),
-            vocabulary=PackagePublishingStatus,
+            description=_(
+                "The status (or statuses) of this publishing record."
+            ),
+            value_type=Choice(vocabulary=PackagePublishingStatus),
             required=False,
         ),
         distroseries=Reference(
@@ -648,22 +656,88 @@ class IArchiveSubscriberView(Interface):
                 "publications since their last run. If not "
                 "specified, results are ordered by source "
                 "package name (lexicographically), then by "
-                "descending version and then descending ID."
+                "descending version and then descending ID. "
+                "DEPRECATED: use order_by=['-date_created'] instead."
             ),
             required=False,
         ),
         order_by_date_ascending=Bool(
             title=_("Order by ascending creation date"),
-            description=_("Return oldest results first."),
+            description=_(
+                "Return oldest results first. DEPRECATED: use "
+                "order_by=['date_created'] instead."
+            ),
             required=False,
         ),
-        order_by=Choice(
+        order_by=List(
             title=_("Sort order"),
             description=_(
-                "Sort order of the package publication. Can be either "
-                "ascending or descending of publication date."
+                "A list of field keys to sort by: date_published, "
+                "date_created, source_package_name, series, pocket, "
+                "status. 'series' sorts by the distroseries' version; "
+                "'pocket' and 'status' sort alphabetically by name, not "
+                "by their underlying database value. "
+                "Prefix a key with '-' for descending order, "
+                "e.g. ['-date_published', 'status']. DEPRECATED: a "
+                "single ArchivePublishingSort value (published_date_asc "
+                "or published_date_desc) is still accepted for "
+                "backwards compatibility; use ['date_published'] / "
+                "['-date_published'] in new code."
             ),
-            vocabulary=ArchivePublishingSort,
+            value_type=Text(),
+            required=False,
+        ),
+        maintained_by=Reference(
+            schema=IPerson,
+            title=_("Maintained by"),
+            description=_(
+                "Return only publications maintained by this person."
+            ),
+            required=False,
+        ),
+        changed_by=Reference(
+            schema=IPerson,
+            title=_("Changed by"),
+            description=_(
+                "Return only publications whose changelog author is "
+                "this person."
+            ),
+            required=False,
+        ),
+        signed_by=Reference(
+            schema=IPerson,
+            title=_("Signed by"),
+            description=_("Return only publications signed by this person."),
+            required=False,
+        ),
+        # Really IPackageset, patched in lp.soyuz.interfaces.webservice.
+        packageset=Reference(
+            Interface,
+            title=_("Package set"),
+            description=_(
+                "Return only sources included in this package set, and "
+                "published in the package set's distroseries."
+            ),
+            required=False,
+        ),
+        maintainer_team=Reference(
+            schema=IPerson,
+            title=_("Maintainer team"),
+            description=_(
+                "Return only publications whose maintainer is a member "
+                "of this team."
+            ),
+            required=False,
+        ),
+        ubuntu_change=Bool(
+            title=_("Ubuntu change"),
+            description=_(
+                "If True, return only publications whose source version "
+                "contains 'ubuntu', which marks a package that Ubuntu has "
+                "changed rather than taken from Debian unmodified. If "
+                "False, return only publications without that marker. If "
+                "omitted, do not filter on this at all."
+            ),
             required=False,
         ),
     )
@@ -686,6 +760,12 @@ class IArchiveSubscriberView(Interface):
         order_by_date=False,
         order_by_date_ascending=False,
         order_by=None,
+        maintained_by=None,
+        changed_by=None,
+        signed_by=None,
+        packageset=None,
+        maintainer_team=None,
+        ubuntu_change=None,
     ):
         """All `ISourcePackagePublishingHistory` target to this archive."""
         # It loads additional related objects only needed in the API call
@@ -708,6 +788,12 @@ class IArchiveSubscriberView(Interface):
         published_since=None,
         published_until=None,
         order_by=None,
+        maintained_by=None,
+        changed_by=None,
+        signed_by=None,
+        packageset=None,
+        maintainer_team=None,
+        ubuntu_change=None,
     ):
         """All `ISourcePackagePublishingHistory` target to this archive.
 
@@ -730,13 +816,45 @@ class IArchiveSubscriberView(Interface):
             that need to catch up with publications since their last run.
             If not specified, publications are ordered by source
             package name (lexicographically), then by descending version
-            and then descending ID.
-        :param order_by_date_ascending: Order publications by descending
-            creation date and then by ascending ID.
+            and then descending ID. DEPRECATED: use
+            order_by=["-date_created"] instead.
+        :param order_by_date_ascending: Order publications by ascending
+            creation date and then by ascending ID. DEPRECATED: use
+            order_by=["date_created"] instead.
         :param include_removed: If True, include publications that have been
             removed from disk as well as those that have not.
         :param only_unpublished: If True, only include publications that
             have never been published to disk.
+        :param order_by: A list of field keys to sort by: "date_published",
+            "date_created", "source_package_name", "series", "pocket",
+            "status". "series" sorts by the distroseries' version, so
+            older series come first. "pocket" and "status" sort
+            alphabetically by name, not by their underlying database
+            value. Prefix a key with "-" for descending
+            order, e.g. ["-date_published", "status"].
+            Multiple keys combine in the order given, with a raised
+            `InvalidOrderBy` for any unrecognized key. DEPRECATED: a
+            single `ArchivePublishingSort` value
+            (`PUBLISHED_DATE_ASC`/`PUBLISHED_DATE_DESC`, or the
+            equivalent "published_date_asc"/"published_date_desc"
+            string) is still accepted for backwards compatibility.
+        :param maintained_by: Only return publications maintained by this
+            `IPerson` (`SourcePackageRelease.maintainer`).
+        :param changed_by: Only return publications whose changelog author
+            is this `IPerson` (`SourcePackageRelease.creator`).
+        :param signed_by: Only return publications signed by this
+            `IPerson` (`SourcePackageRelease.signing_key_owner`).
+        :param packageset: Only return sources included in this
+            `IPackageset`. A package set belongs to a single
+            distroseries, so this also restricts results to
+            publications in that series.
+        :param maintainer_team: Only return publications whose maintainer is
+            this team, or a member of this team.
+        :param ubuntu_change: If True, only return publications whose
+            source version contains "ubuntu", which marks a package that
+            Ubuntu has changed rather than taken from Debian unmodified.
+            If False, only return publications without that marker. If
+            None, do not filter on this at all.
 
         :return: SelectResults containing `ISourcePackagePublishingHistory`,
             ordered by name. If there are multiple results for the same

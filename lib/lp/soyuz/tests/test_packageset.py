@@ -5,11 +5,13 @@
 
 from zope.component import getUtility
 from zope.security.interfaces import Unauthorized
+from zope.security.proxy import removeSecurityProxy
 
 from lp.registry.errors import InvalidName, NoSuchSourcePackageName
 from lp.registry.interfaces.distribution import IDistributionSet
 from lp.registry.interfaces.series import SeriesStatus
 from lp.registry.interfaces.sourcepackagename import ISourcePackageNameSet
+from lp.registry.model.sourcepackagename import SourcePackageName
 from lp.services.database.interfaces import IStore
 from lp.soyuz.enums import ArchivePermissionType
 from lp.soyuz.interfaces.archivepermission import IArchivePermissionSet
@@ -483,6 +485,17 @@ class TestPackageset(TestCaseWithFactory):
         # Lists the source packages included in a set
         packageset, packages = self.buildSet()
         self.assertContentEqual(packageset.sourcesIncluded(), packages)
+
+    def test_sources_included_clause(self):
+        # sourcesIncludedClause returns a Storm expression that other
+        # queries can compose with, matching the same source package
+        # names as sourcesIncluded().
+        packageset, packages = self.buildSet()
+        found = IStore(SourcePackageName).find(
+            SourcePackageName,
+            removeSecurityProxy(packageset).sourcesIncludedClause(),
+        )
+        self.assertContentEqual(packages, found)
 
     def test_get_sources_included(self):
         # Lists the names of source packages included in a set
