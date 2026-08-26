@@ -148,7 +148,7 @@ class SOSSExporter(SVTExporter):
             priority_reason=vulnerability.importance_explanation,
             assigned_to=assigned_to,
             packages=packages,
-            candidate=f"CVE-{vulnerability.cve.sequence}",
+            candidate=vulnerability.cve.sequence,
             description=vulnerability.description,
             cvss=self._get_cvss(vulnerability.cvss),
             public_date=public_date,

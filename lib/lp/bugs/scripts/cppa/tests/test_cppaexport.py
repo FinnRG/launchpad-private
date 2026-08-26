@@ -125,7 +125,7 @@ class TestCPPAExporterSetup(TestCaseWithFactory):
         """Add a PPA bugtask to *bug* via CPPAImporter"""
         pkg_name_str = pkg_name if isinstance(pkg_name, str) else pkg_name.name
         record = CPPARecord(
-            candidate=f"CVE-{self.lp_cve.sequence}",
+            candidate=self.lp_cve.sequence,
             packages=[
                 CPPARecord.Package(
                     name=pkg_name_str,
@@ -200,7 +200,7 @@ class TestCPPAExporterToRecord(TestCPPAExporterSetup):
 
         record = self.exporter.to_record(bug, vulnerability)
 
-        self.assertEqual(f"CVE-{self.lp_cve.sequence}", record.candidate)
+        self.assertEqual(self.lp_cve.sequence, record.candidate)
         self.assertEqual(1, len(record.packages))
         pkg = record.packages[0]
         self.assertEqual(pkg_name.name, pkg.name)
@@ -497,7 +497,7 @@ class TestCPPAExporterExportBugFile(TestCPPAExporterSetup):
         saved_path = saved_paths[0]
         self.assertTrue(saved_path.exists())
         self.assertEqual(
-            output_dir / "my-project" / f"CVE-{self.lp_cve.sequence}",
+            output_dir / "my-project" / self.lp_cve.sequence,
             saved_path,
         )
 
@@ -518,7 +518,7 @@ class TestCPPAExporterExportBugFile(TestCPPAExporterSetup):
         saved_paths = self.exporter.export_bug_to_cppa_file(bug.id, output_dir)
 
         loaded = CPPARecord.load(saved_paths[0])
-        self.assertEqual(f"CVE-{self.lp_cve.sequence}", loaded.candidate)
+        self.assertEqual(self.lp_cve.sequence, loaded.candidate)
         self.assertEqual(1, len(loaded.packages))
         self.assertEqual(pkg_name.name, loaded.packages[0].name)
         s = loaded.packages[0].statuses[0]
@@ -629,7 +629,7 @@ class TestCPPAExporterExportBugFile(TestCPPAExporterSetup):
         dirs = {p.parent.name for p in saved_paths}
         self.assertEqual({"my-project", "my-security"}, dirs)
         for path in saved_paths:
-            self.assertEqual(f"CVE-{self.lp_cve.sequence}", path.name)
+            self.assertEqual(self.lp_cve.sequence, path.name)
             self.assertTrue(path.exists())
 
     def test_export_bug_to_cppa_file_content(self):
@@ -689,7 +689,7 @@ class TestCPPAImportExportRoundTrip(TestCPPAExporterSetup):
     def _make_cppa_record(self, pkg_name, statuses):
         """Build a CPPARecord with the given package/statuses list."""
         return CPPARecord(
-            candidate=f"CVE-{self.lp_cve.sequence}",
+            candidate=self.lp_cve.sequence,
             packages=[
                 CPPARecord.Package(
                     name=pkg_name,

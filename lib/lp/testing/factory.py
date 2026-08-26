@@ -53,6 +53,7 @@ from lp.app.enums import (
     ServiceUsage,
 )
 from lp.app.interfaces.launchpad import ILaunchpadCelebrities
+from lp.app.validators.cve import valid_cve
 from lp.archivepublisher.interfaces.archivepublisherrun import (
     IArchivePublisherRunSet,
 )
@@ -6079,7 +6080,12 @@ class LaunchpadObjectFactory(ObjectFactory):
     ):
         """Create a new CVE record."""
         if sequence is None:
-            sequence = "2000-%04i" % self.getUniqueInteger()
+            sequence = "CVE-2000-%04i" % self.getUniqueInteger()
+
+        # Normalise bare CVE sequences (e.g. "2024-1234") to their full
+        # prefixed form ("CVE-2024-1234") so callers don't have to.
+        if valid_cve(sequence):
+            sequence = "CVE-" + sequence
 
         if description is None:
             description = self.getUniqueUnicode()

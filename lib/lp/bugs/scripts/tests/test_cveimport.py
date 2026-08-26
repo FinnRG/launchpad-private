@@ -171,7 +171,7 @@ class TestCVEUpdater(TestCase):
 
         # Verify CVE was created
         cveset = getUtility(ICveSet)
-        cve = cveset["2024-0001"]
+        cve = cveset["CVE-2024-0001"]
         self.assertIsNotNone(cve)
         self.assertEqual("Test description", cve.description)
 
@@ -205,7 +205,7 @@ class TestCVEUpdater(TestCase):
 
         # Verify CVE was created
         cveset = getUtility(ICveSet)
-        cve = cveset["2025-9000001"]
+        cve = cveset["CVE-2025-9000001"]
         self.assertIsNotNone(cve)
         self.assertEqual("Test description", cve.description)
 
@@ -232,7 +232,7 @@ class TestCVEUpdater(TestCase):
 
         # Verify CVE was created
         cveset = getUtility(ICveSet)
-        cve = cveset["2024-0002"]
+        cve = cveset["CVE-2024-0002"]
         self.assertIsNotNone(cve)
         self.assertEqual("Delta CVE", cve.description)
 
@@ -332,9 +332,9 @@ class TestCVEUpdater(TestCase):
 
         # Verify CVE was created
         cveset = getUtility(ICveSet)
-        cve = cveset["2024-0003"]
+        cve = cveset["CVE-2024-0003"]
 
-        self.assertEqual("2024-0003", cve.sequence)
+        self.assertEqual("CVE-2024-0003", cve.sequence)
         self.assertEqual("Test CVE 2024-0003", cve.description)
         self.assertEqual(CveStatus.ENTRY, cve.status)
 
@@ -365,8 +365,8 @@ class TestCVEUpdater(TestCase):
 
         # Verify CVE was created
         cveset = getUtility(ICveSet)
-        cve = cveset["2024-0004"]
-        self.assertEqual("2024-0004", cve.sequence)
+        cve = cveset["CVE-2024-0004"]
+        self.assertEqual("CVE-2024-0004", cve.sequence)
         self.assertEqual("This CVE has been rejected.", cve.description)
         self.assertEqual(CveStatus.REJECTED, cve.status)
         self.assertEqual(None, cve.cvss)
@@ -432,7 +432,7 @@ class TestCVEUpdater(TestCase):
         updater.txn.commit()
 
         # Verify the update
-        updated_cve = cveset["2024-0004"]
+        updated_cve = cveset["CVE-2024-0004"]
         self.assertEqual(new_desc, updated_cve.description)
         self.assertEqual(new_metadata, updated_cve.metadata)
         self.assertEqual(CveStatus.ENTRY, updated_cve.status)

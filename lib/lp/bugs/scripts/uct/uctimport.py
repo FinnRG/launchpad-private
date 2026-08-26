@@ -166,7 +166,7 @@ class UCTImporter(SVTImporter):
                 )
                 lp_cve = removeSecurityProxy(
                     getUtility(ICveSet).new(
-                        sequence=cve.sequence.split("-", 1)[1],
+                        sequence=cve.sequence,
                         description=cve.description,
                         status=CveStatus.PLACEHOLDER,
                         date_made_public=cve.date_made_public,

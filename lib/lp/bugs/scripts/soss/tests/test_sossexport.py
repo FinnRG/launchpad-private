@@ -37,7 +37,7 @@ class TestSOSSExporter(TestCaseWithFactory):
 
     def _makeCves(self):
         for file in self.sampledata.iterdir():
-            cve_sequence = file.name.lstrip("CVE-")
+            cve_sequence = file.name
             if not self.cve_set[cve_sequence]:
                 self.factory.makeCVE(sequence=cve_sequence)
 
@@ -56,7 +56,7 @@ class TestSOSSExporter(TestCaseWithFactory):
     def test_get_cvss(self):
         """Test get SOSSRecord.CVSS list from vulnerability.cvss."""
         for file in self.sampledata.iterdir():
-            cve_sequence = file.name.lstrip("CVE-")
+            cve_sequence = file.name
             if not self.cve_set[cve_sequence]:
                 self.factory.makeCVE(sequence=cve_sequence)
 

@@ -15,7 +15,12 @@ from zope.component import getUtility
 from zope.interface import implementer
 from zope.security.interfaces import Unauthorized
 
-from lp.app.validators.cve import CVEREF_PATTERN, valid_cve
+from lp.app.validators.cve import (
+    VULNERABILITY_TEXT_PATTERN,
+    VULNERABILITY_URL_PREFIXES,
+    valid_cve,
+    valid_vulnerability_id,
+)
 from lp.bugs.interfaces.buglink import IBugLinkTarget
 from lp.bugs.interfaces.cve import CveStatus, ICve, ICveSet
 from lp.bugs.model.bug import Bug
@@ -90,15 +95,21 @@ class Cve(StormBase, BugLinkTargetMixin):
     @property
     def url(self):
         """See ICve."""
-        return "https://cve.org/CVERecord?id=CVE-%s" % self.sequence
+        for prefix, template in VULNERABILITY_URL_PREFIXES.items():
+            if self.sequence.startswith(prefix):
+                return template.format(seq=self.sequence)
+        # For other advisory schemes there is no known canonical URL.
+        return None
 
     @property
     def displayname(self):
-        return "CVE-%s" % self.sequence
+        # sequence always includes its prefix (e.g. "CVE-2024-1234",
+        # "GHSA-2c6m-6gqh-6qg3", "ABD-...")
+        return self.sequence
 
     @property
     def title(self):
-        return "CVE-%s (%s)" % (self.sequence, self.status.title)
+        return "%s (%s)" % (self.displayname, self.status.title)
 
     @property
     def bugs(self):
@@ -183,11 +194,19 @@ class CveSet:
 
     def __getitem__(self, sequence):
         """See ICveSet."""
-        if sequence[:4] in ["CVE-", "CAN-"]:
-            sequence = sequence[4:]
-        if not valid_cve(sequence):
+        # Normalise bare CVE sequences typed by users (e.g. "1999-1717")
+        # to their full prefixed form for backward compatibility.
+        if valid_cve(sequence):
+            sequence = "CVE-" + sequence
+        if not valid_vulnerability_id(sequence):
             return None
-        return IStore(Cve).find(Cve, sequence=sequence).one()
+        cve = IStore(Cve).find(Cve, sequence=sequence).one()
+        # TODO: remove once the DB migration to prefixed sequences is complete.
+        # Fall back to the bare YYYY-NNNN form for CVE/CAN records not yet
+        # migrated.
+        if cve is None and sequence.startswith(("CVE-", "CAN-")):
+            cve = IStore(Cve).find(Cve, Cve.sequence == sequence[4:]).one()
+        return cve
 
     def getAll(self):
         """See ICveSet."""
@@ -208,6 +227,15 @@ class CveSet:
         metadata=None,
     ):
         """See ICveSet."""
+        # TODO: remove once the DB migration to prefixed sequences is complete.
+        # Legacy records may still be stored as bare YYYY-NNNN sequences.
+        # If a bare equivalent already exists, return it to avoid a duplicate.
+        if sequence.startswith(("CVE-", "CAN-")):
+            bare = sequence[4:]  # strip the 4-char "CVE-" / "CAN-" prefix
+            existing = IStore(Cve).find(Cve, Cve.sequence == bare).one()
+            if existing is not None:
+                return existing
+
         cve = Cve(
             sequence=sequence,
             status=status,
@@ -338,16 +366,16 @@ class CveSet:
     def inText(self, text):
         """See ICveSet."""
         # let's look for matching entries
-        store = IStore(Cve)
         cves = set()
-        for match in CVEREF_PATTERN.finditer(text):
+
+        for match in VULNERABILITY_TEXT_PATTERN.finditer(text):
             # let's get the core CVE data
-            sequence = match.group(2)
+            sequence = match.group(0)
             # see if there is already a matching CVE ref in the db, and if
             # not, then create it
             cve = self[sequence]
             if cve is None:
-                cve = Cve(
+                cve = self.new(
                     sequence=sequence,
                     status=CveStatus.DEPRECATED,
                     description="This CVE was automatically created from "
@@ -356,7 +384,6 @@ class CveSet:
                     "erroneous, since this text should be replaced by "
                     "the official CVE description automatically.",
                 )
-                store.add(cve)
             cves.add(cve)
 
         return sorted(cves, key=lambda a: a.sequence)

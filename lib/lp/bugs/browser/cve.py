@@ -16,7 +16,7 @@ __all__ = [
 from zope.component import getUtility
 
 from lp.app.browser.launchpadform import LaunchpadFormView, action
-from lp.app.validators.cve import valid_cve
+from lp.app.validators.cve import valid_cve, valid_vulnerability_id
 from lp.bugs.browser.buglinktarget import BugLinksListingView
 from lp.bugs.interfaces.cve import ICve, ICveSet
 from lp.services.webapp import (
@@ -92,7 +92,7 @@ class CveLinkView(LaunchpadFormView):
         cve = getUtility(ICveSet)[data["sequence"]]
         self.context.bug.linkCVE(cve, self.user)
         self.request.response.addInfoNotification(
-            "CVE-%s added." % data["sequence"]
+            "%s added." % data["sequence"]
         )
 
     label = "Link to CVE report"
@@ -116,7 +116,7 @@ class CveUnlinkView(CveLinkView):
         cve = getUtility(ICveSet)[data["sequence"]]
         self.context.bug.unlinkCVE(cve, self.user)
         self.request.response.addInfoNotification(
-            "CVE-%s removed." % data["sequence"]
+            "%s removed." % data["sequence"]
         )
 
     @property
@@ -150,11 +150,11 @@ class CveSetView(LaunchpadView):
     def pre_search(self):
         # see if we have an exact match, and redirect if so; otherwise,
         # do a search for it.
-        sequence = self.text
-        if sequence[:4].lower() in ["cve-", "can-"]:
-            sequence = sequence[4:].strip()
-        if valid_cve(sequence):
-            # try to find the CVE, and redirect to it if we do
+        sequence = self.text.strip()
+        # Accept both prefixed IDs (e.g. "CVE-2024-1234") and bare
+        # sequences (e.g. "2024-1234") for backward compatibility.
+        # CveSet.__getitem__ normalises bare sequences internally.
+        if valid_vulnerability_id(sequence) or valid_cve(sequence):
             cveset = getUtility(ICveSet)
             cve = cveset[sequence]
             if cve:
