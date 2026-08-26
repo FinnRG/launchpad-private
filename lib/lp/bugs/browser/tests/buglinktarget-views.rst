@@ -36,7 +36,7 @@ The +linkbug view is used to link bugs to IBugLinkTarget.
     Link a bug report
 
     >>> print(view.cancel_url)
-    http://bugs.launchpad.test/bugs/cve/2005-2730
+    http://bugs.launchpad.test/bugs/cve/CVE-2005-2730
 
 It has a simple widget to enter the bug number or nickname of the bug to link
 to. After it links the bug, it sends a ObjectModifiedEvent.
@@ -92,7 +92,7 @@ IBugLinkTarget.
     Remove links to bug reports
 
     >>> print(view.cancel_url)
-    http://bugs.launchpad.test/bugs/cve/2005-2730
+    http://bugs.launchpad.test/bugs/cve/CVE-2005-2730
 
 After removing the bugs, it sends an ObjectModifiedEvent.
 
