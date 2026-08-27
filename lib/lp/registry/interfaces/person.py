@@ -2202,13 +2202,14 @@ class IPersonEditRestricted(Interface):
         If the given language is not present, nothing  will happen.
         """
 
+    @operation_returns_collection_of(IRegisteredAuthenticator)
     @export_read_operation()
     @operation_for_version("devel")
     def getRegisteredAuthenticators():
         """Return this person's registered FIDO2/WebAuthn authenticators.
 
-        :return: A list of dicts (id, name, date_created, date_last_used,
-            date_revoked, is_revoked), most recently created first.
+        :return: A `ResultSet` of `IRegisteredAuthenticator`, most
+            recently registered first.
         """
 
 

@@ -116,12 +116,21 @@ class TestPersonWebAuthnRegistration(TestCaseWithFactory):
         self.factory.makeRegisteredAuthenticator()
 
         self.assertEqual(
-            ["Newer key", "Older key"],
-            [d["name"] for d in person.getRegisteredAuthenticators()],
+            [newer, older], list(person.getRegisteredAuthenticators())
         )
+
+    def test_getRegisteredAuthenticators_includes_revoked(self):
+        # Revoked authenticators are still listed, so that their owner can
+        # see what happened to them.
+        person = self.factory.makePerson()
+        login_person(person, participation=LaunchpadTestRequest())
+        authenticator = self.factory.makeRegisteredAuthenticator(owner=person)
+        person.revokeWebAuthnRegistration(
+            removeSecurityProxy(authenticator).id
+        )
+
         self.assertEqual(
-            {older.id, newer.id},
-            {d["id"] for d in person.getRegisteredAuthenticators()},
+            [authenticator], list(person.getRegisteredAuthenticators())
         )
 
     def test_canonical_url(self):
@@ -160,6 +169,49 @@ class TestPersonWebAuthnWebService(TestCaseWithFactory):
             permission=OAuthPermission.WRITE_PRIVATE,
             default_api_version="devel",
         )
+
+    def test_getRegisteredAuthenticators(self):
+        with person_logged_in(self.person):
+            for name in ("Older key", "Newer key"):
+                self.factory.makeRegisteredAuthenticator(
+                    owner=self.person, name=name
+                )
+            # An authenticator registered by another person is not
+            # included.
+            self.factory.makeRegisteredAuthenticator()
+
+        response = self.webservice.named_get(
+            self.person_url, "getRegisteredAuthenticators"
+        )
+
+        self.assertEqual(200, response.status)
+        self.assertContentEqual(
+            ["Older key", "Newer key"],
+            [entry["name"] for entry in response.jsonBody()["entries"]],
+        )
+
+    def test_getRegisteredAuthenticators_anonymous(self):
+        with person_logged_in(self.person):
+            self.factory.makeRegisteredAuthenticator(owner=self.person)
+        webservice = webservice_for_person(None, default_api_version="devel")
+
+        response = webservice.named_get(
+            self.person_url, "getRegisteredAuthenticators"
+        )
+
+        self.assertEqual(401, response.status)
+
+    def test_getRegisteredAuthenticators_other_person(self):
+        with person_logged_in(self.person):
+            self.factory.makeRegisteredAuthenticator(owner=self.person)
+        webservice = self._makeOtherWebService()
+
+        response = webservice.named_get(
+            self.person_url, "getRegisteredAuthenticators"
+        )
+
+        self.assertEqual(401, response.status)
+        self.assertIn(b"launchpad.Edit", response.body)
 
     def test_entry_fields(self):
         with person_logged_in(self.person):
