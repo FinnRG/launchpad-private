@@ -1706,24 +1706,7 @@ class Person(
 
     def getRegisteredAuthenticators(self):
         """See `IPerson`."""
-        authenticators = [
-            removeSecurityProxy(authenticator)
-            for authenticator in getUtility(
-                IRegisteredAuthenticatorSet
-            ).findByOwner(self)
-        ]
-        authenticators.sort(key=lambda a: a.date_created, reverse=True)
-        return [
-            {
-                "id": authenticator.id,
-                "name": authenticator.name,
-                "date_created": authenticator.date_created,
-                "date_last_used": authenticator.date_last_used,
-                "date_revoked": authenticator.date_revoked,
-                "is_revoked": authenticator.is_revoked,
-            }
-            for authenticator in authenticators
-        ]
+        return getUtility(IRegisteredAuthenticatorSet).findByOwner(self)
 
     def clearInTeamCache(self):
         """See `IPerson`."""
