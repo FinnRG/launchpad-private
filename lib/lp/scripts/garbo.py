@@ -124,6 +124,7 @@ from lp.services.verification.model.logintoken import LoginToken
 from lp.services.webapp.publisher import canonical_url
 from lp.services.webhooks.interfaces import IWebhookJobSource
 from lp.services.webhooks.model import WebhookJob
+from lp.services.xref.model import XRef
 from lp.snappy.model.snapbuild import SnapFile
 from lp.snappy.model.snapbuildjob import SnapBuildJobType
 from lp.soyuz.enums import (
@@ -2320,7 +2321,7 @@ class PopulateCveSequence(TunableLoop):
     a long-running transaction that could block other operations.
     """
 
-    maximum_chunk_size = 5000
+    maximum_chunk_size = 1000
 
     def __init__(self, log, abort_time=None):
         super().__init__(log, abort_time)
@@ -2340,16 +2341,33 @@ class PopulateCveSequence(TunableLoop):
         return self.findBareSequences().is_empty()
 
     def __call__(self, chunk_size):
-        # Get IDs of CVEs with bare sequences
-        cve_ids = [cve.id for cve in self.findBareSequences()[:chunk_size]]
-        if not cve_ids:
+        # Get the CVEs with bare sequences for this chunk.
+        cves = list(self.findBareSequences()[:chunk_size])
+        if not cves:
             return
+
+        cve_ids = [cve.id for cve in cves]
+        bare_sequences = [cve.sequence for cve in cves]
 
         # Bulk update using Storm's .set() with SQL concatenation
         self.store.find(
             Cve,
             Cve.id.is_in(cve_ids),
         ).set(sequence=SQL("'CVE-' || sequence"))
+
+        # Bug links are stored in the XRef table keyed by the CVE sequence,
+        # so migrate those keys too; otherwise Cve.bugs would find nothing
+        # and the "Related bugs" section on the CVE page would disappear.
+        self.store.find(
+            XRef,
+            XRef.from_type == "cve",
+            XRef.from_id.is_in(bare_sequences),
+        ).set(from_id=SQL("'CVE-' || from_id"))
+        self.store.find(
+            XRef,
+            XRef.to_type == "cve",
+            XRef.to_id.is_in(bare_sequences),
+        ).set(to_id=SQL("'CVE-' || to_id"))
 
         self.log.debug(
             "Updated %d CVE sequences (IDs %d-%d)",

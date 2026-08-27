@@ -2703,6 +2703,31 @@ class TestGarbo(FakeAdapterMixin, TestCaseWithFactory):
         populator = PopulateCveSequence(log=None)
         self.assertTrue(populator.isDone())
 
+    def test_PopulateCveSequence_migrates_bug_links(self):
+        # Bug links are keyed by the CVE sequence in the XRef table, so the
+        # migration must update them too or the "Related bugs" section on
+        # the CVE page would disappear for migrated CVEs.
+        switch_dbuser("testadmin")
+
+        cve = getUtility(ICveSet).new(
+            sequence="2011-2699",
+            description="Linked vulnerability",
+            status=CveStatus.CANDIDATE,
+        )
+        bug = self.factory.makeBug()
+        cve.linkBug(bug, user=bug.owner)
+        transaction.commit()
+
+        self.assertEqual([bug.id], [b.id for b in cve.bugs])
+
+        populator = PopulateCveSequence(self.log)
+        while not populator.isDone():
+            populator(chunk_size=10)
+
+        self.assertEqual("CVE-2011-2699", cve.sequence)
+        # The bug link still resolves after the sequence was migrated.
+        self.assertEqual([bug.id], [b.id for b in cve.bugs])
+
     def test_PopulateCveSequence_findBareSequences_filters_correctly(self):
         # PopulateCveSequence.findBareSequences should only return CVEs with
         # bare sequences, not prefixed ones.
