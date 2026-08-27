@@ -31,6 +31,7 @@ __all__ = [
 
 import base64
 import copy
+import json
 import random
 import re
 import weakref
@@ -253,6 +254,12 @@ from lp.services.verification.interfaces.logintoken import ILoginTokenSet
 from lp.services.verification.model.logintoken import LoginToken
 from lp.services.webapp.interfaces import ILaunchBag
 from lp.services.webapp.publisher import canonical_url
+from lp.services.webauthn.ceremony import (
+    WebAuthnError,
+    begin_registration,
+    complete_registration,
+)
+from lp.services.webauthn.interfaces import IRegisteredAuthenticatorSet
 from lp.services.worlddata.model.language import Language
 from lp.soyuz.enums import ArchivePurpose, ArchiveStatus
 from lp.soyuz.interfaces.archive import IArchiveSet, NoSuchPPA
@@ -1669,6 +1676,54 @@ class Person(
             force_team_add=True,
             may_subscribe_to_list=may_subscribe_to_list,
         )
+
+    def beginWebAuthnRegistration(self):
+        """See `IPerson`."""
+        return begin_registration(self)
+
+    def completeWebAuthnRegistration(self, response, name):
+        """See `IPerson`."""
+        try:
+            parsed_response = json.loads(response)
+        except json.JSONDecodeError as error:
+            raise WebAuthnError(
+                "Invalid JSON in registration response."
+            ) from error
+        authenticator = complete_registration(self, parsed_response, name)
+        return authenticator.id
+
+    def revokeWebAuthnRegistration(self, authenticator_id):
+        """See `IPerson`."""
+        authenticator = getUtility(IRegisteredAuthenticatorSet).getByID(
+            authenticator_id
+        )
+        if authenticator is None:
+            raise WebAuthnError("No such registered authenticator.")
+        bare_authenticator = removeSecurityProxy(authenticator)
+        if bare_authenticator.owner != self:
+            raise WebAuthnError("No such registered authenticator.")
+        bare_authenticator.revoke(self)
+
+    def getRegisteredAuthenticators(self):
+        """See `IPerson`."""
+        authenticators = [
+            removeSecurityProxy(authenticator)
+            for authenticator in getUtility(
+                IRegisteredAuthenticatorSet
+            ).findByOwner(self)
+        ]
+        authenticators.sort(key=lambda a: a.date_created, reverse=True)
+        return [
+            {
+                "id": authenticator.id,
+                "name": authenticator.name,
+                "date_created": authenticator.date_created,
+                "date_last_used": authenticator.date_last_used,
+                "date_revoked": authenticator.date_revoked,
+                "is_revoked": authenticator.is_revoked,
+            }
+            for authenticator in authenticators
+        ]
 
     def clearInTeamCache(self):
         """See `IPerson`."""

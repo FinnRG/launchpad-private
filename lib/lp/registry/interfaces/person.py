@@ -2201,9 +2201,69 @@ class IPersonEditRestricted(Interface):
         If the given language is not present, nothing  will happen.
         """
 
+    @export_read_operation()
+    @operation_for_version("devel")
+    def getRegisteredAuthenticators():
+        """Return this person's registered FIDO2/WebAuthn authenticators.
+
+        :return: A list of dicts (id, name, date_created, date_last_used,
+            date_revoked, is_revoked), most recently created first.
+        """
+
 
 class IPersonSpecialRestricted(Interface):
     """IPerson methods that require launchpad.Special permission to use."""
+
+    @export_write_operation()
+    @operation_for_version("devel")
+    def beginWebAuthnRegistration():
+        """Start registering a new FIDO2/WebAuthn authenticator.
+
+        :return: A dict of WebAuthn `PublicKeyCredentialCreationOptions`
+            (the `create()` options, as `{"publicKey": {...}}`), to be
+            passed to `navigator.credentials.create()` (or an equivalent
+            client).
+        """
+
+    @operation_parameters(
+        response=Text(
+            title=_("Registration response"),
+            description=_(
+                "A JSON-encoded WebAuthn RegistrationResponseJSON, as "
+                "produced by navigator.credentials.create() (or an "
+                "equivalent client) in response to the options returned "
+                "by beginWebAuthnRegistration()."
+            ),
+            required=True,
+        ),
+        name=TextLine(
+            title=_("Name"),
+            description=_(
+                "A name for the new authenticator, to help its owner tell "
+                "their registered authenticators apart."
+            ),
+            required=True,
+        ),
+    )
+    @export_write_operation()
+    @operation_for_version("devel")
+    def completeWebAuthnRegistration(response, name):
+        """Finish registering a new FIDO2/WebAuthn authenticator.
+
+        :return: The ID of the newly registered authenticator.
+        """
+
+    @operation_parameters(
+        authenticator_id=Int(title=_("Authenticator ID"), required=True)
+    )
+    @export_write_operation()
+    @operation_for_version("devel")
+    def revokeWebAuthnRegistration(authenticator_id):
+        """Revoke one of this person's registered WebAuthn authenticators.
+
+        :param authenticator_id: The ID of a `RegisteredAuthenticator`
+            owned by this person.
+        """
 
     def canDeactivate():
         """Verify we safely deactivate this user account.
