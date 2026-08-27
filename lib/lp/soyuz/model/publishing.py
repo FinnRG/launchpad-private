@@ -246,6 +246,15 @@ class ArchivePublisherBase:
         return self.section.name if self.section is not None else None
 
 
+def binary_publication_summary(bpph):
+    """Return a summary dict for a binary publication."""
+    return {
+        "binary_package_name": bpph.binary_package_name,
+        "distro_arch_series": bpph.distroarchseries.architecturetag,
+        "web_link": canonical_url(bpph),
+    }
+
+
 @implementer(ISourcePackagePublishingHistory)
 class SourcePackagePublishingHistory(StormBase, ArchivePublisherBase):
     """A source package release publishing record."""
@@ -404,6 +413,14 @@ class SourcePackagePublishingHistory(StormBase, ArchivePublisherBase):
             self, active_binaries_only=active_binaries_only
         )
         return DecoratedResultSet(result_set, result_decorator=itemgetter(1))
+
+    @cachedproperty
+    def published_binaries_summary(self):
+        """See `ISourcePackagePublishingHistory`."""
+        return [
+            binary_publication_summary(bpph)
+            for bpph in self.getPublishedBinaries()
+        ]
 
     def getBuiltBinaries(self, want_files=False):
         """See `ISourcePackagePublishingHistory`."""
@@ -2075,6 +2092,19 @@ class PublishingSet:
         )
 
         return result_set
+
+    def getBinaryPublicationSummariesForSources(
+        self, one_or_more_source_publications, active_binaries_only=True
+    ):
+        """See `IPublishingSet`."""
+        summaries = defaultdict(list)
+        result_set = self.getBinaryPublicationsForSources(
+            one_or_more_source_publications,
+            active_binaries_only=active_binaries_only,
+        )
+        for spph, bpph, _bpr, _bpn, _das in result_set:
+            summaries[spph.id].append(binary_publication_summary(bpph))
+        return summaries
 
     def getBuiltPackagesSummaryForSourcePublication(self, source_publication):
         """See `IPublishingSet`."""

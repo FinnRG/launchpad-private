@@ -31,6 +31,7 @@ from lp.soyuz.enums import (
 )
 from lp.soyuz.interfaces.component import IComponentSet
 from lp.soyuz.interfaces.packagecopyjob import IPlainPackageCopyJobSource
+from lp.soyuz.interfaces.publishing import IPublishingSet
 from lp.soyuz.model.archivepermission import ArchivePermission
 from lp.testing import (
     ANONYMOUS,
@@ -1331,6 +1332,192 @@ class TestGetPublishedBinaries(TestCaseWithFactory):
         )
         self.assertEqual(200, response.status)
         self.assertEqual(1, response.jsonBody()["total_size"])
+
+    def _make_source_with_binaries(
+        self, archive, distroseries, pocket, binary_names
+    ):
+        spph = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            distroseries=distroseries,
+            pocket=pocket,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        das = self.factory.makeDistroArchSeries(distroseries=distroseries)
+        bpphs = [
+            self.factory.makeBinaryPackagePublishingHistory(
+                archive=archive,
+                distroarchseries=das,
+                pocket=pocket,
+                source_package_release=spph.sourcepackagerelease,
+                binarypackagename=name,
+                architecturespecific=True,
+                status=PackagePublishingStatus.PUBLISHED,
+            )
+            for name in binary_names
+        ]
+        return spph, das, bpphs
+
+    def test_getPublishedSources_published_binaries_summary(self):
+        # Each source entry embeds its active binaries, so a single page
+        # provides binary_package_name and web_link.
+        with admin_logged_in():
+            archive = self.factory.makeArchive()
+            distroseries = self.factory.makeDistroSeries(
+                distribution=archive.distribution
+            )
+            pocket = PackagePublishingPocket.RELEASE
+            _, das, bpphs = self._make_source_with_binaries(
+                archive, distroseries, pocket, ["foo-bin", "foo-dev"]
+            )
+            arch_tag = das.architecturetag
+            bin_ids = {
+                bpph.binary_package_name: removeSecurityProxy(bpph).id
+                for bpph in bpphs
+            }
+            archive_url = api_url(archive)
+        ws = webservice_for_person(self.person, default_api_version="devel")
+        response = ws.named_get(archive_url, "getPublishedSources")
+        self.assertEqual(200, response.status)
+        entries = response.jsonBody()["entries"]
+        self.assertEqual(1, len(entries))
+        self.assertThat(
+            entries[0]["published_binaries_summary"],
+            MatchesListwise(
+                [
+                    ContainsDict(
+                        {
+                            "binary_package_name": Equals("foo-bin"),
+                            "distro_arch_series": Equals(arch_tag),
+                            "web_link": EndsWith(
+                                "/+binarypub/%d" % bin_ids["foo-bin"]
+                            ),
+                        }
+                    ),
+                    ContainsDict(
+                        {
+                            "binary_package_name": Equals("foo-dev"),
+                            "distro_arch_series": Equals(arch_tag),
+                            "web_link": EndsWith(
+                                "/+binarypub/%d" % bin_ids["foo-dev"]
+                            ),
+                        }
+                    ),
+                ]
+            ),
+        )
+
+    def test_getPublishedSources_binaries_summary_defaults_to_active(self):
+        # By default only active (published/pending) binaries are embedded;
+        # superseded ones are omitted.
+        with admin_logged_in():
+            archive = self.factory.makeArchive()
+            distroseries = self.factory.makeDistroSeries(
+                distribution=archive.distribution
+            )
+            pocket = PackagePublishingPocket.RELEASE
+            spph, das, _ = self._make_source_with_binaries(
+                archive, distroseries, pocket, ["active-bin"]
+            )
+            self.factory.makeBinaryPackagePublishingHistory(
+                archive=archive,
+                distroarchseries=das,
+                pocket=pocket,
+                source_package_release=spph.sourcepackagerelease,
+                binarypackagename="superseded-bin",
+                status=PackagePublishingStatus.SUPERSEDED,
+            )
+            archive_url = api_url(archive)
+        ws = webservice_for_person(self.person, default_api_version="devel")
+        response = ws.named_get(archive_url, "getPublishedSources")
+        self.assertEqual(200, response.status)
+        summary = response.jsonBody()["entries"][0][
+            "published_binaries_summary"
+        ]
+        self.assertEqual(
+            ["active-bin"],
+            [entry["binary_package_name"] for entry in summary],
+        )
+
+    def test_getBinaryPublicationSummaries_include_inactive(self):
+        # Passing active_binaries_only=False embeds inactive binaries
+        # (e.g. superseded) alongside the active ones.
+        with admin_logged_in():
+            archive = self.factory.makeArchive()
+            distroseries = self.factory.makeDistroSeries(
+                distribution=archive.distribution
+            )
+            pocket = PackagePublishingPocket.RELEASE
+            spph, das, _ = self._make_source_with_binaries(
+                archive, distroseries, pocket, ["active-bin"]
+            )
+            self.factory.makeBinaryPackagePublishingHistory(
+                archive=archive,
+                distroarchseries=das,
+                pocket=pocket,
+                source_package_release=spph.sourcepackagerelease,
+                binarypackagename="superseded-bin",
+                architecturespecific=True,
+                status=PackagePublishingStatus.SUPERSEDED,
+            )
+            publishing_set = getUtility(IPublishingSet)
+            summaries = publishing_set.getBinaryPublicationSummariesForSources(
+                [spph], active_binaries_only=False
+            )
+            names = sorted(
+                entry["binary_package_name"] for entry in summaries[spph.id]
+            )
+        self.assertEqual(["active-bin", "superseded-bin"], names)
+
+    def test_getPublishedSources_binaries_summary_query_count(self):
+        # Loading the binary summaries for a whole page of sources uses a
+        # constant number of queries regardless of how many sources are
+        # returned; there is no per-source binary query.
+        archive = self.factory.makeArchive()
+        distroseries = self.factory.makeDistroSeries(
+            distribution=archive.distribution
+        )
+        pocket = PackagePublishingPocket.RELEASE
+        publishing_set = getUtility(IPublishingSet)
+
+        def create_source():
+            with admin_logged_in():
+                self._make_source_with_binaries(
+                    archive, distroseries, pocket, ["a-bin", "b-bin"]
+                )
+
+        def load_summaries():
+            with admin_logged_in():
+                sources = list(archive.getPublishedSources())
+                publishing_set.getBinaryPublicationSummariesForSources(sources)
+
+        # Seed the archive with a few sources (each with two binaries) so
+        # that both recorded runs already operate on several sources, and
+        # then record the query count with 3 sources and again with 7. A
+        # per-source binary query would make the second run more expensive.
+        for _ in range(3):
+            create_source()
+        recorder1, recorder2 = record_two_runs(
+            load_summaries, create_source, 0, 4
+        )
+        self.assertThat(recorder2, HasQueryCount.byEquality(recorder1))
+
+        # Making it obvious that the runs really did operate on several
+        # sources, each with multiple binaries.
+        with admin_logged_in():
+            sources = list(archive.getPublishedSources())
+            summaries = publishing_set.getBinaryPublicationSummariesForSources(
+                sources
+            )
+        self.assertEqual(7, len(sources))
+        self.assertEqual(len(sources), len(summaries))
+        for source in sources:
+            self.assertEqual(
+                ["a-bin", "b-bin"],
+                sorted(
+                    entry["binary_package_name"]
+                    for entry in summaries[source.id]
+                ),
+            )
 
 
 class TestRemoveCopyNotification(TestCaseWithFactory):
