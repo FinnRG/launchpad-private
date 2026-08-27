@@ -1442,34 +1442,43 @@ class PackageUploadSource(StormBase):
         self.packageupload = packageupload
         self.sourcepackagerelease = sourcepackagerelease
 
-    def getSourceAncestryForDiffs(self):
+    def getSourceAncestriesForDiffs(self):
         """See `IPackageUploadSource`."""
         primary_archive = self.packageupload.distroseries.main_archive
-        release_pocket = PackagePublishingPocket.RELEASE
-        current_distroseries = self.packageupload.distroseries
-        ancestry_locations = [
-            (
-                self.packageupload.archive,
-                current_distroseries,
-                self.packageupload.pocket,
-            ),
-            (primary_archive, current_distroseries, release_pocket),
-            (primary_archive, None, release_pocket),
-        ]
+        distroseries = self.packageupload.distroseries
+        archives = [primary_archive]
+        if self.packageupload.archive != primary_archive:
+            archives.append(self.packageupload.archive)
 
-        for archive, distroseries, pocket in ancestry_locations:
-            ancestries = archive.getPublishedSources(
-                name=self.sourcepackagerelease.name,
-                distroseries=distroseries,
-                pocket=pocket,
-                exact_match=True,
-            )
-            try:
-                return ancestries[0]
-            except IndexError:
-                pass
+        ancestries = []
+        seen_releases = set()
+        for archive in archives:
+            ancestry = self._findLatestPublication(archive, distroseries)
+            if ancestry is None and archive == primary_archive:
+                # The source is new to this series, so look for it in the
+                # release pocket of every series instead.
+                ancestry = self._findLatestPublication(
+                    archive, None, PackagePublishingPocket.RELEASE
+                )
+            if ancestry is None:
+                continue
+            # The same source can be published in both archives, for
+            # instance after a copy out of the distribution.
+            if ancestry.sourcepackagerelease_id in seen_releases:
+                continue
+            seen_releases.add(ancestry.sourcepackagerelease_id)
+            ancestries.append(ancestry)
 
-        return None
+        return ancestries
+
+    def _findLatestPublication(self, archive, distroseries, pocket=None):
+        """Return the newest publication of our source, or None."""
+        return archive.getPublishedSources(
+            name=self.sourcepackagerelease.name,
+            distroseries=distroseries,
+            pocket=pocket,
+            exact_match=True,
+        ).first()
 
     def verifyBeforeAccept(self):
         """See `IPackageUploadSource`."""
