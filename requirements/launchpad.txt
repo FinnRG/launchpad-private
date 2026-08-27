@@ -57,6 +57,7 @@ executing==2.1.0
 enum34==1.1.6
 fastimport==0.9.8
 feedparser==6.0.11
+fido2==1.1.3
 fixtures==4.2.4.post1
 flit-core==3.3.0
 FormEncode==1.3.1
