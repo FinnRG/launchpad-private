@@ -8,27 +8,32 @@ __all__ = [
     "IRegisteredAuthenticatorSet",
 ]
 
+from lazr.restful.declarations import exported, exported_as_webservice_entry
+from lazr.restful.fields import Reference
 from zope.interface import Interface
-from zope.schema import Bool, Bytes, Datetime, Int, List, Object, TextLine
+from zope.schema import Bool, Bytes, Datetime, Int, List, TextLine
 
 from lp import _
-from lp.registry.interfaces.person import IPerson
 
 
+@exported_as_webservice_entry(publish_web_link=False, as_of="devel")
 class IRegisteredAuthenticator(Interface):
     """A FIDO2/WebAuthn authenticator registered by a person.
 
     Used to hardware-bind a person's OAuth refresh tokens.
     """
 
-    id = Int(title=_("ID"), required=True, readonly=True)
+    id = exported(Int(title=_("ID"), required=True, readonly=True))
 
-    owner = Object(
-        schema=IPerson,
-        title=_("Owner"),
-        description=_("The person who registered this authenticator."),
-        required=True,
-        readonly=True,
+    owner = exported(
+        Reference(
+            title=_("Owner"),
+            description=_("The person who registered this authenticator."),
+            # Really IPerson, patched in lp.registry.interfaces.person.
+            schema=Interface,
+            required=True,
+            readonly=True,
+        )
     )
 
     credential_id = Bytes(
@@ -67,73 +72,94 @@ class IRegisteredAuthenticator(Interface):
         readonly=True,
     )
 
-    attestation_format = TextLine(
-        title=_("Attestation format"),
-        description=_(
-            "The attestation statement format used when this "
-            "authenticator was registered."
-        ),
-        required=True,
-        readonly=True,
+    attestation_format = exported(
+        TextLine(
+            title=_("Attestation format"),
+            description=_(
+                "The attestation statement format used when this "
+                "authenticator was registered."
+            ),
+            required=True,
+            readonly=True,
+        )
     )
 
-    transports = List(
-        value_type=TextLine(),
-        title=_("Transports"),
-        description=_(
-            "Transport hints (e.g. 'usb', 'nfc') reported by the "
-            "authenticator at registration time."
-        ),
-        required=False,
-        readonly=True,
+    transports = exported(
+        List(
+            value_type=TextLine(),
+            title=_("Transports"),
+            description=_(
+                "Transport hints (e.g. 'usb', 'nfc') reported by the "
+                "authenticator at registration time."
+            ),
+            required=False,
+            readonly=True,
+        )
     )
 
-    name = TextLine(
-        title=_("Name"),
-        description=_(
-            "A name chosen by the owner to help them tell their "
-            "registered authenticators apart."
-        ),
-        required=True,
-        readonly=False,
+    name = exported(
+        TextLine(
+            title=_("Name"),
+            description=_(
+                "A name chosen by the owner to help them tell their "
+                "registered authenticators apart."
+            ),
+            required=True,
+            readonly=False,
+        )
     )
 
-    date_created = Datetime(
-        title=_("Date created"),
-        description=_("When this authenticator was registered."),
-        required=True,
-        readonly=True,
+    date_created = exported(
+        Datetime(
+            title=_("Date created"),
+            description=_("When this authenticator was registered."),
+            required=True,
+            readonly=True,
+        )
     )
 
-    date_last_used = Datetime(
-        title=_("Date last used"),
-        description=_(
-            "When this authenticator was last used to sign a challenge."
-        ),
-        required=False,
-        readonly=True,
+    date_last_used = exported(
+        Datetime(
+            title=_("Date last used"),
+            description=_(
+                "When this authenticator was last used to sign a challenge."
+            ),
+            required=False,
+            readonly=True,
+        )
     )
 
-    date_revoked = Datetime(
-        title=_("Date revoked"),
-        description=_("When this authenticator was revoked, if it has been."),
-        required=False,
-        readonly=True,
+    date_revoked = exported(
+        Datetime(
+            title=_("Date revoked"),
+            description=_(
+                "When this authenticator was revoked, if it has been."
+            ),
+            required=False,
+            readonly=True,
+        )
     )
 
-    revoked_by = Object(
-        schema=IPerson,
-        title=_("Revoked by"),
-        description=_("The person who revoked this authenticator, if any."),
-        required=False,
-        readonly=True,
+    revoked_by = exported(
+        Reference(
+            title=_("Revoked by"),
+            description=_(
+                "The person who revoked this authenticator, if any."
+            ),
+            # Really IPerson, patched in lp.registry.interfaces.person.
+            schema=Interface,
+            required=False,
+            readonly=True,
+        )
     )
 
-    is_revoked = Bool(
-        title=_("Revoked?"),
-        description=_("Whether this authenticator has been revoked."),
-        required=False,
-        readonly=True,
+    is_revoked = exported(
+        Bool(
+            title=_("Revoked?"),
+            description=_("Whether this authenticator has been revoked."),
+            required=False,
+            readonly=True,
+        )
     )
 
     def updateLastUsed():

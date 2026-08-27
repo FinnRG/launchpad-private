@@ -227,6 +227,7 @@ from lp.services.webapp.interfaces import (
 from lp.services.webapp.login import logoutPerson, require_fresh_login
 from lp.services.webapp.menu import get_current_view
 from lp.services.webapp.publisher import LaunchpadView
+from lp.services.webauthn.interfaces import IRegisteredAuthenticatorSet
 from lp.services.worlddata.interfaces.country import ICountry
 from lp.services.worlddata.interfaces.language import ILanguageSet
 from lp.snappy.browser.hassnaps import HasSnapsMenuMixin
@@ -573,6 +574,20 @@ class PersonNavigation(BranchTraversalMixin, Navigation):
         if social_account is None or social_account.person != self.context:
             return None
         return social_account
+
+    @stepthrough("+authenticator")
+    def traverse_registered_authenticator(self, id):
+        """Traverse to this person's registered WebAuthn authenticators."""
+        try:
+            authenticator_id = int(id)
+        except ValueError:
+            return None
+        authenticator = getUtility(IRegisteredAuthenticatorSet).getByID(
+            authenticator_id
+        )
+        if authenticator is None or authenticator.owner != self.context:
+            return None
+        return authenticator
 
     @stepthrough("+oci-registry-credential")
     def traverse_oci_registry_credential(self, id):
