@@ -114,6 +114,13 @@ options:
     type: int
     description: Port for the main application server via Squid.
     default: 8086
+  frontend_proxy_protocol_enabled:
+    type: boolean
+    description: >
+      Accept PROXY protocol headers from the upstream load balancer and log
+      the real client IP.  Enable only when the load balancer is configured
+      to send PROXY protocol headers.
+    default: false
   ssl_chain_required:
     type: boolean
     description: >

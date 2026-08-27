@@ -368,6 +368,12 @@ def reconfigure_blocked_user_agents():
     remove_state("launchpad.api-vhost.configured")
 
 
+@when("config.changed.frontend_proxy_protocol_enabled")
+def reconfigure_proxy_protocol():
+    remove_state("launchpad.vhost.configured")
+    remove_state("launchpad.api-vhost.configured")
+
+
 @when("api-vhost-config.available", "service.configured")
 @when_not("launchpad.api-vhost.configured")
 def configure_api_vhost():
