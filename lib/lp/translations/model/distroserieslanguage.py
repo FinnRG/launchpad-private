@@ -23,6 +23,7 @@ from lp.services.database.interfaces import IStore
 from lp.services.database.stormbase import StormBase
 from lp.translations.interfaces.distroserieslanguage import (
     IDistroSeriesLanguage,
+    IDistroSeriesLanguageEntry,
     IDistroSeriesLanguageSet,
 )
 from lp.translations.model.pofile import PlaceholderPOFile, POFile
@@ -32,7 +33,7 @@ from lp.translations.model.translator import Translator
 from lp.translations.utilities.rosettastats import RosettaStats
 
 
-@implementer(IDistroSeriesLanguage)
+@implementer(IDistroSeriesLanguageEntry)
 class DistroSeriesLanguage(StormBase, RosettaStats):
     """See `IDistroSeriesLanguage`.
 
@@ -112,6 +113,28 @@ class DistroSeriesLanguage(StormBase, RosettaStats):
             .order_by(Translator.id)
             .config(distinct=True)
         )
+
+    @property
+    def language_code(self):
+        return self.language.code
+
+    @property
+    def language_name(self):
+        return self.language.englishname
+
+    @property
+    def date_updated(self):
+        return self.dateupdated
+
+    @property
+    def translated_percentage(self):
+        message_count = self.messageCount()
+        if message_count == 0:
+            return 0
+        percentage = 100 * self.translatedCount() // message_count
+        # Cached counts may be updated separately; keep the exported value
+        # within the field's declared range.
+        return max(0, min(100, percentage))
 
     @property
     def contributor_count(self):

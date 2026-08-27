@@ -1288,8 +1288,16 @@ class AdminDistroSeriesTranslations(AuthorizationBase):
         can manage IDistroSeries translations.
         """
         return user.isDriver(self.obj) or self.forwardCheckAuthenticated(
-            user, self.obj.distribution
+            user,
+            self.obj.distribution,
+            permission="launchpad.TranslationsAdmin",
         )
+
+
+class ViewHiddenDistroSeriesTranslations(AdminDistroSeriesTranslations):
+    """Allow translation administrators to view hidden series translations."""
+
+    permission = "launchpad.ViewHiddenDistroSeriesTranslations"
 
 
 class AdminDistributionSourcePackageTranslations(DelegatedAuthorization):

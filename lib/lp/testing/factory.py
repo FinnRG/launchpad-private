@@ -348,6 +348,7 @@ from lp.translations.interfaces.translationtemplatesbuild import (
     ITranslationTemplatesBuildSource,
 )
 from lp.translations.interfaces.translator import ITranslatorSet
+from lp.translations.model.distroserieslanguage import DistroSeriesLanguage
 from lp.translations.model.translationtemplateitem import (
     TranslationTemplateItem,
 )
@@ -3322,6 +3323,32 @@ class LaunchpadObjectFactory(ObjectFactory):
             pluralforms=pluralforms,
             pluralexpression=plural_expression,
         )
+
+    def makeDistroSeriesLanguage(
+        self,
+        distroseries=None,
+        language=None,
+        language_code=None,
+        language_name=None,
+        current_count=0,
+        rosetta_count=0,
+        contributor_count=0,
+        date_updated=None,
+    ):
+        """Create translation statistics for a distroseries and language."""
+        if distroseries is None:
+            distroseries = self.makeDistroSeries()
+        if language is None:
+            language = self.makeLanguage(
+                language_code=language_code, name=language_name
+            )
+        distroserieslanguage = DistroSeriesLanguage(distroseries, language)
+        distroserieslanguage.currentcount = current_count
+        distroserieslanguage.rosettacount = rosetta_count
+        distroserieslanguage.contributorcount = contributor_count
+        if date_updated is not None:
+            distroserieslanguage.dateupdated = date_updated
+        return ProxyFactory(distroserieslanguage)
 
     def makeLanguagePack(self, distroseries=None, languagepack_type=None):
         """Create a language pack."""

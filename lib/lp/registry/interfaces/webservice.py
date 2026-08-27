@@ -117,6 +117,9 @@ from lp.soyuz.interfaces.archive import IArchive
 from lp.soyuz.interfaces.archivesubscriber import IArchiveSubscriber
 from lp.soyuz.interfaces.distroarchseries import IDistroArchSeries
 from lp.soyuz.interfaces.queue import IPackageUpload
+from lp.translations.interfaces.distroserieslanguage import (
+    IDistroSeriesLanguageEntry,
+)
 
 # ICommercialSubscription
 patch_reference_property(ICommercialSubscription, "product", IProduct)
@@ -156,6 +159,12 @@ patch_entry_return_type(
 patch_reference_property(IDistroSeries, "main_archive", IArchive)
 patch_collection_property(
     IDistroSeries, "enabled_architectures", IDistroArchSeries
+)
+patch_collection_property(
+    IDistroSeries, "translation_coverage", IDistroSeriesLanguageEntry
+)
+patch_collection_return_type(
+    IDistroSeries, "getTranslationCoverage", IDistroSeriesLanguageEntry
 )
 patch_reference_property(IDistroSeries, "distribution", IDistribution)
 patch_plain_parameter_type(
