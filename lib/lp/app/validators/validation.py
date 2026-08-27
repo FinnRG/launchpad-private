@@ -3,7 +3,7 @@
 
 __all__ = [
     "can_be_nominated_for_series",
-    "valid_cve_sequence",
+    "valid_vulnerability_identifier",
     "validate_new_team_email",
     "validate_oci_branch_name",
     "validate_content_templates",
@@ -16,7 +16,7 @@ from zope.component import getUtility
 
 from lp import _
 from lp.app.validators import LaunchpadValidationError
-from lp.app.validators.cve import valid_cve
+from lp.app.validators.cve import valid_vulnerability_id
 from lp.app.validators.email import valid_email
 from lp.services.identity.interfaces.emailaddress import IEmailAddressSet
 from lp.services.webapp import canonical_url
@@ -45,13 +45,17 @@ def can_be_nominated_for_series(series):
     return True
 
 
-def valid_cve_sequence(value):
-    """Check if the given value is a valid CVE otherwise raise an exception."""
-    if valid_cve(value):
+def valid_vulnerability_identifier(value):
+    """Check if the given value is a valid vulnerability sequence number,
+    otherwise raise an exception."""
+    if valid_vulnerability_id(value):
         return True
     else:
         raise LaunchpadValidationError(
-            _("${cve} is not a valid CVE number", mapping={"cve": value})
+            _(
+                "${vulnerability} is not a valid vulnerability identifier",
+                mapping={"vulnerability": value},
+            )
         )
 
 

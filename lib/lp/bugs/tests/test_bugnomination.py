@@ -446,6 +446,56 @@ class TestBugCanBeNominatedForDistroSeries(
         )
         self.assertTrue(sp_bug.canBeNominatedFor(self.series))
 
+    def test_canBeNominatedFor_partially_targeted_series(self):
+        # If a series already has bug tasks for some, but not all, of a
+        # bug's affected packages (for example because one of the series
+        # tasks was deleted after the bug was previously targeted), the
+        # bug can still be targeted to that series again, in order to top
+        # up the missing task(s).
+        distribution = self.series.distribution
+        spn1 = self.factory.makeSourcePackageName()
+        spn2 = self.factory.makeSourcePackageName()
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=self.series, sourcepackagename=spn1
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=self.series, sourcepackagename=spn2
+        )
+        bug = self.factory.makeBug(target=distribution.getSourcePackage(spn1))
+        bug.addTask(self.eric, distribution.getSourcePackage(spn2))
+
+        self.assertTrue(bug.canBeNominatedFor(self.series))
+        nomination = bug.addNomination(self.eric, self.series)
+        nomination.approve(self.eric)
+
+        # Both packages now have a task in the series, so there's nothing
+        # left to target.
+        self.assertFalse(bug.canBeNominatedFor(self.series))
+
+        def series_tasks_for(spn):
+            return [
+                task
+                for task in bug.bugtasks
+                if task.distroseries == self.series
+                and task.sourcepackagename == spn
+            ]
+
+        self.assertEqual(1, len(series_tasks_for(spn1)))
+        self.assertEqual(1, len(series_tasks_for(spn2)))
+        series_tasks_for(spn1)[0].delete(self.eric)
+
+        # With one of the two series tasks gone, the bug can be targeted
+        # to the series again.
+        self.assertTrue(bug.canBeNominatedFor(self.series))
+        nomination = bug.addNomination(self.eric, self.series)
+        nomination.approve(self.eric)
+
+        # Only the missing task was recreated; the existing one wasn't
+        # duplicated.
+        self.assertEqual(1, len(series_tasks_for(spn1)))
+        self.assertEqual(1, len(series_tasks_for(spn2)))
+        self.assertFalse(bug.canBeNominatedFor(self.series))
+
 
 class TestCanApprove(TestCaseWithFactory):
     layer = DatabaseFunctionalLayer

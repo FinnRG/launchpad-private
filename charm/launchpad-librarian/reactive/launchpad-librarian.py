@@ -337,3 +337,8 @@ def configure_vhost():
 )
 def deconfigure_vhost():
     remove_state("launchpad.vhost.configured")
+
+
+@when("config.changed.frontend_proxy_protocol_enabled")
+def reconfigure_proxy_protocol():
+    remove_state("launchpad.vhost.configured")

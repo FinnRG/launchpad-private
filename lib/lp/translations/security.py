@@ -12,6 +12,9 @@ from lp.app.security import (
 )
 from lp.security import OnlyRosettaExpertsAndAdmins
 from lp.translations.interfaces.customlanguagecode import ICustomLanguageCode
+from lp.translations.interfaces.distroserieslanguage import (
+    IDistroSeriesLanguageEntry,
+)
 from lp.translations.interfaces.languagepack import ILanguagePack
 from lp.translations.interfaces.pofile import IPOFile
 from lp.translations.interfaces.potemplate import IPOTemplate
@@ -37,6 +40,12 @@ class EditTranslationsPersonByPerson(AuthorizationBase):
     def checkAuthenticated(self, user):
         person = self.obj.person
         return person == user.person or user.in_admin
+
+
+class ViewDistroSeriesLanguage(AnonymousAuthorization):
+    """Anyone can view available distribution-series translations."""
+
+    usedfor = IDistroSeriesLanguageEntry
 
 
 class ViewPOTemplates(AnonymousAuthorization):

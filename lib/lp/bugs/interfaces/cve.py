@@ -28,7 +28,7 @@ from zope.interface import Attribute, Interface
 from zope.schema import Choice, Datetime, Dict, Int, List, Text, TextLine
 
 from lp import _
-from lp.app.validators.validation import valid_cve_sequence
+from lp.app.validators.validation import valid_vulnerability_identifier
 from lp.services.config import config
 
 
@@ -101,11 +101,14 @@ class ICve(Interface):
     id = Int(title=_("ID"), required=True, readonly=True)
     sequence = exported(
         TextLine(
-            title=_("CVE Sequence Number"),
-            description=_("Should take the form XXXX-XXXX, all digits."),
+            title=_("Vulnerability Identifier"),
+            description=_(
+                "The full identifier for this vulnerability "
+                "(e.g. 'CVE-2024-12345', 'GHSA-2c6m-6gqh-6qg3'). "
+            ),
             required=True,
             readonly=True,
-            constraint=valid_cve_sequence,
+            constraint=valid_vulnerability_identifier,
         )
     )
     status = exported(

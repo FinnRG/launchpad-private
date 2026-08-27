@@ -14,6 +14,7 @@ __all__ = [
     "InvalidFilename",
     "InvalidMirrorReviewState",
     "InvalidName",
+    "InvalidTranslationCoverageOrder",
     "JoinNotAllowed",
     "MirrorNotOfficial",
     "MirrorHasNoHTTPURL",
@@ -56,6 +57,11 @@ class InclusiveTeamLinkageError(ValueError):
 @error_status(http.client.CONFLICT)
 class NameAlreadyTaken(Exception):
     """The name given for a person is already in use by other person."""
+
+
+@error_status(http.client.BAD_REQUEST)
+class InvalidTranslationCoverageOrder(ValueError):
+    """The translation coverage order contains an unknown field."""
 
 
 @error_status(http.client.BAD_REQUEST)

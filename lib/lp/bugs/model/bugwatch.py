@@ -739,7 +739,7 @@ class BugWatchSet:
         """Extract a GitHub Issues base URL and bug ID."""
         if host != "github.com":
             return None
-        match = re.match(r"(.*/issues)/(\d+)$", path)
+        match = re.match(r"(.*/issues)/(\d+)/?$", path)
         if not match:
             return None
         base_path = match.group(1)
@@ -749,7 +749,7 @@ class BugWatchSet:
 
     def parseGitLabURL(self, scheme, host, path, query):
         """Extract a GitLab Issues base URL and bug ID."""
-        match = re.match(r"(.*/issues)/(\d+)$", path)
+        match = re.match(r"(.*/issues)/(\d+)/?$", path)
         if not match:
             return None
         base_path = match.group(1)

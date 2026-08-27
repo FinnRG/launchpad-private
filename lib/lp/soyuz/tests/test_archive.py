@@ -101,6 +101,7 @@ from lp.soyuz.interfaces.archive import (
     IArchiveSet,
     InsufficientUploadRights,
     InvalidExternalDependencies,
+    InvalidOrderBy,
     InvalidPocketForPartnerArchive,
     InvalidPocketForPPA,
     NamedAuthTokenFeatureDisabled,
@@ -143,6 +144,7 @@ from lp.testing import (
     StormStatementRecorder,
     TestCaseWithFactory,
     admin_logged_in,
+    api_url,
     celebrity_logged_in,
     login,
     login_celebrity,
@@ -4073,6 +4075,26 @@ class TestGetPublishedSources(TestCaseWithFactory):
             ),
         )
 
+    def test_order_by_date_created_key(self):
+        # order_by=["date_created"]/["-date_created"] is the new-style
+        # equivalent of the deprecated order_by_date/
+        # order_by_date_ascending booleans, sorting on the same
+        # datecreated column.
+        archive = self.factory.makeArchive()
+        dates = [self.factory.getUniqueDate() for _ in range(5)]
+        for i in range(5):
+            self.factory.makeSourcePackagePublishingHistory(
+                archive=archive, date_uploaded=dates[(i + 1) % 5]
+            )
+        self.assertEqual(
+            list(archive.getPublishedSources(order_by_date=True)),
+            list(archive.getPublishedSources(order_by=["-date_created"])),
+        )
+        self.assertEqual(
+            list(archive.getPublishedSources(order_by_date_ascending=True)),
+            list(archive.getPublishedSources(order_by=["date_created"])),
+        )
+
     def test_order_by_published_date_descending(self):
         archive = self.factory.makeArchive()
         pub0 = self.factory.makeSourcePackagePublishingHistory(
@@ -4167,6 +4189,441 @@ class TestGetPublishedSources(TestCaseWithFactory):
                 )
             ),
         )
+
+    def test_no_arguments_unchanged(self):
+        # Calling getPublishedSources with no arguments returns every
+        # status, ordered by source name, then descending version, then
+        # descending id.
+        archive = self.factory.makeArchive()
+        # Two "aaa" releases to check the descending-version tiebreak,
+        # with different statuses to confirm none are filtered out.
+        aaa_new = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            sourcepackagerelease=self.factory.makeSourcePackageRelease(
+                archive=archive, sourcepackagename="aaa", version="2.0"
+            ),
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        aaa_old = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            sourcepackagerelease=self.factory.makeSourcePackageRelease(
+                archive=archive, sourcepackagename="aaa", version="1.0"
+            ),
+            status=PackagePublishingStatus.SUPERSEDED,
+        )
+        bbb = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            sourcepackagerelease=self.factory.makeSourcePackageRelease(
+                archive=archive, sourcepackagename="bbb", version="1.0"
+            ),
+            status=PackagePublishingStatus.DELETED,
+        )
+        expected = [aaa_new, aaa_old, bbb]
+        found = list(archive.getPublishedSources())
+        self.assertEqual(expected, found)
+
+    def test_maintained_by(self):
+        archive = self.factory.makeArchive()
+        maintainer = self.factory.makePerson()
+        spr = self.factory.makeSourcePackageRelease(
+            archive=archive, maintainer=maintainer
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, sourcepackagerelease=spr
+        )
+        other_spr = self.factory.makeSourcePackageRelease(archive=archive)
+        self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, sourcepackagerelease=other_spr
+        )
+        results = archive.getPublishedSources(maintained_by=maintainer)
+        self.assertEqual(1, results.count())
+        self.assertEqual(spr, results[0].sourcepackagerelease)
+
+    def test_changed_by(self):
+        archive = self.factory.makeArchive()
+        creator = self.factory.makePerson()
+        spr = self.factory.makeSourcePackageRelease(
+            archive=archive, creator=creator
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, sourcepackagerelease=spr
+        )
+        other_spr = self.factory.makeSourcePackageRelease(archive=archive)
+        self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, sourcepackagerelease=other_spr
+        )
+        results = archive.getPublishedSources(changed_by=creator)
+        self.assertEqual(1, results.count())
+
+    def test_signed_by(self):
+        archive = self.factory.makeArchive()
+        signer = self.factory.makePerson()
+        spr = self.factory.makeSourcePackageRelease(archive=archive)
+        removeSecurityProxy(spr).signing_key_owner = signer
+        self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, sourcepackagerelease=spr
+        )
+        other_spr = self.factory.makeSourcePackageRelease(archive=archive)
+        self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, sourcepackagerelease=other_spr
+        )
+        results = archive.getPublishedSources(signed_by=signer)
+        self.assertEqual(1, results.count())
+
+    def test_maintainer_team_filter_matches_maintainer_membership(self):
+        archive = self.factory.makeArchive()
+        team = self.factory.makeTeam()
+        member = self.factory.makePerson(member_of=[team])
+        spr = self.factory.makeSourcePackageRelease(
+            archive=archive, maintainer=member
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, sourcepackagerelease=spr
+        )
+        other_spr = self.factory.makeSourcePackageRelease(archive=archive)
+        self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, sourcepackagerelease=other_spr
+        )
+        results = archive.getPublishedSources(maintainer_team=team)
+        self.assertEqual(1, results.count())
+
+    def test_maintainer_team_filter_matches_team_as_maintainer(self):
+        archive = self.factory.makeArchive()
+        team = self.factory.makeTeam()
+        spr = self.factory.makeSourcePackageRelease(
+            archive=archive,
+            maintainer=team,
+            dsc_maintainer_rfc822="%s <noreply@example.com>"
+            % team.displayname,
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, sourcepackagerelease=spr
+        )
+        other_spr = self.factory.makeSourcePackageRelease(archive=archive)
+        self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, sourcepackagerelease=other_spr
+        )
+        results = archive.getPublishedSources(maintainer_team=team)
+        self.assertEqual(1, results.count())
+
+    def test_packageset_filter(self):
+        distroseries = self.factory.makeDistroSeries()
+        archive = self.factory.makeArchive(
+            distribution=distroseries.distribution
+        )
+        spn = self.factory.makeSourcePackageName()
+        packageset = self.factory.makePackageset(
+            distroseries=distroseries, packages=[spn]
+        )
+        spr = self.factory.makeSourcePackageRelease(sourcepackagename=spn)
+        self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            sourcepackagerelease=spr,
+            distroseries=distroseries,
+        )
+        other_spr = self.factory.makeSourcePackageRelease()
+        self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            sourcepackagerelease=other_spr,
+            distroseries=distroseries,
+        )
+        results = archive.getPublishedSources(packageset=packageset)
+        self.assertEqual(1, results.count())
+
+    def test_packageset_filter_restricts_to_packageset_series(self):
+        # A package set belongs to one distroseries, so a publication of
+        # the same source package name in another series is excluded.
+        distroseries = self.factory.makeDistroSeries()
+        other_series = self.factory.makeDistroSeries(
+            distribution=distroseries.distribution
+        )
+        archive = self.factory.makeArchive(
+            distribution=distroseries.distribution
+        )
+        spn = self.factory.makeSourcePackageName()
+        packageset = self.factory.makePackageset(
+            distroseries=distroseries, packages=[spn]
+        )
+        in_series = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            sourcepackagerelease=self.factory.makeSourcePackageRelease(
+                sourcepackagename=spn
+            ),
+            distroseries=distroseries,
+        )
+        # Same source package name, but published in another series.
+        self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            sourcepackagerelease=self.factory.makeSourcePackageRelease(
+                sourcepackagename=spn
+            ),
+            distroseries=other_series,
+        )
+        self.assertEqual(
+            [in_series],
+            list(archive.getPublishedSources(packageset=packageset)),
+        )
+
+    def makeUbuntuChangeFixture(self):
+        """Publish one Ubuntu-changed and one unchanged source.
+
+        :return: a tuple of (archive, changed publication, unchanged
+            publication).
+        """
+        archive = self.factory.makeArchive()
+        changed = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            sourcepackagerelease=self.factory.makeSourcePackageRelease(
+                archive=archive, version="1.2-3ubuntu1"
+            ),
+        )
+        unchanged = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            sourcepackagerelease=self.factory.makeSourcePackageRelease(
+                archive=archive, version="1.2-3"
+            ),
+        )
+        return archive, changed, unchanged
+
+    def test_ubuntu_change_true_returns_only_changed(self):
+        archive, changed, _ = self.makeUbuntuChangeFixture()
+        self.assertEqual(
+            [changed],
+            list(archive.getPublishedSources(ubuntu_change=True)),
+        )
+
+    def test_ubuntu_change_false_returns_only_unchanged(self):
+        archive, _, unchanged = self.makeUbuntuChangeFixture()
+        self.assertEqual(
+            [unchanged],
+            list(archive.getPublishedSources(ubuntu_change=False)),
+        )
+
+    def test_ubuntu_change_none_does_not_filter(self):
+        # The default does not filter on the Ubuntu marker at all.
+        archive, changed, unchanged = self.makeUbuntuChangeFixture()
+        self.assertContentEqual(
+            [changed, unchanged], archive.getPublishedSources()
+        )
+        self.assertContentEqual(
+            [changed, unchanged],
+            archive.getPublishedSources(ubuntu_change=None),
+        )
+
+    def test_order_by_source_name(self):
+        archive = self.factory.makeArchive()
+        spn_a = self.factory.makeSourcePackageName(name="aaa")
+        spn_z = self.factory.makeSourcePackageName(name="zzz")
+        spph_a = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            sourcepackagerelease=self.factory.makeSourcePackageRelease(
+                archive=archive, sourcepackagename=spn_a
+            ),
+        )
+        spph_z = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            sourcepackagerelease=self.factory.makeSourcePackageRelease(
+                archive=archive, sourcepackagename=spn_z
+            ),
+        )
+        asc = list(
+            archive.getPublishedSources(order_by=["source_package_name"])
+        )
+        self.assertEqual([spph_a, spph_z], asc)
+        desc = list(
+            archive.getPublishedSources(order_by=["-source_package_name"])
+        )
+        self.assertEqual([spph_z, spph_a], desc)
+
+    def test_order_by_series(self):
+        # "series" sorts by the series version, which is neither the
+        # series name order nor the series creation (id) order, and is
+        # not a plain text sort of the version either.
+        distribution = self.factory.makeDistribution()
+        archive = self.factory.makeArchive(distribution=distribution)
+        bionic = self.factory.makeDistroSeries(
+            distribution=distribution, name="bionic", version="10.04"
+        )
+        artful = self.factory.makeDistroSeries(
+            distribution=distribution, name="artful", version="22.04"
+        )
+        zesty = self.factory.makeDistroSeries(
+            distribution=distribution, name="zesty", version="9.10"
+        )
+        pub_bionic = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, distroseries=bionic
+        )
+        pub_artful = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, distroseries=artful
+        )
+        pub_zesty = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, distroseries=zesty
+        )
+        self.assertEqual(
+            [pub_zesty, pub_bionic, pub_artful],
+            list(archive.getPublishedSources(order_by=["series"])),
+        )
+        self.assertEqual(
+            [pub_artful, pub_bionic, pub_zesty],
+            list(archive.getPublishedSources(order_by=["-series"])),
+        )
+
+    def test_order_by_pocket(self):
+        # "pocket" sorts alphabetically by the pocket's title, not by its
+        # database value: BACKPORTS (40) comes before UPDATES (20)
+        # because "Backports" sorts before "Updates".
+        distroseries = self.factory.makeDistroSeries()
+        archive = distroseries.main_archive
+        pub_updates = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            distroseries=distroseries,
+            pocket=PackagePublishingPocket.UPDATES,
+        )
+        pub_backports = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            distroseries=distroseries,
+            pocket=PackagePublishingPocket.BACKPORTS,
+        )
+        self.assertEqual(
+            [pub_backports, pub_updates],
+            list(archive.getPublishedSources(order_by=["pocket"])),
+        )
+        self.assertEqual(
+            [pub_updates, pub_backports],
+            list(archive.getPublishedSources(order_by=["-pocket"])),
+        )
+
+    def test_order_by_status(self):
+        # "status" sorts alphabetically by the status' title, not by its
+        # database value: DELETED (4) comes before PENDING (1) because
+        # "Deleted" sorts before "Pending".
+        archive = self.factory.makeArchive()
+        pub_pending = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, status=PackagePublishingStatus.PENDING
+        )
+        pub_deleted = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, status=PackagePublishingStatus.DELETED
+        )
+        self.assertEqual(
+            [pub_deleted, pub_pending],
+            list(archive.getPublishedSources(order_by=["status"])),
+        )
+        self.assertEqual(
+            [pub_pending, pub_deleted],
+            list(archive.getPublishedSources(order_by=["-status"])),
+        )
+
+    def test_order_by_legacy_string_token(self):
+        # The pre-existing single-value form (either the
+        # ArchivePublishingSort item itself or its webservice string
+        # token) is still accepted as a deprecated alias for
+        # ["-date_published"] / ["date_published"].
+        archive = self.factory.makeArchive()
+        pub0 = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub0).datepublished = datetime(
+            2026, 1, 1, tzinfo=timezone.utc
+        )
+        pub1 = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub1).datepublished = datetime(
+            2026, 1, 2, tzinfo=timezone.utc
+        )
+        expected = [pub1, pub0]
+        self.assertEqual(
+            expected,
+            list(archive.getPublishedSources(order_by="published_date_desc")),
+        )
+        self.assertEqual(
+            expected,
+            list(
+                archive.getPublishedSources(
+                    order_by=ArchivePublishingSort.PUBLISHED_DATE_DESC
+                )
+            ),
+        )
+        self.assertEqual(
+            expected,
+            list(archive.getPublishedSources(order_by=["-date_published"])),
+        )
+
+    def test_order_by_published_date_asc_tiebreak_is_id_descending(self):
+        # Passing `ArchivePublishingSort.PUBLISHED_DATE_ASC` through the
+        # `order_by` parameter does not keep the tie-break direction that
+        # the same value had in the old, pre-existing
+        # ArchivePublishingSort-based API (where ascending sorts
+        # tie-broke ascending on id, as still happens for
+        # `getAllPublishedBinaries`/`_getBinaryPublishingBaseClauses`).
+        # The new `order_by` implementation always tie-breaks descending
+        # on id, regardless of the requested sort direction, since it
+        # standardizes on a single tie-break direction rather than
+        # varying it based on the last-supplied sort key. This is
+        # intentional; this test documents and locks in that behaviour.
+        archive = self.factory.makeArchive()
+        tied_date = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        pub0 = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        pub1 = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub0).datepublished = tied_date
+        removeSecurityProxy(pub1).datepublished = tied_date
+
+        # Both records share the same date_published, so the ordering is
+        # fully determined by the tie-break: descending on id, i.e. the
+        # most-recently-created record (pub1) sorts first even though
+        # we asked for the ascending sort.
+        self.assertEqual(
+            [pub1, pub0],
+            list(
+                archive.getPublishedSources(
+                    order_by=ArchivePublishingSort.PUBLISHED_DATE_ASC
+                )
+            ),
+        )
+
+    def test_order_by_unrecognized_key(self):
+        archive = self.factory.makeArchive()
+        self.assertRaises(
+            InvalidOrderBy,
+            archive.getPublishedSources,
+            order_by=["bogus"],
+        )
+
+    def test_order_by_multiple_keys(self):
+        # Multiple order_by keys combine in the order given.
+        archive = self.factory.makeArchive()
+        pub_pending_new = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, status=PackagePublishingStatus.PENDING
+        )
+        removeSecurityProxy(pub_pending_new).datepublished = datetime(
+            2026, 1, 2, tzinfo=timezone.utc
+        )
+        pub_pending_old = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, status=PackagePublishingStatus.PENDING
+        )
+        removeSecurityProxy(pub_pending_old).datepublished = datetime(
+            2026, 1, 1, tzinfo=timezone.utc
+        )
+        pub_published = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive, status=PackagePublishingStatus.PUBLISHED
+        )
+        removeSecurityProxy(pub_published).datepublished = datetime(
+            2026, 1, 1, tzinfo=timezone.utc
+        )
+        results = list(
+            archive.getPublishedSources(order_by=["status", "-date_published"])
+        )
+        result_ids = [p.id for p in results]
+        # PENDING sorts before PUBLISHED; within PENDING, newest first.
+        self.assertEqual(
+            [pub_pending_new.id, pub_pending_old.id],
+            result_ids[:2],
+        )
+        self.assertIn(pub_published.id, result_ids[2:])
 
 
 class TestGetPublishedSourcesWebService(TestCaseWithFactory):
@@ -4272,6 +4729,163 @@ class TestGetPublishedSourcesWebService(TestCaseWithFactory):
         self.assertTrue(
             entries_asc[4]["self_link"].endswith(f"+sourcepub/{source_ids[0]}")
         )
+
+    def test_getPublishedSources_packageset_filter_webservice(self):
+        # The packageset parameter is typed as IPackageset over the
+        # webservice (not left as a bare, unvalidated Interface
+        # reference), and filters correctly when given a real packageset.
+        distroseries = self.factory.makeDistroSeries()
+        archive = self.factory.makeArchive(
+            distribution=distroseries.distribution
+        )
+        spn = self.factory.makeSourcePackageName()
+        packageset = self.factory.makePackageset(
+            distroseries=distroseries, packages=[spn]
+        )
+        spr = self.factory.makeSourcePackageRelease(sourcepackagename=spn)
+        self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            sourcepackagerelease=spr,
+            distroseries=distroseries,
+        )
+        other_spr = self.factory.makeSourcePackageRelease()
+        self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            sourcepackagerelease=other_spr,
+            distroseries=distroseries,
+        )
+        webservice = webservice_for_person(
+            archive.owner, permission=OAuthPermission.READ_PRIVATE
+        )
+        with admin_logged_in():
+            archive_url = api_url(archive)
+            packageset_url = api_url(packageset)
+        response = webservice.named_get(
+            archive_url,
+            "getPublishedSources",
+            packageset=packageset_url,
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual(1, response.jsonBody()["total_size"])
+
+    def test_getPublishedSources_packageset_filter_wrong_type(self):
+        # Passing a URL to something that isn't an IPackageset is a
+        # Bad Request, not an unhandled server error.
+        archive = self.factory.makeArchive()
+        webservice = webservice_for_person(
+            archive.owner, permission=OAuthPermission.READ_PRIVATE
+        )
+        with admin_logged_in():
+            archive_url = api_url(archive)
+            wrong_type_url = api_url(archive.owner)
+        response = webservice.named_get(
+            archive_url,
+            "getPublishedSources",
+            packageset=wrong_type_url,
+        )
+        self.assertEqual(400, response.status)
+
+    def test_getPublishedSources_filter_by_status_list(self):
+        # status accepts a list of statuses over the webservice, not just
+        # a single value.
+        ppa = self.createTestingPPA()
+        ppa_url = f"/~{ppa.owner.name}/+archive/ubuntu/ppa"
+
+        with admin_logged_in():
+            sources = list(ppa.getPublishedSources())
+            removeSecurityProxy(sources[0]).status = (
+                PackagePublishingStatus.PUBLISHED
+            )
+            removeSecurityProxy(sources[1]).status = (
+                PackagePublishingStatus.SUPERSEDED
+            )
+            Store.of(ppa).flush()
+
+        webservice = webservice_for_person(
+            ppa.owner, permission=OAuthPermission.READ_PRIVATE
+        )
+        response = webservice.named_get(
+            ppa_url,
+            "getPublishedSources",
+            status=["Published", "Superseded"],
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual(2, response.jsonBody()["total_size"])
+
+        # A bare scalar (as before this field became a List) still works.
+        response_scalar = webservice.named_get(
+            ppa_url,
+            "getPublishedSources",
+            status="Published",
+        )
+        self.assertEqual(200, response_scalar.status)
+        self.assertEqual(1, response_scalar.jsonBody()["total_size"])
+
+    def test_getPublishedSources_ubuntu_change(self):
+        # The tri-state ubuntu_change filter works over the webservice.
+        ppa = self.createTestingPPA()
+        ppa_url = f"/~{ppa.owner.name}/+archive/ubuntu/ppa"
+
+        with admin_logged_in():
+            sources = list(ppa.getPublishedSources())
+            for i, source in enumerate(sources):
+                version = "1.2-3ubuntu1" if i == 0 else "1.2-3"
+                removeSecurityProxy(source.sourcepackagerelease).version = (
+                    version
+                )
+            Store.of(ppa).flush()
+
+        webservice = webservice_for_person(
+            ppa.owner, permission=OAuthPermission.READ_PRIVATE
+        )
+        response = webservice.named_get(
+            ppa_url, "getPublishedSources", ubuntu_change=True
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual(1, response.jsonBody()["total_size"])
+
+        # False selects the complement, not "no filter".
+        response_false = webservice.named_get(
+            ppa_url, "getPublishedSources", ubuntu_change=False
+        )
+        self.assertEqual(200, response_false.status)
+        self.assertEqual(4, response_false.jsonBody()["total_size"])
+
+        # Omitting it does not filter at all.
+        response_omitted = webservice.named_get(ppa_url, "getPublishedSources")
+        self.assertEqual(200, response_omitted.status)
+        self.assertEqual(5, response_omitted.jsonBody()["total_size"])
+
+    def test_getPublishedSources_order_by_new_style_keys(self):
+        # The new list-of-field-keys order_by form works over the
+        # webservice too.
+        ppa = self.createTestingPPA()
+        ppa_url = f"/~{ppa.owner.name}/+archive/ubuntu/ppa"
+        webservice = webservice_for_person(
+            ppa.owner, permission=OAuthPermission.READ_PRIVATE
+        )
+        response = webservice.named_get(
+            ppa_url,
+            "getPublishedSources",
+            order_by=["source_package_name"],
+        )
+        self.assertEqual(200, response.status)
+        self.assertEqual(5, response.jsonBody()["total_size"])
+
+    def test_getPublishedSources_order_by_unrecognized_key(self):
+        # An unrecognized order_by key is a Bad Request.
+        ppa = self.createTestingPPA()
+        ppa_url = f"/~{ppa.owner.name}/+archive/ubuntu/ppa"
+        webservice = webservice_for_person(
+            ppa.owner, permission=OAuthPermission.READ_PRIVATE
+        )
+        response = webservice.named_get(
+            ppa_url,
+            "getPublishedSources",
+            order_by=["bogus"],
+        )
+        self.assertEqual(400, response.status)
+        self.assertEqual(b"Unrecognized order_by: 'bogus'", response.body)
 
 
 class TestCopyPackage(TestCaseWithFactory):

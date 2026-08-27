@@ -9,6 +9,7 @@ from lp.app.security import (
     AuthorizationBase,
     DelegatedAuthorization,
 )
+from lp.buildmaster.security import AdminBuildRecord
 from lp.rocks.interfaces.rockbase import IRockBase, IRockBaseSet
 from lp.rocks.interfaces.rockrecipe import IRockRecipe, IRockRecipeBuildRequest
 from lp.rocks.interfaces.rockrecipebuild import IRockRecipeBuild
@@ -91,7 +92,7 @@ class EditRockRecipeBuild(AdminByBuilddAdmin):
         return super().checkAuthenticated(user)
 
 
-class AdminRockRecipeBuild(AdminByBuilddAdmin):
+class AdminRockRecipeBuild(AdminBuildRecord):
     usedfor = IRockRecipeBuild
 
 

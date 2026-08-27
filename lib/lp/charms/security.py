@@ -10,6 +10,7 @@ from lp.app.security import (
     AuthorizationBase,
     DelegatedAuthorization,
 )
+from lp.buildmaster.security import AdminBuildRecord
 from lp.charms.interfaces.charmbase import ICharmBase, ICharmBaseSet
 from lp.charms.interfaces.charmrecipe import (
     ICharmRecipe,
@@ -95,7 +96,7 @@ class EditCharmRecipeBuild(AdminByBuilddAdmin):
         return super().checkAuthenticated(user)
 
 
-class AdminCharmRecipeBuild(AdminByBuilddAdmin):
+class AdminCharmRecipeBuild(AdminBuildRecord):
     usedfor = ICharmRecipeBuild
 
 

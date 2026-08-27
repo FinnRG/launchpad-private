@@ -2100,33 +2100,33 @@ The collection of all CVEs is available at the top level.
     start: 0
     total_size: 10
     ---
-    bugs_collection_link: 'http://.../bugs/cve/2005-2737/bugs'
+    bugs_collection_link: 'http://.../bugs/cve/CVE-2005-2737/bugs'
     date_created: '2005-09-13T14:05:17.043865+00:00'
     date_modified: '2005-09-13T14:05:17.043865+00:00'
     description: 'Cross-site scripting (XSS) vulnerability...'
     display_name: 'CVE-2005-2737'
     resource_type_link: 'http://.../#cve'
-    self_link: 'http://.../bugs/cve/2005-2737'
-    sequence: '2005-2737'
+    self_link: 'http://.../bugs/cve/CVE-2005-2737'
+    sequence: 'CVE-2005-2737'
     status: 'Candidate'
     title: 'CVE-2005-2737 (Candidate)'
     url: 'https://cve.org/CVERecord?id=CVE-2005-2737'
-    web_link: 'http://bugs.launchpad.test/bugs/cve/2005-2737'
+    web_link: 'http://bugs.launchpad.test/bugs/cve/CVE-2005-2737'
     ---
     ...
-    self_link: 'http://.../bugs/cve/2005-2736'
-    ...
-    ---
-    ...
-    self_link: 'http://.../bugs/cve/2005-2735'
+    self_link: 'http://.../bugs/cve/CVE-2005-2736'
     ...
     ---
     ...
-    self_link: 'http://.../bugs/cve/2005-2734'
+    self_link: 'http://.../bugs/cve/CVE-2005-2735'
     ...
     ---
     ...
-    self_link: 'http://.../bugs/cve/2005-2733'
+    self_link: 'http://.../bugs/cve/CVE-2005-2734'
+    ...
+    ---
+    ...
+    self_link: 'http://.../bugs/cve/CVE-2005-2733'
     ...
 
 And for every bug we can look at the CVEs linked to it.
@@ -2138,18 +2138,18 @@ And for every bug we can look at the CVEs linked to it.
     start: 0
     total_size: 1
     ---
-    bugs_collection_link: 'http://.../bugs/cve/1999-8979/bugs'
+    bugs_collection_link: 'http://.../bugs/cve/CVE-1999-8979/bugs'
     date_created: '2005-09-07T19:00:32.944561+00:00'
     date_modified: '2005-09-13T14:00:03.508959+00:00'
     description: 'Firefox crashes all the time'
     display_name: 'CVE-1999-8979'
     resource_type_link: 'http://.../#cve'
-    self_link: 'http://.../bugs/cve/1999-8979'
-    sequence: '1999-8979'
+    self_link: 'http://.../bugs/cve/CVE-1999-8979'
+    sequence: 'CVE-1999-8979'
     status: 'Entry'
     title: 'CVE-1999-8979 (Entry)'
     url: 'https://cve.org/CVERecord?id=CVE-1999-8979'
-    web_link: 'http://bugs.launchpad.test/bugs/cve/1999-8979'
+    web_link: 'http://bugs.launchpad.test/bugs/cve/CVE-1999-8979'
     ---
 
 For every CVE we can also look at the bugs linked to it.
@@ -2169,7 +2169,7 @@ Unlink CVEs from that bug.
     ...     webservice.named_post(
     ...         bug_one["self_link"],
     ...         "unlinkCVE",
-    ...         cve="http://api.launchpad.test/beta/bugs/cve/1999-8979",
+    ...         cve="http://api.launchpad.test/beta/bugs/cve/CVE-1999-8979",
     ...     )
     ... )
     HTTP/1.1 200 Ok...
@@ -2185,7 +2185,7 @@ And link new CVEs to the bug.
     ...     webservice.named_post(
     ...         bug_one["self_link"],
     ...         "linkCVE",
-    ...         cve="http://api.launchpad.test/beta/bugs/cve/2005-2733",
+    ...         cve="http://api.launchpad.test/beta/bugs/cve/CVE-2005-2733",
     ...     )
     ... )
     HTTP/1.1 200 Ok...
@@ -2195,7 +2195,7 @@ And link new CVEs to the bug.
     total_size: 1
     ---
     ...
-    self_link: 'http://.../bugs/cve/2005-2733'
+    self_link: 'http://.../bugs/cve/CVE-2005-2733'
     ...
 
 Add a new task to the bug.

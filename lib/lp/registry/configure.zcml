@@ -1613,7 +1613,8 @@
                 bug_target_parent
                 getBugTaskWeightFunction
                 pillar
-                searchTasks"/>
+                searchTasks
+                searchTasksCounts"/>
 
         <require
             permission="launchpad.View"
@@ -1878,7 +1879,8 @@
                  enable_bugfiling_duplicate_search
                  getBugTaskWeightFunction
                  pillar
-                 searchTasks"/>
+                 searchTasks
+                 searchTasksCounts"/>
 
     </class>
     <adapter

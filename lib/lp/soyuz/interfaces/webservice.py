@@ -179,6 +179,9 @@ patch_collection_return_type(
     IArchive, "api_getPublishedSources", ISourcePackagePublishingHistory
 )
 patch_plain_parameter_type(
+    IArchive, "api_getPublishedSources", "packageset", IPackageset
+)
+patch_plain_parameter_type(
     IArchive, "getAllPublishedBinaries", "distroarchseries", IDistroArchSeries
 )
 patch_collection_return_type(

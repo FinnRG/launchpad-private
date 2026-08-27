@@ -97,7 +97,7 @@ from lp.blueprints.model.specificationsearch import (
     search_specifications,
 )
 from lp.blueprints.model.specificationworkitem import SpecificationWorkItem
-from lp.bugs.interfaces.bugtarget import IBugTarget
+from lp.bugs.interfaces.bugtarget import BugTaskSearchCounts, IBugTarget
 from lp.bugs.interfaces.bugtask import BugTaskStatusSearch, IBugTaskSet
 from lp.bugs.interfaces.bugtasksearch import (
     BugTaskSearchParams,
@@ -1117,6 +1117,24 @@ class Person(
             return getUtility(IBugTaskSet).search(
                 search_params, *args, prejoins=prejoins
             )
+
+    def searchTasksCounts(
+        self, search_params, *args, **kwargs
+    ) -> BugTaskSearchCounts:
+        """See `IHasBugs`."""
+        if search_params is None and len(args) == 0:
+            # Direct web API calls on a Person search for tasks related to
+            # that person.
+            user = kwargs.pop("user")
+            search_params = get_person_bugtasks_search_params(
+                user, self, **kwargs
+            )
+            counts = getUtility(IBugTaskSet).searchCounts(*search_params)
+        elif len(kwargs) > 0:
+            return HasBugsBase.searchTasksCounts(self, search_params, **kwargs)
+        else:
+            counts = getUtility(IBugTaskSet).searchCounts(search_params, *args)
+        return self._formatSearchCounts(counts)
 
     def getProjectsAndCategoriesContributedTo(self, user, limit=5):
         """See `IPerson`."""

@@ -503,7 +503,7 @@ class ImportBugTestCase(TestCase):
         self.assertEqual(bug.name, "some-bug")
         self.assertEqual(
             sorted(cve.sequence for cve in bug.cves),
-            ["2005-2730", "2005-2736", "2005-2737"],
+            ["CVE-2005-2730", "CVE-2005-2736", "CVE-2005-2737"],
         )
         self.assertEqual(bug.tags, ["bar", "foo"])
         self.assertEqual(len(bug.getDirectSubscribers()), 2)

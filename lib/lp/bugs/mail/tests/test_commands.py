@@ -872,12 +872,35 @@ class CVEEmailCommandTestCase(TestCaseWithFactory):
         self.assertContentEqual([cve], bug.cves)
         self.assertEqual(dummy_event, event)
 
+    def test_execute_bug_with_prefix(self):
+        bug = self.factory.makeBug()
+        login_person(bug.bugtasks[0].target.owner)
+        cve = self.factory.makeCVE("1999-1717")
+        command = CVEEmailCommand("cve", ["CVE-1999-1717"])
+        dummy_event = object()
+        exec_bug, event = command.execute(bug, dummy_event)
+        self.assertEqual(bug, exec_bug)
+        self.assertContentEqual([cve], bug.cves)
+        self.assertEqual(dummy_event, event)
+
     def test_execute_bug_params(self):
         user = self.factory.makePerson()
         login_person(user)
         cve = self.factory.makeCVE("1999-1717")
         bug_params = CreateBugParams(title="bug title", owner=user)
         command = CVEEmailCommand("cve", ["1999-1717"])
+        dummy_event = object()
+        params, event = command.execute(bug_params, dummy_event)
+        self.assertEqual(bug_params, params)
+        self.assertEqual(cve, params.cve)
+        self.assertEqual(dummy_event, event)
+
+    def test_execute_bug_params_with_prefix(self):
+        user = self.factory.makePerson()
+        login_person(user)
+        cve = self.factory.makeCVE("1999-1717")
+        bug_params = CreateBugParams(title="bug title", owner=user)
+        command = CVEEmailCommand("cve", ["CVE-1999-1717"])
         dummy_event = object()
         params, event = command.execute(bug_params, dummy_event)
         self.assertEqual(bug_params, params)

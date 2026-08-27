@@ -53,6 +53,7 @@ from lp.app.enums import (
     ServiceUsage,
 )
 from lp.app.interfaces.launchpad import ILaunchpadCelebrities
+from lp.app.validators.cve import valid_cve
 from lp.archivepublisher.interfaces.archivepublisherrun import (
     IArchivePublisherRunSet,
 )
@@ -347,6 +348,7 @@ from lp.translations.interfaces.translationtemplatesbuild import (
     ITranslationTemplatesBuildSource,
 )
 from lp.translations.interfaces.translator import ITranslatorSet
+from lp.translations.model.distroserieslanguage import DistroSeriesLanguage
 from lp.translations.model.translationtemplateitem import (
     TranslationTemplateItem,
 )
@@ -3322,6 +3324,32 @@ class LaunchpadObjectFactory(ObjectFactory):
             pluralexpression=plural_expression,
         )
 
+    def makeDistroSeriesLanguage(
+        self,
+        distroseries=None,
+        language=None,
+        language_code=None,
+        language_name=None,
+        current_count=0,
+        rosetta_count=0,
+        contributor_count=0,
+        date_updated=None,
+    ):
+        """Create translation statistics for a distroseries and language."""
+        if distroseries is None:
+            distroseries = self.makeDistroSeries()
+        if language is None:
+            language = self.makeLanguage(
+                language_code=language_code, name=language_name
+            )
+        distroserieslanguage = DistroSeriesLanguage(distroseries, language)
+        distroserieslanguage.currentcount = current_count
+        distroserieslanguage.rosettacount = rosetta_count
+        distroserieslanguage.contributorcount = contributor_count
+        if date_updated is not None:
+            distroserieslanguage.dateupdated = date_updated
+        return ProxyFactory(distroserieslanguage)
+
     def makeLanguagePack(self, distroseries=None, languagepack_type=None):
         """Create a language pack."""
         if distroseries is None:
@@ -6079,7 +6107,12 @@ class LaunchpadObjectFactory(ObjectFactory):
     ):
         """Create a new CVE record."""
         if sequence is None:
-            sequence = "2000-%04i" % self.getUniqueInteger()
+            sequence = "CVE-2000-%04i" % self.getUniqueInteger()
+
+        # Normalise bare CVE sequences (e.g. "2024-1234") to their full
+        # prefixed form ("CVE-2024-1234") so callers don't have to.
+        if valid_cve(sequence):
+            sequence = "CVE-" + sequence
 
         if description is None:
             description = self.getUniqueUnicode()

@@ -4,6 +4,7 @@
 """Security adapters for the buildmaster package."""
 
 __all__ = [
+    "AdminBuildRecord",
     "EditPackageBuild",
     "ViewBuilder",
     "ViewProcessor",
@@ -52,6 +53,9 @@ class ModerateBuilder(EditBuilder):
 
 class AdminBuildRecord(AdminByBuilddAdmin):
     usedfor = IBuildFarmJob
+
+    def checkAuthenticated(self, user):
+        return user.in_launchpad_developers or super().checkAuthenticated(user)
 
 
 class EditBuildFarmJob(AdminByBuilddAdmin):

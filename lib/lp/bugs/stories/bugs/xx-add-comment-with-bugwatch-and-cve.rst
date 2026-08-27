@@ -21,7 +21,7 @@ added to the bugwatches resp CVEs related to this bug
 
     >>> added_cve_link = user_browser.getLink("1991-9911")
     >>> print(added_cve_link)
-    <.../bugs/cve/1991-9911'>
+    <.../bugs/cve/CVE-1991-9911'>
 
     >>> bugwatch_portlet = find_portlet(
     ...     user_browser.contents, "Remote bug watches"

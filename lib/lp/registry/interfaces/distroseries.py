@@ -394,6 +394,62 @@ class IDistroSeriesPublic(
     distroserieslanguages = Attribute(
         "The set of dr-languages in this " "series."
     )
+    translation_coverage = exported(
+        doNotSnapshot(
+            CollectionField(
+                title=_("Translation coverage"),
+                description=_(
+                    "The visible languages with translation statistics for "
+                    "this series, ordered case-insensitively by English "
+                    "language name. Use getTranslationCoverage to choose "
+                    "another ordering. The collection is empty when no such "
+                    "languages exist, and unavailable while translations for "
+                    "the series are hidden."
+                ),
+                # Really IDistroSeriesLanguageEntry, patched in
+                # lp.registry.interfaces.webservice.
+                value_type=Reference(schema=Interface),
+                readonly=True,
+            )
+        ),
+        as_of="devel",
+    )
+
+    @operation_parameters(
+        order_by=List(
+            title=_("List of fields by which the results are ordered."),
+            description=_(
+                "Use language_name, language_code, translated_percentage, "
+                "contributor_count, or date_updated. Prefix a field with "
+                "'-' for descending order. Fields are applied in the order "
+                "given."
+            ),
+            value_type=TextLine(),
+            required=False,
+        )
+    )
+    # Really IDistroSeriesLanguageEntry, patched in
+    # lp.registry.interfaces.webservice.
+    @operation_returns_collection_of(Interface)
+    @export_read_operation()
+    @operation_for_version("devel")
+    def getTranslationCoverage(order_by=None):
+        """Return translation coverage entries for this series.
+
+        Only visible languages are returned. By default, results are ordered
+        case-insensitively by English language name. When order_by is given,
+        its fields are applied in sequence, and a stable language-code order
+        resolves remaining ties. The collection is empty when no visible
+        language has translation statistics, and unavailable while
+        translations for the series are hidden.
+
+        :param order_by: Public field names to sort by. Prefix a field with
+            "-" for descending order.
+        :raises InvalidTranslationCoverageOrder: If order_by contains an
+            unsupported field.
+        :raises TranslationUnavailable: If translations are hidden from the
+            current user.
+        """
 
     hide_all_translations = Bool(
         title="Hide translations for this release",
@@ -916,7 +972,12 @@ class IDistroSeriesPublic(
         """
 
     def getBugSummaryStatusImportanceCounts(user, milestone=None):
-        """Return BugSummary counts grouped by status and importance.
+        """Legacy internal API for status and importance cross-tab counts.
+
+        This internal method remains for the legacy series page and can be
+        removed when that page migrates to Launchpad UI.
+        ``IHasBugs.searchTasksCounts`` offers API consumers separate status
+        and importance totals, but it does not provide this full cross-tab.
 
         If ``milestone`` is provided, counts are restricted to bugs that
         match both this distroseries and that milestone.
@@ -1418,10 +1479,13 @@ patch_plain_parameter_type(
     IDistroSeries, "getDifferencesTo", "parent_series", IDistroSeries
 )
 
-# We assign the schema for an `IHasBugs` method argument here
+# We assign the schema for `IHasBugs` method arguments here
 # in order to avoid circular dependencies.
 patch_plain_parameter_type(
     IHasBugs, "searchTasks", "nominated_for", IDistroSeries
+)
+patch_plain_parameter_type(
+    IHasBugs, "searchTasksCounts", "nominated_for", IDistroSeries
 )
 
 

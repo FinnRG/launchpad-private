@@ -505,7 +505,7 @@ class TestSOSSImporter(TestCaseWithFactory):
         """Test validate the SOSSRecord"""
         soss_importer = SOSSImporter(self.soss)
         valid = soss_importer._validate_soss_record(
-            self.soss_record, f"CVE-{self.cve.sequence}"
+            self.soss_record, self.cve.sequence
         )
         self.assertEqual(valid, True)
 
@@ -516,7 +516,7 @@ class TestSOSSImporter(TestCaseWithFactory):
             "CVE-2025-1979: has no affected packages",
             soss_importer._validate_soss_record,
             self.soss_record,
-            f"CVE-{self.cve.sequence}",
+            self.cve.sequence,
         )
 
         # SOSSRecord with candidate != sequence is not valid
@@ -526,7 +526,7 @@ class TestSOSSImporter(TestCaseWithFactory):
             "CVE sequence mismatch: nonvalid != CVE-2025-1979",
             soss_importer._validate_soss_record,
             self.soss_record,
-            f"CVE-{self.cve.sequence}",
+            self.cve.sequence,
         )
 
     def test_checkUserPermissions(self):

@@ -332,6 +332,20 @@
       />
 
     <!-- Define the widget used by fields that use
+         DistributionPackageVocabulary (the OCI-aware wrapper).  It must use
+         the same picker as DistributionSourcePackageVocabulary so that the
+         package search is scoped to the sibling distribution field rather
+         than to the page context. -->
+    <view
+      type="zope.publisher.interfaces.browser.IBrowserRequest"
+      for="zope.schema.interfaces.IChoice
+        lp.registry.vocabularies.DistributionPackageVocabulary"
+      provides="zope.formlib.interfaces.IInputWidget"
+      factory="lp.app.widgets.popup.DistributionSourcePackagePickerWidget"
+      permission="zope.Public"
+      />
+
+    <!-- Define the widget used by fields that use
          ArchiveSourcePackageVocabulary. -->
     <view
       type="zope.publisher.interfaces.browser.IBrowserRequest"

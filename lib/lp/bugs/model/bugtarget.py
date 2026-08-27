@@ -16,8 +16,14 @@ from zope.component import getUtility
 from zope.interface import implementer
 
 from lp.bugs.interfaces.bug import IBugSet
-from lp.bugs.interfaces.bugtarget import IOfficialBugTag
-from lp.bugs.interfaces.bugtask import UNRESOLVED_BUGTASK_STATUSES
+from lp.bugs.interfaces.bugtarget import BugTaskSearchCounts, IOfficialBugTag
+from lp.bugs.interfaces.bugtask import (
+    DB_INCOMPLETE_BUGTASK_STATUSES,
+    UNRESOLVED_BUGTASK_STATUSES,
+    BugTaskGroupedCounts,
+    BugTaskImportance,
+    BugTaskStatusSearch,
+)
 from lp.bugs.interfaces.bugtaskfilter import simple_weight_calculator
 from lp.bugs.interfaces.bugtasksearch import (
     BugTagsSearchCombinator,
@@ -36,6 +42,22 @@ class HasBugsBase:
     All `IHasBugs` implementations should inherit from this class
     or from `BugTargetBase`.
     """
+
+    def _makeSearchParams(self, search_params, user, search_arguments):
+        """Build search parameters shared by search operations."""
+        if search_arguments.get("status") is None:
+            search_arguments["status"] = list(UNRESOLVED_BUGTASK_STATUSES)
+        if (
+            "order_by" in search_arguments
+            and search_arguments["order_by"] is None
+        ):
+            search_arguments["order_by"] = ["-importance"]
+        if search_params is None:
+            search_params = BugTaskSearchParams.fromSearchForm(
+                user, **search_arguments
+            )
+        self._customizeSearchParams(search_params)
+        return search_params
 
     def searchTasks(
         self,
@@ -75,23 +97,86 @@ class HasBugsBase:
         information_type=None,
     ):
         """See `IHasBugs`."""
-        if status is None:
-            # If no statuses are supplied, default to the
-            # list of all unreolved statuses.
-            status = list(UNRESOLVED_BUGTASK_STATUSES)
-
-        if order_by is None:
-            # If no order_by value is supplied, default to importance.
-            order_by = ["-importance"]
-
-        if search_params is None:
-            kwargs = dict(locals())
-            del kwargs["self"]
-            del kwargs["user"]
-            del kwargs["search_params"]
-            search_params = BugTaskSearchParams.fromSearchForm(user, **kwargs)
-        self._customizeSearchParams(search_params)
+        search_arguments = dict(locals())
+        del search_arguments["self"]
+        del search_arguments["user"]
+        del search_arguments["search_params"]
+        search_params = self._makeSearchParams(
+            search_params, user, search_arguments
+        )
         return BugTaskSet().search(search_params)
+
+    def searchTasksCounts(
+        self,
+        search_params,
+        user=None,
+        search_text=None,
+        status=None,
+        importance=None,
+        assignee=None,
+        bug_reporter=None,
+        bug_supervisor=None,
+        bug_commenter=None,
+        bug_subscriber=None,
+        owner=None,
+        affected_user=None,
+        affects_me=False,
+        has_patch=None,
+        has_cve=None,
+        distribution=None,
+        tags=None,
+        tags_combinator=BugTagsSearchCombinator.ALL,
+        omit_duplicates=True,
+        omit_targeted=None,
+        status_upstream=None,
+        milestone=None,
+        component=None,
+        nominated_for=None,
+        sourcepackagename=None,
+        has_no_package=None,
+        linked_branches=None,
+        linked_blueprints=None,
+        structural_subscriber=None,
+        modified_since=None,
+        created_since=None,
+        created_before=None,
+        information_type=None,
+    ) -> BugTaskSearchCounts:
+        """See `IHasBugs`."""
+        search_arguments = dict(locals())
+        del search_arguments["self"]
+        del search_arguments["user"]
+        del search_arguments["search_params"]
+        search_params = self._makeSearchParams(
+            search_params, user, search_arguments
+        )
+        counts = BugTaskSet().searchCounts(search_params)
+        return self._formatSearchCounts(counts)
+
+    @staticmethod
+    def _formatSearchCounts(
+        counts: BugTaskGroupedCounts,
+    ) -> BugTaskSearchCounts:
+        """Convert grouped database counts to the public response shape."""
+        by_status = {
+            status.name: 0
+            for status in BugTaskStatusSearch.items
+            if status not in DB_INCOMPLETE_BUGTASK_STATUSES
+        }
+        by_importance = {
+            importance.name: 0 for importance in BugTaskImportance.items
+        }
+        total = 0
+        for (status, importance), count in counts.items():
+            by_status[status.name] += count
+            by_importance[importance.name] += count
+            total += count
+
+        return {
+            "total": total,
+            "by_status": by_status,
+            "by_importance": by_importance,
+        }
 
     def _customizeSearchParams(self, search_params):
         """Customize `search_params` for a specific target."""

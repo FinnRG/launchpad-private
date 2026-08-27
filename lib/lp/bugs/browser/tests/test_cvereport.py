@@ -123,7 +123,7 @@ class TestCVEReportView(TestCaseWithFactory):
         html_data = self.view.render()
         cve_links = re.findall(
             r'<a style="text-decoration: none" '
-            r'href="http://bugs.launchpad.test/bugs/cve/\d{4}-\d{4}">'
+            r'href="http://bugs.launchpad.test/bugs/cve/CVE-\d{4}-\d{4}">'
             r'<img src="/@@/link" alt="" />'
             r'<span style="text-decoration: underline">CVE-\d{4}-\d{4}</span>'
             r"</a>",
@@ -233,6 +233,33 @@ class TestCVEReportView(TestCaseWithFactory):
             "</a>"
         )
         self.assertEqual(expected, result)
+
+    def test_cve_url_backward_compat_bare_sequence(self):
+        """Browsing to a bare sequence URL resolves to the same CVE page
+        as the canonical prefixed URL.
+
+        /bugs/cve/2024-1234 and /bugs/cve/CVE-2024-1234 must both work.
+        GetitemNavigation calls CveSet.__getitem__ which normalises bare
+        sequences, so both URL forms traverse to the same object.
+        """
+        cve = self.factory.makeCVE(sequence="2024-9876")
+        person = self.factory.makePerson()
+
+        # canonical_url uses cve.sequence (prefixed form: CVE-2024-9876)
+        prefixed_url = canonical_url(cve)
+        # construct the bare-sequence form manually
+        bare_url = prefixed_url.replace("/cve/CVE-", "/cve/")
+
+        prefixed_browser = self.getUserBrowser(prefixed_url, person)
+        bare_browser = self.getUserBrowser(bare_url, person)
+
+        self.assertEqual(200, prefixed_browser.responseStatusCode)
+        self.assertEqual(200, bare_browser.responseStatusCode)
+        # Both URLs render the same page title
+        self.assertEqual(
+            prefixed_browser.title,
+            bare_browser.title,
+        )
 
     def test_query_count(self):
         cve = self.getCVE()

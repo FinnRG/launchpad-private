@@ -136,7 +136,7 @@ def update_one_cve(cve_node: Element, log: LaunchpadLogger) -> bool:
     :return: True if the CVE was processed successfully, False on error.
     """
     # get the sequence number
-    sequence = six.ensure_text(cve_node.get("seq"))
+    sequence = six.ensure_text(cve_node.get("seq"))  # bare YYYY-NNNN from XML
     # establish its status
     status = six.ensure_text(cve_node.get("type"))
     # get the description
@@ -150,23 +150,26 @@ def update_one_cve(cve_node: Element, log: LaunchpadLogger) -> bool:
     else:
         log.error("Unknown status %s for CVE-%s" % (status, sequence))
         return False
+    # CAN- was the old candidate prefix, retired by MITRE ~2005.
+    # All CVE identifiers now use CVE- regardless of their status.
+    full_sequence = f"CVE-{sequence}"
     # find or create the CVE entry in the db
     cveset = getUtility(ICveSet)
-    cve = cveset[sequence]
+    cve = cveset[full_sequence]
     if cve is None:
-        cve = cveset.new(sequence, description, new_status)
-        log.info("CVE-%s created" % sequence)
+        cve = cveset.new(full_sequence, description, new_status)
+        log.info("%s created" % full_sequence)
     # update the CVE if needed
     modified = False
     if cve.status != new_status:
         log.info(
-            "CVE-%s changed from %s to %s"
-            % (cve.sequence, cve.status.title, new_status.title)
+            "%s changed from %s to %s"
+            % (full_sequence, cve.status.title, new_status.title)
         )
         cve.status = new_status
         modified = True
     if cve.description != description:
-        log.info("CVE-%s updated description" % cve.sequence)
+        log.info("%s updated description" % full_sequence)
         cve.description = description
         modified = True
     # make sure we have copies of all the references.
@@ -770,7 +773,8 @@ class CVEUpdater(LaunchpadCronScript):
         cna_data = containers.get("cna", {})
 
         # get basic CVE information
-        sequence = cve_metadata.get("cveId", "").replace("CVE-", "")
+        # Store the full identifier including the prefix (e.g. "CVE-2024-1234")
+        sequence = cve_metadata.get("cveId", "")
 
         # get description (required to be in English)
         description = None
@@ -785,7 +789,7 @@ class CVEUpdater(LaunchpadCronScript):
                 break
 
         if not description:
-            self.logger.debug(f"No description for CVE-{sequence}")
+            self.logger.debug(f"No description for {sequence}")
             return
 
         # get affected information
@@ -796,19 +800,19 @@ class CVEUpdater(LaunchpadCronScript):
         cve = cveset[sequence]
         if cve is None:
             cve = cveset.new(sequence, description, status)
-            self.logger.info(f"CVE-{sequence} created")
+            self.logger.info(f"{sequence} created")
 
         # update CVE if needed
         modified = False
         if cve.status != status:
             self.logger.info(
-                f"CVE-{sequence} changed from {cve.status.title}"
+                f"{sequence} changed from {cve.status.title}"
                 f" to {status.title}"
             )
             cve.status = status
             modified = True
         if cve.description != description:
-            self.logger.info(f"CVE-{sequence} updated description")
+            self.logger.info(f"{sequence} updated description")
             cve.description = description
             modified = True
 

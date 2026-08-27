@@ -4,7 +4,7 @@ from pathlib import Path
 from zope.component import getUtility
 
 from lp.app.interfaces.launchpad import ILaunchpadCelebrities
-from lp.app.validators.cve import CVEREF_PATTERN
+from lp.app.validators.cve import valid_vulnerability_id
 from lp.bugs.scripts.uct import UCTImporter
 from lp.services.scripts.base import LaunchpadScript
 
@@ -51,10 +51,16 @@ class UCTImportScript(LaunchpadScript):
             logger.info(
                 "Importing CVE files from directory: %s", path.resolve()
             )
+            # If the filter looks like a bare CVE year/sequence pattern
+            # (starts with a digit), prepend "CVE-" so it matches the
+            # actual filenames (e.g. "2007*" -> "CVE-2007*").
+            glob_filter = self.options.filter
+            if glob_filter and glob_filter[0].isdigit():
+                glob_filter = "CVE-" + glob_filter
             cve_paths = sorted(
                 p
-                for p in path.rglob("CVE-%s" % self.options.filter)
-                if p.is_file() and CVEREF_PATTERN.match(p.name)
+                for p in path.rglob(glob_filter)
+                if p.is_file() and valid_vulnerability_id(p.name)
             )
             if not cve_paths:
                 logger.warning("Could not find CVE files in %s", path)

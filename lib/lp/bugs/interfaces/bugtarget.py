@@ -1,9 +1,10 @@
-# Copyright 2010-2012 Canonical Ltd.  This software is licensed under the
+# Copyright 2010-2026 Canonical Ltd.  This software is licensed under the
 # GNU Affero General Public License version 3 (see the file LICENSE).
 
 """Interfaces related to bugs."""
 
 __all__ = [
+    "BugTaskSearchCounts",
     "IBugTarget",
     "IHasBugs",
     "IHasExpirableBugs",
@@ -18,6 +19,9 @@ __all__ = [
     "DISABLE_BUG_WEBHOOKS_FEATURE_FLAG",
 ]
 
+
+import copy
+import typing
 
 from lazr.restful.declarations import (
     REQUEST_USER,
@@ -66,6 +70,15 @@ from lp.services.webservice.apihelpers import (
     patch_plain_parameter_type,
     patch_reference_property,
 )
+
+
+class BugTaskSearchCounts(typing.TypedDict):
+    """Grouped bug task counts returned by ``searchTasksCounts``."""
+
+    total: int
+    by_status: typing.Dict[str, int]
+    by_importance: typing.Dict[str, int]
+
 
 search_tasks_params_common = {
     "order_by": List(
@@ -146,6 +159,14 @@ search_tasks_params_for_api_devel = dict(
         required=False,
     ),
 )
+
+# `copy_field` only shallow-copies fields, but List value types are patched
+# during webservice registration and must not be shared between operations.
+search_tasks_counts_params = {
+    name: copy.deepcopy(field)
+    for name, field in search_tasks_params_for_api_devel.items()
+    if name != "order_by"
+}
 
 
 BUG_POLICY_ALLOWED_TYPES = {
@@ -232,6 +253,54 @@ class IHasBugs(Interface):
 
         Note: milestone is currently ignored for all IBugTargets
         except IProduct.
+        """
+
+    @call_with(search_params=None, user=REQUEST_USER)
+    @operation_parameters(**search_tasks_counts_params)
+    @export_read_operation()
+    @operation_for_version("devel")
+    def searchTasksCounts(
+        search_params,
+        user=None,
+        search_text=None,
+        status=None,
+        importance=None,
+        assignee=None,
+        bug_reporter=None,
+        bug_supervisor=None,
+        bug_commenter=None,
+        bug_subscriber=None,
+        owner=None,
+        affected_user=None,
+        has_patch=None,
+        has_cve=None,
+        distribution=None,
+        tags=None,
+        tags_combinator=BugTagsSearchCombinator.ALL,
+        omit_duplicates=True,
+        omit_targeted=None,
+        status_upstream=None,
+        milestone=None,
+        component=None,
+        nominated_for=None,
+        sourcepackagename=None,
+        has_no_package=None,
+        linked_branches=None,
+        linked_blueprints=None,
+        structural_subscriber=None,
+        modified_since=None,
+        created_since=None,
+        created_before=None,
+        information_type=None,
+    ) -> BugTaskSearchCounts:
+        """Bug task counts grouped by status and importance.
+
+        The response is a JSON object.  ``total`` is an integer.
+        ``by_status`` and ``by_importance`` map stable enum names to integer
+        counts, including values with a count of zero.
+
+        When ``status`` is omitted, only unresolved bug tasks are counted;
+        resolved status entries remain zero.
         """
 
     def getBugTaskWeightFunction():

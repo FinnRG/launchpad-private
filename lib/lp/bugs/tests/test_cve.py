@@ -144,7 +144,7 @@ class TestCveSetGetFilteredCves(TestCaseWithFactory):
         result = self.cves.getFilteredCves(in_distribution=[distribution1])
         cves = list(result)
         self.assertEqual(1, len(cves))
-        self.assertEqual("2099-9876", cves[0])
+        self.assertEqual("CVE-2099-9876", cves[0])
 
         # No result as there is no cve with a vulnerability for distribution2
         result = self.cves.getFilteredCves(in_distribution=[distribution2])
@@ -214,7 +214,7 @@ class TestCveSetGetFilteredCves(TestCaseWithFactory):
         )
         cves = list(result)
         self.assertEqual(1, len(cves))
-        self.assertEqual("2099-9876", cves[0])
+        self.assertEqual("CVE-2099-9876", cves[0])
 
         # No result as we created a vulnerability for distribution3 for the cve
         self.factory.makeVulnerability(distribution3, cve=cve)
@@ -231,7 +231,7 @@ class TestCveSetGetFilteredCves(TestCaseWithFactory):
         result = self.cves.getFilteredCves(modified_since=modified_since)
         cves = list(result)
         self.assertEqual(1, len(cves))
-        self.assertEqual("2099-9876", cves[0])
+        self.assertEqual("CVE-2099-9876", cves[0])
 
     def test_getFilteredCves_offset(self):
         self.factory.makeCVE(sequence="2099-9876")
@@ -241,7 +241,7 @@ class TestCveSetGetFilteredCves(TestCaseWithFactory):
         self.assertEqual(10, len(cves))
 
         # Using offset = 1 we skipped the latest modified cve
-        self.assertNotIn("2099-9876", cves)
+        self.assertNotIn("CVE-2099-9876", cves)
 
     def test_getFilteredCves_limit(self):
         result = self.cves.getFilteredCves(limit=5)
@@ -310,7 +310,7 @@ class TestCveSetAdvancedSearchWebService(TestCaseWithFactory):
 
         self.assertEqual(200, response.status)
         self.assertEqual(1, len(response.jsonBody()["cves"]))
-        self.assertEqual("2099-9876", response.jsonBody()["cves"][0])
+        self.assertEqual("CVE-2099-9876", response.jsonBody()["cves"][0])
 
     def test_advancedSearch_not_in_distribution(self):
         not_in_distribution = [api_url(self.distribution1)]
@@ -401,7 +401,7 @@ class TestCveSetAdvancedSearchWebService(TestCaseWithFactory):
         self.assertEqual(10, len(response.jsonBody()["cves"]))
 
         # Using offset = 1 we skipped the latest modified cve
-        self.assertNotIn("2099-9876", response.jsonBody()["cves"])
+        self.assertNotIn("CVE-2099-9876", response.jsonBody()["cves"])
 
     def test_advancedSearch_limit(self):
         webservice = webservice_for_person(

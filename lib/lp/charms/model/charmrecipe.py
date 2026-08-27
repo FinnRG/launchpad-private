@@ -292,7 +292,15 @@ class CharmRecipe(StormBase, WebhookTargetMixin):
 
     git_path = Unicode(name="git_path", allow_none=True)
 
-    build_path = Unicode(name="build_path", allow_none=True)
+    def _validate_build_path(self, attr, value):
+        # Trim trailing "/" to avoid path-collapsing issues over turnip calls.
+        if value is not None:
+            value = value.rstrip("/") or None
+        return value
+
+    build_path = Unicode(
+        name="build_path", allow_none=True, validator=_validate_build_path
+    )
 
     require_virtualized = Bool(name="require_virtualized")
 

@@ -33,7 +33,7 @@ To create a CVE, call ICveSet.new(sequence, description,
     status=CveStatus.CANDIDATE)
 
     >>> cve = cveset.new(
-    ...     sequence="2004-0276",
+    ...     sequence="CVE-2004-0276",
     ...     description="A new CVE",
     ...     status=CveStatus.ENTRY,
     ... )
@@ -141,7 +141,7 @@ Since 2014, CVEs can have an identifier (sequence) longer than 4-digits.
 CVEs creation accepts 2014 format:
 
     >>> cve_2014 = cveset.new(
-    ...     sequence="2014-999999",
+    ...     sequence="CVE-2014-999999",
     ...     description="A new-style CVE sequence",
     ...     status=CveStatus.ENTRY,
     ... )
