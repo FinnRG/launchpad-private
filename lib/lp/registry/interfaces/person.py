@@ -150,6 +150,7 @@ from lp.services.identity.interfaces.account import AccountStatus, IAccount
 from lp.services.identity.interfaces.emailaddress import IEmailAddress
 from lp.services.webapp.authorization import check_permission
 from lp.services.webapp.interfaces import ILaunchpadApplication
+from lp.services.webauthn.interfaces import IRegisteredAuthenticator
 from lp.services.webservice.apihelpers import (
     patch_collection_property,
     patch_collection_return_type,
@@ -3362,3 +3363,5 @@ patch_reference_property(IJabberID, "person", IPerson)
 patch_reference_property(IWikiName, "person", IPerson)
 patch_reference_property(IEmailAddress, "person", IPerson)
 patch_reference_property(ISocialAccount, "person", IPerson)
+patch_reference_property(IRegisteredAuthenticator, "owner", IPerson)
+patch_reference_property(IRegisteredAuthenticator, "revoked_by", IPerson)
