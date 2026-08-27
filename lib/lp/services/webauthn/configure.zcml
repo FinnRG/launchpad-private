@@ -1,0 +1,31 @@
+<!-- Copyright 2026 Canonical Ltd.  This software is licensed under the
+     GNU Affero General Public License version 3 (see the file LICENSE).
+-->
+
+<configure
+    xmlns="http://namespaces.zope.org/zope"
+    xmlns:lp="http://namespaces.canonical.com/lp"
+    i18n_domain="launchpad">
+
+    <lp:authorizations module=".security" />
+
+    <class class="lp.services.webauthn.model.RegisteredAuthenticator">
+        <require
+            permission="launchpad.Edit"
+            interface="lp.services.webauthn.interfaces.IRegisteredAuthenticator"
+            set_schema="lp.services.webauthn.interfaces.IRegisteredAuthenticator"/>
+    </class>
+
+    <class class="lp.services.webauthn.model.RegisteredAuthenticatorSet">
+        <allow
+            interface="lp.services.webauthn.interfaces.IRegisteredAuthenticatorSet"/>
+    </class>
+
+    <lp:securedutility
+        class="lp.services.webauthn.model.RegisteredAuthenticatorSet"
+        provides="lp.services.webauthn.interfaces.IRegisteredAuthenticatorSet">
+        <allow
+            interface="lp.services.webauthn.interfaces.IRegisteredAuthenticatorSet"/>
+    </lp:securedutility>
+
+</configure>

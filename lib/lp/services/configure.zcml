@@ -32,6 +32,7 @@
   <include package=".statsd" />
   <include package=".temporaryblobstorage" />
   <include package=".verification" />
+  <include package=".webauthn" />
   <include package=".webhooks" />
   <include package=".webservice" />
   <include package=".worlddata" />
