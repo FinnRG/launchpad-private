@@ -11,6 +11,7 @@ __all__ = [
     "PeopleSearchView",
     "PersonAccountAdministerView",
     "PersonAdministerView",
+    "PersonAuthenticatorListView",
     "PersonBrandingView",
     "PersonBreadcrumb",
     "PersonCloseAccountView",
@@ -39,6 +40,7 @@ __all__ = [
     "PersonRdfContentsView",
     "PersonRdfView",
     "PersonRelatedSoftwareView",
+    "PersonRegisterAuthenticatorView",
     "PersonRenameFormMixin",
     "PersonSetActionNavigationMenu",
     "PersonSetContextMenu",
@@ -850,6 +852,7 @@ class PersonOverviewMenu(
         "editmailinglists",
         "editircnicknames",
         "editjabberids",
+        "register_authenticator",
         "editmatrixaccounts",
         "editgithubaccounts",
         "editsshkeys",
@@ -967,6 +970,21 @@ class PersonOverviewMenu(
         summary = "Used when storing code on Launchpad"
         return Link(target, text, summary, icon=icon)
 
+    @enabled_with_permission("launchpad.Special")
+    def register_authenticator(self):
+        target = "+register-authenticator"
+        authenticators = getUtility(IRegisteredAuthenticatorSet).findByOwner(
+            self.context
+        )
+        if not authenticators.is_empty():
+            text = "Manage hardware authenticators"
+            icon = "edit"
+        else:
+            text = "Add hardware authenticator"
+            icon = "add"
+        summary = "Hardware security keys for two-factor authentication"
+        return Link(target, text, summary, icon=icon)
+
     @enabled_with_permission("launchpad.Edit")
     def editpgpkeys(self):
         target = "+editpgpkeys"
@@ -1047,7 +1065,13 @@ class PersonEditNavigationMenu(NavigationMenu):
 
     usedfor = IPersonEditMenu
     facet = "overview"
-    links = ("personal", "email_settings", "sshkeys", "gpgkeys")
+    links = (
+        "personal",
+        "email_settings",
+        "register_authenticator",
+        "sshkeys",
+        "gpgkeys",
+    )
 
     def personal(self):
         target = "+edit"
@@ -1064,6 +1088,14 @@ class PersonEditNavigationMenu(NavigationMenu):
         target = "+editsshkeys"
         text = "SSH keys"
         return Link(target, text)
+
+    @enabled_with_permission("launchpad.Special")
+    def register_authenticator(self):
+        return Link(
+            "+register-authenticator",
+            "Hardware authenticators",
+            site=self.context,
+        )
 
     def gpgkeys(self):
         target = "+editpgpkeys"
@@ -2719,6 +2751,37 @@ class PersonEditSSHKeysView(LaunchpadView):
         comment = sshkey.comment
         sshkey.destroySelf()
         self.info_message = structured('Key "%s" removed', comment)
+
+
+@implementer(IPersonEditMenu)
+class PersonRegisterAuthenticatorView(LaunchpadView):
+    page_title = "Hardware authenticators"
+
+    def initialize(self):
+        require_fresh_login(
+            self.request, self.context, "+register-authenticator"
+        )
+
+    @property
+    def cancel_url(self):
+        return canonical_url(self.context)
+
+
+class PersonAuthenticatorListView(LaunchpadView):
+    """The list of a person's registered hardware authenticators.
+
+    This is registered as its own page so that
+    `PersonRegisterAuthenticatorView` can render it server-side, and so
+    that the JavaScript can re-fetch just this fragment after a
+    registration or revocation instead of building the table itself.
+    """
+
+    page_title = None
+
+    @cachedproperty
+    def authenticators(self):
+        """See `IPerson.getRegisteredAuthenticators`."""
+        return self.context.getRegisteredAuthenticators()
 
 
 @implementer(IPersonEditMenu)
