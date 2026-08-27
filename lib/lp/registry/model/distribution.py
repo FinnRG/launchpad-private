@@ -12,6 +12,7 @@ import itertools
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from operator import itemgetter
+from typing import Iterable
 
 from storm.databases.postgres import JSON
 from storm.expr import (
@@ -809,6 +810,12 @@ class Distribution(
     def _getMilestoneCondition(self):
         """See `HasMilestonesMixin`."""
         return Milestone.distribution == self
+
+    def searchMilestones(
+        self, is_active=None, order_by=None
+    ) -> Iterable[Milestone]:
+        """See `ISearchableMilestones`."""
+        return self._searchMilestones(is_active=is_active, order_by=order_by)
 
     def getArchiveIDList(self, archive=None):
         """See `IDistribution`."""

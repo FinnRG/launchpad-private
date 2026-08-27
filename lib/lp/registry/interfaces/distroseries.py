@@ -70,7 +70,11 @@ from lp.registry.enums import (
     DistroSeriesDifferenceType,
 )
 from lp.registry.errors import NoSuchDistroSeries
-from lp.registry.interfaces.milestone import IHasMilestones, IMilestone
+from lp.registry.interfaces.milestone import (
+    IHasMilestones,
+    IMilestone,
+    ISearchableMilestones,
+)
 from lp.registry.interfaces.person import IPerson
 from lp.registry.interfaces.pocket import PackagePublishingPocket
 from lp.registry.interfaces.role import IHasAppointedDriver, IHasOwner
@@ -206,6 +210,7 @@ class IDistroSeriesPublic(
     IBugTarget,
     ISpecificationGoal,
     IHasMilestones,
+    ISearchableMilestones,
     IHasOfficialBugTags,
     IHasBuildRecords,
     IHasTranslationImports,

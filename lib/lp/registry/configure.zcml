@@ -1273,6 +1273,16 @@
         factory="lp.registry.adapters.person_from_principal"/>
 
     <!-- Milestone -->
+    <adapter
+        for="lp.registry.interfaces.milestone.IMilestoneSearchResults
+             lazr.restful.interfaces.IWebServiceClientRequest"
+        provides="lazr.restful.interfaces.ICollection"
+        factory="lp.registry.adapters.MilestoneSearchResultsCollection"
+        permission="zope.Public"/>
+    <class class="lp.registry.model.milestone.MilestoneSearchResults">
+        <allow
+            interface="lp.registry.interfaces.milestone.IMilestoneSearchResults"/>
+    </class>
 
     <class
         class="lp.registry.model.milestone.Milestone">

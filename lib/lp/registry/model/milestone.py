@@ -7,6 +7,7 @@ __all__ = [
     "HasMilestonesMixin",
     "Milestone",
     "MilestoneData",
+    "MilestoneSearchResults",
     "MilestoneSet",
     "ProjectMilestone",
     "milestone_sort_key",
@@ -17,7 +18,7 @@ import http.client
 from operator import itemgetter
 
 from lazr.restful.declarations import error_status
-from storm.expr import And, Desc, LeftJoin, Select, Union
+from storm.expr import And, Desc, Func, LeftJoin, Select, Union
 from storm.locals import Bool, Date, Int, Reference, Store, Unicode
 from storm.zope import IResultSet
 from zope.component import getUtility
@@ -33,10 +34,12 @@ from lp.bugs.model.bugtask import BugTaskSet
 from lp.bugs.model.structuralsubscription import (
     StructuralSubscriptionTargetMixin,
 )
+from lp.registry.errors import InvalidMilestoneOrder
 from lp.registry.interfaces.milestone import (
     IHasMilestones,
     IMilestone,
     IMilestoneData,
+    IMilestoneSearchResults,
     IMilestoneSet,
     IProjectGroupMilestone,
 )
@@ -69,6 +72,24 @@ def milestone_sort_key(milestone):
     return (date, expand_numbers(milestone.name))
 
 
+@implementer(IMilestoneSearchResults)
+class MilestoneSearchResults:
+    """A milestone result set with its search target."""
+
+    def __init__(self, target, results):
+        self.target = target
+        self.results = results
+
+    def __iter__(self):
+        return iter(self.results)
+
+    def __len__(self):
+        return len(self.results)
+
+    def __getitem__(self, index):
+        return self.results[index]
+
+
 @implementer(IHasMilestones)
 class HasMilestonesMixin:
     _milestone_order = (
@@ -83,6 +104,60 @@ class HasMilestonesMixin:
         :return: Storm ComparableExpr object.
         """
         raise NotImplementedError("Unexpected class for mixin: %r" % self)
+
+    def _milestone_name_order(self):
+        """Order names the way the default milestone order does.
+
+        The sort function zero-pads digit runs, so version-like names such
+        as "1.2" sort before "1.10". Passing no date leaves the name as the
+        only part of the key that varies.
+        """
+        return Func("milestone_sort_key", None, Milestone.name)
+
+    def _searchMilestones(self, is_active=None, order_by=None):
+        """Select and order milestones for this target.
+
+        Ordering ends with `Milestone.id` because zero-padded name keys tie
+        for distinct names such as "1.2" and "1.02".
+        """
+        conditions = [self._getMilestoneCondition()]
+        if is_active is not None:
+            conditions.append(Milestone.active == is_active)
+        result = IStore(Milestone).find(Milestone, *conditions)
+
+        if not order_by:
+            ordered_result = result.order_by(
+                self._milestone_order, Milestone.id
+            )
+            return MilestoneSearchResults(self, ordered_result)
+        if not isinstance(order_by, (list, tuple)):
+            order_by = [order_by]
+
+        ordering = []
+        orders_by_name = False
+        for field_name in order_by:
+            descending = field_name.startswith("-")
+            if descending:
+                field_name = field_name[1:]
+
+            if field_name == "date_targeted":
+                expression = Milestone.dateexpected
+            elif field_name == "name":
+                expression = self._milestone_name_order()
+                orders_by_name = True
+            else:
+                raise InvalidMilestoneOrder(
+                    "Unrecognized order_by: %r" % (field_name,)
+                )
+
+            if descending:
+                expression = Desc(expression)
+            ordering.append(expression)
+
+        if not orders_by_name:
+            ordering.append(self._milestone_name_order())
+        ordering.append(Milestone.id)
+        return MilestoneSearchResults(self, result.order_by(*ordering))
 
     @property
     def has_milestones(self):

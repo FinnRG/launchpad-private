@@ -17,7 +17,7 @@ import collections
 from datetime import datetime, timezone
 from io import BytesIO
 from operator import itemgetter
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 import apt_pkg
 from lazr.delegates import delegate_to
@@ -950,6 +950,12 @@ class DistroSeries(
     def _getMilestoneCondition(self):
         """See `HasMilestonesMixin`."""
         return Milestone.distroseries == self
+
+    def searchMilestones(
+        self, is_active=None, order_by=None
+    ) -> Iterable[Milestone]:
+        """See `ISearchableMilestones`."""
+        return self._searchMilestones(is_active=is_active, order_by=order_by)
 
     def get_milestone(self, milestone_id: int) -> Optional[Milestone]:
         """See `IDistroSeries`."""
