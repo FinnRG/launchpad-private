@@ -262,6 +262,7 @@ def published_binary_summary(bpph) -> Dict[str, Optional[str]]:
         "date_superseded": when(bpph.datesuperseded),
         "date_removed": when(bpph.dateremoved),
         "web_link": canonical_url(bpph),
+        "build_status": bpph.build.status.title,
         "build_web_link": canonical_url(bpph.build),
     }
 

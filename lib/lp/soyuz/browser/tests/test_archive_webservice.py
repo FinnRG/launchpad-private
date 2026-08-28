@@ -1385,6 +1385,10 @@ class TestGetPublishedBinaries(TestCaseWithFactory):
                 bpph.binary_package_name: bpph.datecreated.isoformat()
                 for bpph in bpphs
             }
+            build_status = {
+                bpph.binary_package_name: bpph.build.status.title
+                for bpph in bpphs
+            }
             archive_url = api_url(archive)
         ws = webservice_for_person(self.person, default_api_version="devel")
         response = ws.named_get(archive_url, "getPublishedSources")
@@ -1406,6 +1410,7 @@ class TestGetPublishedBinaries(TestCaseWithFactory):
                             "date_superseded": Equals(None),
                             "date_removed": Equals(None),
                             "web_link": EndsWith(web_link_suffixes["foo-bin"]),
+                            "build_status": Equals(build_status["foo-bin"]),
                             "build_web_link": EndsWith(
                                 build_web_link_suffixes["foo-bin"]
                             ),
@@ -1422,6 +1427,7 @@ class TestGetPublishedBinaries(TestCaseWithFactory):
                             "date_superseded": Equals(None),
                             "date_removed": Equals(None),
                             "web_link": EndsWith(web_link_suffixes["foo-dev"]),
+                            "build_status": Equals(build_status["foo-dev"]),
                             "build_web_link": EndsWith(
                                 build_web_link_suffixes["foo-dev"]
                             ),

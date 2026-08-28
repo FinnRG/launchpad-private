@@ -522,11 +522,12 @@ class ISourcePackagePublishingHistoryPublic(IPublishingView):
             description=_(
                 "A summary of the active binary publications built from "
                 "this source publication. Each entry is a dict with the keys "
-                "'binary_package_name', 'architecture_tag', 'status', "
-                "'pocket', 'date_created', 'date_made_pending', "
-                "'date_superseded', 'date_removed', 'web_link' (the binary "
-                "publication page) and 'build_web_link' (the binary's build "
-                "page)."
+                "'binary_package_name', 'architecture_tag', 'status' (the "
+                "publishing status), 'pocket', 'date_created', "
+                "'date_made_pending', 'date_superseded', 'date_removed', "
+                "'web_link' (the binary publication page), 'build_status' "
+                "(the status of the build that produced the binary) and "
+                "'build_web_link' (the binary's build page)."
             ),
             value_type=SchemaDict(key_type=TextLine()),
             required=False,
