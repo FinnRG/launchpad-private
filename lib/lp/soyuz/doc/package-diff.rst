@@ -225,8 +225,8 @@ against 1.0-9.
     >>> print(diff.title)
     diff from 1.0-9 to 1.0-10
 
-An upload to other pocket, in this case hoary-proposed, will get a diff
-against the last version in the RELEASE pocket.
+An upload to another pocket, in this case hoary-proposed, gets a diff
+against the newest version in the series, wherever it happens to live.
 
     >>> packager.buildVersion("1.0-11", changelog_text="cookies")
     >>> packager.buildSource(signed=False)
@@ -236,7 +236,7 @@ against the last version in the RELEASE pocket.
 
     >>> [diff] = biscuit_eleven_pub.sourcepackagerelease.package_diffs
     >>> print(diff.title)
-    diff from 1.0-8 to 1.0-11
+    diff from 1.0-10 to 1.0-11
 
 For testing diffs in the PPA context we need to activate the PPA for
 Foo Bar.
@@ -249,8 +249,8 @@ Foo Bar.
     ... )
 
 We will upload version 1.0-2 to Foo Bar's PPA and since it was never
-published in the PPA context it will get a diff against the last
-version in the PRIMARY archive in the RELEASE pocket.
+published in the PPA context it only gets a diff against the newest
+version of the package in ubuntu/hoary.
 
     >>> packager.buildVersion("1.0-2", changelog_text="unterzeichnet")
     >>> packager.buildSource()
@@ -260,10 +260,10 @@ version in the PRIMARY archive in the RELEASE pocket.
 
     >>> [diff] = biscuit_two_pub.sourcepackagerelease.package_diffs
     >>> print(diff.title)
-    diff from 1.0-8 (in Ubuntu) to 1.0-2
+    diff from 1.0-11 (in Ubuntu) to 1.0-2
 
-A subsequent upload in the PPA context will get a diff against 1.0-2,
-the version found in its context.
+A subsequent upload in the PPA context gets both that diff and a diff
+against 1.0-2, the version found in its own context.
 
     >>> packager.buildVersion("1.0-3", changelog_text="unterzeichnet")
     >>> packager.buildSource()
@@ -271,8 +271,15 @@ the version found in its context.
     ...     "1.0-3", archive=foobar.archive
     ... )
 
-    >>> [diff] = biscuit_three_pub.sourcepackagerelease.package_diffs
-    >>> print(diff.title)
+    >>> def print_diff_titles(diffs):
+    ...     for diff in sorted(diffs, key=lambda diff: diff.title):
+    ...         print(diff.title)
+    ...
+
+    >>> print_diff_titles(
+    ...     biscuit_three_pub.sourcepackagerelease.package_diffs
+    ... )
+    diff from 1.0-11 (in Ubuntu) to 1.0-3
     diff from 1.0-2 to 1.0-3
 
 
@@ -455,13 +462,14 @@ stored.
 
     >>> print_diffs(packagediff_set)
     biscuit diff from 1.0-2 to 1.0-3               False   0
-    biscuit diff from 1.0-8 (in Ubuntu) to 1.0-2   False  -1
-    biscuit diff from 1.0-8 to 1.0-11              False  -2
-    biscuit diff from 1.0-9 to 1.0-10              False  -3
-    biscuit diff from 1.0-8 to 1.0-12              False  -4
-    biscuit diff from 1.0-8 to 1.0-9               False  -5
-    biscuit diff from 1.0-1 to 1.0-8               True   -6
-    pmount diff from 0.1-1 to 0.1-2                False  -7
+    biscuit diff from 1.0-11 (in Ubuntu) to 1.0-3  False  -1
+    biscuit diff from 1.0-11 (in Ubuntu) to 1.0-2  False  -2
+    biscuit diff from 1.0-10 to 1.0-11             False  -3
+    biscuit diff from 1.0-9 to 1.0-10              False  -4
+    biscuit diff from 1.0-8 to 1.0-12              False  -5
+    biscuit diff from 1.0-8 to 1.0-9               False  -6
+    biscuit diff from 1.0-1 to 1.0-8               True   -7
+    pmount diff from 0.1-1 to 0.1-2                False  -8
 
 All package diffs targeting a set of source package releases can also
 be requested.  The results are ordered by the source package release
@@ -703,7 +711,7 @@ explain how this mechanism works.
 
     >>> [diff] = biscuit_two_pub.sourcepackagerelease.package_diffs
     >>> print(diff.title)
-    diff from 1.0-8 (in Ubuntu) to 1.0-2
+    diff from 1.0-11 (in Ubuntu) to 1.0-2
 
 The chosen diff is for a source uploaded to a public PPA.
 

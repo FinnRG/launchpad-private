@@ -105,6 +105,7 @@ Each binary publication exposes a number of properties:
     source_package_name: 'mozilla-firefox'
     source_package_version: '0.9'
     status: 'Published'
+    web_link: 'http://launchpad.../~cprov/+archive/ubuntu/ppa/+binarypub/30'
 
 
 Security

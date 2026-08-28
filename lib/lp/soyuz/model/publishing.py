@@ -16,7 +16,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from operator import attrgetter, itemgetter
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from storm.databases.postgres import JSON
 from storm.expr import (
@@ -246,6 +246,27 @@ class ArchivePublisherBase:
         return self.section.name if self.section is not None else None
 
 
+def published_binary_summary(bpph) -> Dict[str, Optional[str]]:
+    """Return a summary dict for a binary publication."""
+
+    def when(date):
+        return date.isoformat() if date is not None else None
+
+    return {
+        "binary_package_name": bpph.binary_package_name,
+        "architecture_tag": bpph.distroarchseries.architecturetag,
+        "status": bpph.status.title,
+        "pocket": bpph.pocket.title,
+        "date_created": when(bpph.datecreated),
+        "date_made_pending": when(bpph.datemadepending),
+        "date_superseded": when(bpph.datesuperseded),
+        "date_removed": when(bpph.dateremoved),
+        "web_link": canonical_url(bpph),
+        "build_status": bpph.build.status.title,
+        "build_web_link": canonical_url(bpph.build),
+    }
+
+
 @implementer(ISourcePackagePublishingHistory)
 class SourcePackagePublishingHistory(StormBase, ArchivePublisherBase):
     """A source package release publishing record."""
@@ -404,6 +425,14 @@ class SourcePackagePublishingHistory(StormBase, ArchivePublisherBase):
             self, active_binaries_only=active_binaries_only
         )
         return DecoratedResultSet(result_set, result_decorator=itemgetter(1))
+
+    @cachedproperty
+    def published_binaries(self):
+        """See `ISourcePackagePublishingHistory`."""
+        return [
+            published_binary_summary(bpph)
+            for bpph in self.getPublishedBinaries()
+        ]
 
     def getBuiltBinaries(self, want_files=False):
         """See `ISourcePackagePublishingHistory`."""
@@ -2075,6 +2104,35 @@ class PublishingSet:
         )
 
         return result_set
+
+    def getBinaryPublicationSummariesForSources(
+        self, one_or_more_source_publications, active_binaries_only=True
+    ):
+        """See `IPublishingSet`."""
+        # Local imports to avoid a circular import with the archive model.
+        from lp.registry.model.person import Person
+        from lp.soyuz.model.archive import Archive
+
+        summaries = defaultdict(list)
+        result_set = list(
+            self.getBinaryPublicationsForSources(
+                one_or_more_source_publications,
+                active_binaries_only=active_binaries_only,
+            )
+        )
+        # Preload the builds and the objects their web links traverse, so
+        # that building each summary's build web_link does not query per row.
+        bprs = [row[2] for row in result_set]
+        builds = bulk.load_related(BinaryPackageBuild, bprs, ["build_id"])
+        archives = bulk.load_related(Archive, builds, ["archive_id"])
+        bulk.load_related(Person, archives, ["owner_id"])
+        sprs = bulk.load_related(
+            SourcePackageRelease, builds, ["source_package_release_id"]
+        )
+        bulk.load_related(SourcePackageName, sprs, ["sourcepackagename_id"])
+        for spph, bpph, _bpr, _bpn, _das in result_set:
+            summaries[spph.id].append(published_binary_summary(bpph))
+        return summaries
 
     def getBuiltPackagesSummaryForSourcePublication(self, source_publication):
         """See `IPublishingSet`."""

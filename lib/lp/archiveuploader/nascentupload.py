@@ -879,15 +879,16 @@ class NascentUpload:
             package_upload_source = self.queue_root.addSource(
                 sourcepackagerelease
             )
-            ancestry = package_upload_source.getSourceAncestryForDiffs()
-            if ancestry is not None:
-                to_sourcepackagerelease = ancestry.sourcepackagerelease
-                diff = to_sourcepackagerelease.requestDiffTo(
-                    self.queue_root.findPersonToNotify(), sourcepackagerelease
-                )
-                self.logger.debug(
-                    "%s %s requested" % (diff.from_source.name, diff.title)
-                )
+            ancestries = package_upload_source.getSourceAncestriesForDiffs()
+            if ancestries:
+                requester = self.queue_root.findPersonToNotify()
+                for ancestry in ancestries:
+                    diff = ancestry.sourcepackagerelease.requestDiffTo(
+                        requester, sourcepackagerelease
+                    )
+                    self.logger.debug(
+                        "%s %s requested" % (diff.from_source.name, diff.title)
+                    )
 
         if self.binaryful:
             for custom_file in self.changes.custom_files:

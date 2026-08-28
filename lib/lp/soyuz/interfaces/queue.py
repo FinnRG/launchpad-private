@@ -697,24 +697,28 @@ class IPackageUploadSource(Interface):
         readonly=False,
     )
 
-    def getSourceAncestryForDiffs():
-        """Return a suitable ancestry publication for this context.
+    def getSourceAncestriesForDiffs():
+        """Return suitable ancestry publications for this context.
 
-        The possible ancestries locations for a give source upload, assuming
-        that only PRIMARY archive allows post-RELEASE pockets are:
+        The possible ancestry locations for a given source upload, assuming
+        that only the PRIMARY archive allows post-RELEASE pockets, are:
 
          1. original archive, original distroseries and pocket (old
             DEVELOPMENT/SRU/PPA uploads).
          2. primary archive, original distroseries and release pocket (NEW
-            SRU/PPA uploads fallback).
+            SRU/PPA uploads fallback).  Uploads to archives other than the
+            primary one also look at the SECURITY and UPDATES pockets, since
+            the version there is usually a more relevant base for a diff
+            than the one in the release pocket.
          3. primary_archive, any distroseries and release pocket (BACKPORTS)
 
-        We lookup a source publication with the same name in those location
-        and in that order. If an ancestry is found it is returned, otherwise
-        it returns None.
+        We look up source publications with the same name in those locations
+        and in that order, and return the ones found in the first location
+        that has any.
 
-        :return: `ISourcePackagePublishingHistory` for the corresponding
-             ancestry or None if it wasn't found.
+        :return: a list of `ISourcePackagePublishingHistory`, one per
+             distinct ancestry source package release, which is empty if no
+             ancestry was found.
         """
 
     def verifyBeforeAccept():
