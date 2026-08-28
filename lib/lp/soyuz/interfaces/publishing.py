@@ -45,7 +45,11 @@ from lazr.restful.declarations import (
 )
 from lazr.restful.fields import Reference
 from zope.interface import Attribute, Interface
-from zope.schema import Bool, Choice, Date, Datetime, Int, Text, TextLine
+from zope.schema import Bool, Choice, Date, Datetime
+from zope.schema import Dict as SchemaDict
+from zope.schema import Int
+from zope.schema import List as SchemaList
+from zope.schema import Text, TextLine
 
 from lp import _
 from lp.buildmaster.enums import BuildStatus
@@ -510,6 +514,26 @@ class ISourcePackagePublishingHistoryPublic(IPublishingView):
             required=False,
             readonly=True,
         )
+    )
+
+    published_binaries = exported(
+        SchemaList(
+            title=_("Published binaries"),
+            description=_(
+                "A summary of the active binary publications built from "
+                "this source publication. Each entry is a dict with the keys "
+                "'binary_package_name', 'architecture_tag', 'status' (the "
+                "publishing status), 'pocket', 'date_created', "
+                "'date_made_pending', 'date_superseded', 'date_removed', "
+                "'web_link' (the binary publication page), 'build_status' "
+                "(the status of the build that produced the binary) and "
+                "'build_web_link' (the binary's build page)."
+            ),
+            value_type=SchemaDict(key_type=TextLine()),
+            required=False,
+            readonly=True,
+        ),
+        as_of="devel",
     )
 
     @operation_parameters(
@@ -1118,7 +1142,7 @@ class IBinaryPackagePublishingHistoryEdit(IPublishingEdit):
         """
 
 
-@exported_as_webservice_entry(as_of="beta", publish_web_link=False)
+@exported_as_webservice_entry(as_of="beta")
 class IBinaryPackagePublishingHistory(
     IBinaryPackagePublishingHistoryPublic, IBinaryPackagePublishingHistoryEdit
 ):
@@ -1332,6 +1356,23 @@ class IPublishingSet(Interface):
             (`SourcePackagePublishingHistory`,
              `BinaryPackagePublishingHistory`,
              `BinaryPackageRelease`, `BinaryPackageName`, `DistroArchSeries`)
+        """
+
+    def getBinaryPublicationSummariesForSources(
+        one_or_more_source_publications, active_binaries_only=True
+    ):
+        """Return embeddable binary summaries per source publication.
+
+        Loads the binary publications for the whole set of sources.
+
+        :param one_or_more_source_publications: list of, or a single,
+            `SourcePackagePublishingHistory` object.
+        :param active_binaries_only: If True (the default), only include
+            binary publications with an active publishing status.
+
+        :return: a dict mapping each `SourcePackagePublishingHistory` id to a
+            list of dicts as described by the exported `published_binaries`
+            attribute of `ISourcePackagePublishingHistory`.
         """
 
     def getBuiltPackagesSummaryForSourcePublication(source_publication):
