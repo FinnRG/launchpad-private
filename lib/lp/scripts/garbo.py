@@ -56,6 +56,7 @@ from lp.bugs.model.bug import Bug
 from lp.bugs.model.bugattachment import BugAttachment
 from lp.bugs.model.bugnotification import BugNotification
 from lp.bugs.model.bugwatch import BugWatchActivity
+from lp.bugs.model.cve import Cve
 from lp.bugs.scripts.checkwatches.scheduler import (
     MAX_SAMPLE_SIZE,
     BugWatchScheduler,
@@ -2311,6 +2312,56 @@ class ArchiveFileDatePopulator(TunableLoop):
         transaction.commit()
 
 
+class PopulateCveSequence(TunableLoop):
+    """Populate CVE sequence field with "CVE-" prefix.
+
+    Migrates legacy bare CVE sequences (e.g. "2024-1234") to their full
+    prefixed form (e.g. "CVE-2024-1234"). This is done in chunks to avoid
+    a long-running transaction that could block other operations.
+    """
+
+    maximum_chunk_size = 5000
+
+    def __init__(self, log, abort_time=None):
+        super().__init__(log, abort_time)
+        self.start_at = 1
+        self.store = IPrimaryStore(Cve)
+
+    def findBareSequences(self):
+        """Find CVE records with bare sequences (no CVE- prefix)."""
+        # Match sequences like "2024-1234" but not "CVE-2024-1234"
+        return self.store.find(
+            Cve,
+            Cve.id >= self.start_at,
+            SQL("sequence ~ E'^(19|20)\\\\d{2}-\\\\d{4,}$'"),
+        ).order_by(Cve.id)
+
+    def isDone(self):
+        return self.findBareSequences().is_empty()
+
+    def __call__(self, chunk_size):
+        # Get IDs of CVEs with bare sequences
+        cve_ids = [cve.id for cve in self.findBareSequences()[:chunk_size]]
+        if not cve_ids:
+            return
+
+        # Bulk update using Storm's .set() with SQL concatenation
+        self.store.find(
+            Cve,
+            Cve.id.is_in(cve_ids),
+        ).set(sequence=SQL("'CVE-' || sequence"))
+
+        self.log.debug(
+            "Updated %d CVE sequences (IDs %d-%d)",
+            len(cve_ids),
+            cve_ids[0],
+            cve_ids[-1],
+        )
+
+        self.start_at = cve_ids[-1] + 1
+        transaction.commit()
+
+
 class UpdatePPASigningKeyFingerprintToRSA4096Key(TunableLoop):
     """
     Update the signing key fingerprint of archives with an rsa1024
@@ -2632,6 +2683,7 @@ class FrequentDatabaseGarbageCollector(BaseDatabaseGarbageCollector):
         BugWatchScheduler,
         OpenIDConsumerAssociationPruner,
         OpenIDConsumerNoncePruner,
+        PopulateCveSequence,
         PopulateDistributionSourcePackageCache,
         PopulateLatestPersonSourcePackageReleaseCache,
     ]
