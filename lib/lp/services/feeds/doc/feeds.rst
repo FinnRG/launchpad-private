@@ -169,3 +169,20 @@ we are testing xhtml encoding here in case we need it in the future.
     ... )
     >>> print(backslashreplace(xhtml.content))
     <b> and \xa0 and &amp;</b><hr/>
+
+html_page_content vs. content
+..............................
+
+`content` is escaped, ready to drop into the Atom XML feed. But an
+HTML page only decodes its content once, so embedding `content`
+there would leave it double-escaped (e.g. "&amp;" shown as text
+instead of "&"). `html_page_content` is the unescaped version for
+that case. "text" and "xhtml" content are never escaped twice like
+this, so for those it's the same as `content`.
+
+    >>> print(text.html_page_content == text.content)
+    True
+    >>> print(html.html_page_content)
+    <b> and &nbsp; and &amp;
+    >>> print(xhtml.html_page_content == xhtml.content)
+    True

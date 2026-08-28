@@ -1,3 +1,5 @@
+import xml.etree.ElementTree as ET
+from html.parser import HTMLParser
 from unittest.mock import MagicMock
 
 import transaction
@@ -21,6 +23,61 @@ from lp.testing import (
 from lp.testing.layers import LaunchpadFunctionalLayer
 from lp.testing.matchers import HasQueryCount
 from lp.testing.sampledata import USER_EMAIL
+
+
+def _recover_html_source(feed_typed_data):
+    """Recover the HTML source a real Atom reader would see for content.
+
+    feed-entry-atom.pt inserts a FeedTypedData's .content verbatim as the
+    text of a <content type="..."> element:
+
+        <content tal:content="structure entry/content/content"
+                 tal:attributes="type entry/content/content_type" />
+
+    Reconstruct exactly that element and parse it with a real XML parser.
+    This proves the value is well-formed XML -- an unescaped "&" or "<"
+    leaking through would raise ParseError here rather than silently
+    passing a substring check -- and returns the HTML string a reader
+    would go on to parse next.
+    """
+    content_xml = "<content type=%r>%s</content>" % (
+        feed_typed_data.content_type,
+        feed_typed_data.content,
+    )
+    element = ET.fromstring(content_xml)
+    return element.text or ""
+
+
+class _TagCollectingParser(HTMLParser):
+    """Records every start tag and all text data seen while parsing.
+
+    Used to check what an actual HTML parser -- standing in for a feed
+    reader/aggregator -- does with the HTML source recovered from a feed
+    entry's content, which is the point at which a type="html" payload
+    gets interpreted as markup.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.tags = []
+        self.text_chunks = []
+
+    def handle_starttag(self, tag, attrs):
+        self.tags.append(tag)
+
+    def handle_data(self, data):
+        self.text_chunks.append(data)
+
+
+def _assert_tags_equal(test, parser, expected_tags):
+    """Assert an HTML parser saw exactly the expected tags, no more.
+
+    The body is always wrapped in "pre"; the only other tag it can ever
+    contain is the hand-built "a" changes-file link. There is no
+    linkification of the body itself, so nothing else should appear
+    regardless of payload.
+    """
+    test.assertEqual(list(expected_tags), parser.tags)
 
 
 class TestNewPackageUploadsFeed(TestCaseWithFactory):
@@ -168,7 +225,18 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         self.assertIn("Best app ever", entry.content.content)
 
     def test_entry_content_xml_escaping_changelog_renders_correctly(self):
-        """Checks that special chars are properly escaped in the feed."""
+        """Checks that special chars are properly escaped in the feed.
+
+        The content is HTML (wrapped in <pre>) embedded in an XML document,
+        so the raw content is escaped once for the HTML layer (making it
+        safe to render as literal text rather than markup), and the
+        resulting string is escaped again by FeedTypedData for the XML
+        layer.  A reader unwinds this in the opposite order: one XML-unescape
+        recovers the HTML source (literal <pre> tags plus HTML-escaped
+        entities), then one HTML-render turns those entities back into the
+        literal characters the uploader wrote -- without ever treating them
+        as markup.
+        """
         distroseries = self.factory.makeDistroSeries()
         changelog_text = (
             "This & that <test> \"quotes\" 'apostrophes' and what if there is "
@@ -184,13 +252,87 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         feed = self._make_feed(distroseries)
         entry = feed.itemToFeedEntry(upload)
 
-        expected_escaped_text = (
-            "This &amp; that &lt;test&gt; &quot;quotes&quot; &#x27;apostrophes"
-            "&#x27; and what if there is a 🚀 or let&#x27;s go even further wi"
-            "th &#x27;&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; "
-            "some text&#x27"
+        self.assertEqual("html", entry.content.content_type)
+
+        expected_double_escaped_text = (
+            "This &amp;amp; that &amp;lt;test&amp;gt; &amp;quot;quotes&amp;"
+            "quot; &amp;#x27;apostrophes&amp;#x27; and what if there is a "
+            "\U0001f680 or let&amp;#x27;s go even further with &amp;#x27;"
+            "&amp;lt;script&amp;gt;alert(&amp;quot;x&amp;quot;)&amp;lt;/scri"
+            "pt&amp;gt; &amp;amp; some text&amp;#x27;"
         )
-        self.assertIn(expected_escaped_text, entry.content.content)
+        self.assertIn(expected_double_escaped_text, entry.content.content)
+
+        self.assertNotIn("<script>", entry.content.content)
+        self.assertNotIn("<test>", entry.content.content)
+
+        # Round-trip through a real XML parser then a real HTML parser,
+        # simulating what an actual reader would do, rather than just
+        # comparing escaped strings by hand.
+        html_source = _recover_html_source(entry.content)
+        parser = _TagCollectingParser()
+        parser.feed(html_source)
+        _assert_tags_equal(self, parser, expected_tags=["pre", "a"])
+        self.assertIn(changelog_text, "".join(parser.text_chunks))
+
+    def test_entry_content_preserves_linebreaks_and_indentation(self):
+        """Changelog line breaks and leading indentation survive.
+
+        <pre> preserves whitespace verbatim once an HTML renderer decodes
+        the entities, so the newlines and leading spaces the uploader wrote
+        remain in the text -- rather than being collapsible to one line,
+        as a plain type="text" construct legitimately would be under
+        RFC 4287.
+        """
+        distroseries = self.factory.makeDistroSeries()
+        changelog_text = (
+            "* Fixed everything\n  - sub point one\n  - sub point two"
+        )
+        upload = self._make_signed_upload(
+            distroseries, changelog_entry=changelog_text
+        )
+        transaction.commit()
+
+        feed = self._make_feed(distroseries)
+        entry = feed.itemToFeedEntry(upload)
+
+        html_source = _recover_html_source(entry.content)
+        self.assertTrue(html_source.startswith('<pre class="wrap">'))
+
+        parser = _TagCollectingParser()
+        parser.feed(html_source)
+        rendered_text = "".join(parser.text_chunks)
+        _assert_tags_equal(self, parser, expected_tags=["pre", "a"])
+        self.assertIn("* Fixed everything", rendered_text)
+        self.assertIn("  - sub point one", rendered_text)
+        self.assertIn("  - sub point two", rendered_text)
+        self.assertIn("* Fixed everything\n  - sub point one", rendered_text)
+
+    def test_entry_content_does_not_linkify_bug_references(self):
+        """LP: #XXXXX and bug numbers stay as plain text.
+
+        Linkifying them would need a root URL to build an absolute link,
+        and can trigger DB lookups on uploader-controlled text (e.g. FAQ
+        references), so the body is never linkified.
+        """
+        distroseries = self.factory.makeDistroSeries()
+        changelog_text = "* Fix LP: #123456 and see bug 654321"
+        upload = self._make_signed_upload(
+            distroseries, changelog_entry=changelog_text
+        )
+        transaction.commit()
+
+        feed = self._make_feed(distroseries)
+        entry = feed.itemToFeedEntry(upload)
+
+        html_source = _recover_html_source(entry.content)
+        parser = _TagCollectingParser()
+        parser.feed(html_source)
+
+        # Only the changes-file link is a real anchor; nothing from the
+        # changelog body should have been turned into one.
+        _assert_tags_equal(self, parser, expected_tags=["pre", "a"])
+        self.assertIn(changelog_text, "".join(parser.text_chunks))
 
     def test_entry_content_includes_changesfile_link(self):
         distroseries = self.factory.makeDistroSeries()
@@ -226,7 +368,7 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
 
         feed = self._make_feed(distroseries)
         entry = feed.itemToFeedEntry(upload)
-        expected = "Changed-By: %s &lt;%s&gt;" % (
+        expected = "Changed-By: %s &amp;lt;%s&amp;gt;" % (
             creator.displayname,
             creator.preferredemail.email,
         )
@@ -509,3 +651,194 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         )
 
         self.assertThat(recorder2, HasQueryCount.byEquality(recorder1))
+
+
+class TestNewPackageUploadsFeedSecurity(TestCaseWithFactory):
+    """Security-focused tests for NewPackageUploadsFeed.
+
+    These target the specific vulnerability class this feed is exposed to:
+    markup/script injection via uploader-controlled text (changelog body,
+    Changed-By/Maintainer/Signed-By names) rendered as type="html" Atom
+    content. SQL injection, command injection, and path traversal are not
+    applicable here -- the query path is fully ORM-parameterized and no
+    filesystem or shell operations occur in this module.
+    """
+
+    layer = LaunchpadFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        login(USER_EMAIL)
+
+    def _make_feed(self, distroseries):
+        return NewPackageUploadsFeed(
+            distroseries,
+            LaunchpadTestRequest(
+                SERVER_URL="http://feeds.launchpad.test/ubuntu/%s/%s.atom"
+                % (distroseries.name, NewPackageUploadsFeed.feedname)
+            ),
+        )
+
+    def _make_signed_upload(
+        self,
+        distroseries,
+        changelog_entry="* Fix a bug",
+        creator=None,
+        signer=None,
+        maintainer=None,
+    ):
+        if creator is None:
+            creator = self.factory.makePerson()
+        if signer is None:
+            signer = creator
+        spr = self.factory.makeSourcePackageRelease(
+            distroseries=distroseries,
+            creator=creator,
+            maintainer=maintainer,
+            changelog_entry=changelog_entry,
+        )
+        upload = self.factory.makePackageUpload(
+            distroseries=distroseries,
+            archive=distroseries.main_archive,
+            pocket=PackagePublishingPocket.RELEASE,
+            status=PackageUploadStatus.DONE,
+            signing_key=MagicMock(owner=signer, fingerprint="A" * 40),
+            changes_file_content=Changes(
+                {
+                    "Format": "1.7",
+                    "Changed-By": "%s <%s>"
+                    % (
+                        creator.displayname,
+                        (
+                            creator.preferredemail.email
+                            if creator.preferredemail
+                            else "noreply@example.com"
+                        ),
+                    ),
+                }
+            )
+            .dump()
+            .encode("UTF-8"),
+        )
+        with admin_logged_in():
+            upload.addSource(spr)
+        return upload
+
+    def _parse_content_as_a_reader_would(self, entry):
+        """Simulate what a conformant Atom reader does with entry.content.
+
+        Recovers the HTML source via _recover_html_source (proving it is
+        well-formed XML in the process) and parses that HTML with a real
+        parser, so assertions below are on rendered tags/text -- i.e. on
+        behaviour -- rather than on a hand-computed escaped string.
+        """
+        self.assertEqual("html", entry.content.content_type)
+        html_source = _recover_html_source(entry.content)
+        parser = _TagCollectingParser()
+        parser.feed(html_source)
+        return parser
+
+    def test_changelog_script_tag_is_not_parsed_as_markup(self):
+        distroseries = self.factory.makeDistroSeries()
+        payload = "<script>alert(document.cookie)</script>"
+        upload = self._make_signed_upload(
+            distroseries, changelog_entry=payload
+        )
+        transaction.commit()
+
+        feed = self._make_feed(distroseries)
+        entry = feed.itemToFeedEntry(upload)
+        parser = self._parse_content_as_a_reader_would(entry)
+
+        _assert_tags_equal(self, parser, expected_tags=["pre", "a"])
+        self.assertIn(
+            "<script>alert(document.cookie)</script>",
+            "".join(parser.text_chunks),
+        )
+
+        # feed-html.pt renders html_page_content directly as live markup,
+        # with no escaping of its own, so it needs the same check.
+        html_page_parser = _TagCollectingParser()
+        html_page_parser.feed(entry.content.html_page_content)
+        _assert_tags_equal(self, html_page_parser, expected_tags=["pre", "a"])
+
+    def test_changelog_event_handler_attribute_is_not_parsed_as_markup(self):
+        distroseries = self.factory.makeDistroSeries()
+        payload = '<img src=x onerror="alert(1)">'
+        upload = self._make_signed_upload(
+            distroseries, changelog_entry=payload
+        )
+        transaction.commit()
+
+        feed = self._make_feed(distroseries)
+        entry = feed.itemToFeedEntry(upload)
+        parser = self._parse_content_as_a_reader_would(entry)
+
+        _assert_tags_equal(self, parser, expected_tags=["pre", "a"])
+        self.assertIn(payload, "".join(parser.text_chunks))
+
+        html_page_parser = _TagCollectingParser()
+        html_page_parser.feed(entry.content.html_page_content)
+        _assert_tags_equal(self, html_page_parser, expected_tags=["pre", "a"])
+
+    def test_changed_by_display_name_with_markup_is_not_parsed(self):
+        # Changed-By is built from Person.displayname, which is
+        # user-settable free text and carries the same injection risk as
+        # the changelog body. It must be equally inert.
+        distroseries = self.factory.makeDistroSeries()
+        creator = self.factory.makePerson(
+            displayname="<script>alert(1)</script>"
+        )
+        upload = self._make_signed_upload(distroseries, creator=creator)
+        transaction.commit()
+
+        feed = self._make_feed(distroseries)
+        entry = feed.itemToFeedEntry(upload)
+        parser = self._parse_content_as_a_reader_would(entry)
+
+        _assert_tags_equal(self, parser, expected_tags=["pre", "a"])
+
+        html_page_parser = _TagCollectingParser()
+        html_page_parser.feed(entry.content.html_page_content)
+        _assert_tags_equal(self, html_page_parser, expected_tags=["pre", "a"])
+
+    def test_maintainer_display_name_with_markup_is_not_parsed(self):
+        distroseries = self.factory.makeDistroSeries()
+        maintainer = self.factory.makePerson(
+            displayname="<img src=x onerror=alert(1)>"
+        )
+        upload = self._make_signed_upload(distroseries, maintainer=maintainer)
+        transaction.commit()
+
+        feed = self._make_feed(distroseries)
+        entry = feed.itemToFeedEntry(upload)
+        parser = self._parse_content_as_a_reader_would(entry)
+
+        _assert_tags_equal(self, parser, expected_tags=["pre", "a"])
+
+        html_page_parser = _TagCollectingParser()
+        html_page_parser.feed(entry.content.html_page_content)
+        _assert_tags_equal(self, html_page_parser, expected_tags=["pre", "a"])
+
+    def test_entry_content_does_not_escape_html_twice_incorrectly(self):
+        # Guard against a regression where content is escaped a
+        # different number of times than intended: exactly two escape
+        # passes (HTML layer, then XML layer) should be applied, so a
+        # literal "<" in the changelog must appear as the doubly-escaped
+        # "&amp;lt;" in the raw content string -- never unescaped, never
+        # escaped once (e.g. a stray `structured()` instead of
+        # `.escapedtext` would drop the HTML layer), and never escaped
+        # three times.
+        distroseries = self.factory.makeDistroSeries()
+        upload = self._make_signed_upload(
+            distroseries, changelog_entry="a < b"
+        )
+        transaction.commit()
+
+        feed = self._make_feed(distroseries)
+        entry = feed.itemToFeedEntry(upload)
+
+        self.assertIn("a &amp;lt; b", entry.content.content)
+        self.assertNotIn("a < b", entry.content.content)
+        self.assertNotIn("a &lt; b", entry.content.content)
+        self.assertNotIn("a &amp;amp;lt; b", entry.content.content)
