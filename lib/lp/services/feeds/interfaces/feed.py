@@ -245,7 +245,26 @@ class IFeedTypedData(Interface):
         required=True,
     )
 
-    content = Text(title="Content", description="Data contents", required=True)
+    content = Text(
+        title="Content",
+        description="Data contents, escaped for embedding as XML "
+        "character data in an Atom document (feed-entry-atom.pt). "
+        "'text' and 'html' content is HTML-escaped; 'xhtml' content is "
+        "left as real XML. See `html_page_content` for the unescaped "
+        "equivalent.",
+        required=True,
+    )
+
+    html_page_content = Text(
+        title="HTML page content",
+        description="Content suitable for direct embedding in an HTML "
+        "page (feed-html.pt), as opposed to `content`, which is escaped "
+        "for embedding as XML character data in an Atom document "
+        "(feed-entry-atom.pt). Only differs from `content` for 'html' "
+        "content, which this leaves unescaped -- so for 'html' content, "
+        "the value passed to the constructor must already be safe HTML.",
+        required=True,
+    )
 
     content_type = Text(
         title="Content type",

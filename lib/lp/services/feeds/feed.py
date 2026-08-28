@@ -290,7 +290,14 @@ class FeedTypedData:
         self.root_url = root_url
 
     @property
-    def content(self):
+    def _qualified_content(self):
+        """Turn root-relative links in `self._content` into full URLs.
+
+        A link like href="/foo" would resolve against whatever site is
+        showing the feed, not launchpad.net. Used by both `content`
+        and `html_page_content`, which both need this regardless of
+        how they escape the result afterwards.
+        """
         if (
             self.content_type in ("html", "xhtml")
             and self.root_url is not None
@@ -303,16 +310,26 @@ class FeedTypedData:
             for a_tag in a_tags:
                 if a_tag["href"].startswith("/"):
                     a_tag["href"] = urljoin(self.root_url, a_tag["href"])
-            altered_content = str(soup)
-        else:
-            altered_content = self._content
+            return str(soup)
+        return self._content
 
+    @property
+    def content(self):
+        """See `IFeedTypedData`."""
+        altered_content = self._qualified_content
         if self.content_type in ("text", "html"):
             altered_content = html_escape(altered_content)
         elif self.content_type == "xhtml":
             soup = BeautifulSoup(altered_content)
             altered_content = str(soup)
         return altered_content
+
+    @property
+    def html_page_content(self):
+        """See `IFeedTypedData`."""
+        if self.content_type == "html":
+            return self._qualified_content
+        return self.content
 
 
 @implementer(IFeedPerson)
