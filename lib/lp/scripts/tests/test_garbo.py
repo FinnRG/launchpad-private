@@ -36,6 +36,7 @@ from zope.security.proxy import removeSecurityProxy
 from lp.answers.model.answercontact import AnswerContact
 from lp.app.enums import InformationType
 from lp.bugs.interfaces.bug import IBugSet
+from lp.bugs.interfaces.cve import CveStatus, ICveSet
 from lp.bugs.model.bugnotification import (
     BugNotification,
     BugNotificationRecipient,
@@ -80,6 +81,7 @@ from lp.scripts.garbo import (
     HourlyDatabaseGarbageCollector,
     LoginTokenPruner,
     OpenIDConsumerAssociationPruner,
+    PopulateCveSequence,
     ProductVCSPopulator,
     UnusedPOTMsgSetPruner,
     UnusedSessionPruner,
@@ -2656,6 +2658,82 @@ class TestGarbo(FakeAdapterMixin, TestCaseWithFactory):
         self.assertEqual(
             rsa4096_gpg_key_2.fingerprint, archive_2.signing_key_fingerprint
         )
+
+    def test_PopulateCveSequence(self):
+        # PopulateCveSequence migrates bare CVE sequences to prefixed format.
+        switch_dbuser("testadmin")
+
+        # Create CVEs with bare sequences (to be migrated)
+        bare_cve_1 = getUtility(ICveSet).new(
+            sequence="2024-1234",
+            description="Test vulnerability 1",
+            status=CveStatus.CANDIDATE,
+        )
+        bare_cve_2 = getUtility(ICveSet).new(
+            sequence="2023-5678",
+            description="Test vulnerability 2",
+            status=CveStatus.CANDIDATE,
+        )
+
+        # Create CVEs with prefixed sequences (should be untouched)
+        prefixed_cve = getUtility(ICveSet).new(
+            sequence="CVE-2025-9999",
+            description="Already prefixed",
+            status=CveStatus.CANDIDATE,
+        )
+
+        transaction.commit()
+
+        # Verify initial state
+        populator = PopulateCveSequence(log=None)
+        bare_sequences = list(populator.findBareSequences())
+        self.assertEqual(2, len(bare_sequences))
+
+        # Run the garbo job directly
+        populator = PopulateCveSequence(self.log)
+        while not populator.isDone():
+            populator(chunk_size=10)
+
+        self.assertEqual("CVE-2024-1234", bare_cve_1.sequence)
+        self.assertEqual("CVE-2023-5678", bare_cve_2.sequence)
+        # Already-prefixed CVE should be unchanged
+        self.assertEqual("CVE-2025-9999", prefixed_cve.sequence)
+
+        # Verify the job is now done
+        populator = PopulateCveSequence(log=None)
+        self.assertTrue(populator.isDone())
+
+    def test_PopulateCveSequence_findBareSequences_filters_correctly(self):
+        # PopulateCveSequence.findBareSequences should only return CVEs with
+        # bare sequences, not prefixed ones.
+        switch_dbuser("testadmin")
+
+        # Create CVEs with different sequence formats
+        bare_cve = getUtility(ICveSet).new(
+            sequence="2024-1111",
+            description="Bare sequence",
+            status=CveStatus.CANDIDATE,
+        )
+
+        transaction.commit()
+
+        prefixed_cve = getUtility(ICveSet).new(
+            sequence="CVE-2024-2222",
+            description="Prefixed sequence",
+            status=CveStatus.CANDIDATE,
+        )
+
+        transaction.commit()
+
+        populator = PopulateCveSequence(log=None)
+        # Set start_at to only consider CVEs created by this test
+        populator.start_at = bare_cve.id
+
+        # Should only find the bare sequence, not the prefixed one
+        bare_cves = list(populator.findBareSequences())
+        self.assertEqual(bare_cve.id, bare_cves[0].id)
+        self.assertNotIn(prefixed_cve.id, [c.id for c in bare_cves])
+        self.assertEqual(1, len(bare_cves))
 
 
 class TestGarboTasks(TestCaseWithFactory):
