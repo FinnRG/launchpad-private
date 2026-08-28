@@ -30,6 +30,7 @@ from lp.services.log.logger import BufferLogger
 from lp.services.tarfile_helpers import LaunchpadWriteTarFile
 from lp.soyuz.adapters.overrides import SourceOverride
 from lp.soyuz.enums import (
+    ArchivePurpose,
     PackagePublishingStatus,
     PackageUploadCustomFormat,
     PackageUploadStatus,
@@ -754,6 +755,201 @@ class TestPackageUploadWithPackageCopyJob(TestCaseWithFactory):
 
         pu = self.factory.makeCopyJobPackageUpload(include_binaries=True)
         self.assertTrue(pu.contains_build)
+
+
+class TestPackageUploadSourceAncestries(TestCaseWithFactory):
+    """Unit tests for `PackageUploadSource.getSourceAncestriesForDiffs`."""
+
+    layer = LaunchpadZopelessLayer
+
+    def setUp(self):
+        super().setUp()
+        self.distroseries = self.factory.makeDistroSeries()
+        self.primary = self.distroseries.main_archive
+        self.spn = self.factory.makeSourcePackageName()
+
+    def makePublication(self, archive, pocket, version, distroseries=None):
+        return self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            distroseries=distroseries or self.distroseries,
+            sourcepackagename=self.spn,
+            version=version,
+            pocket=pocket,
+        )
+
+    def makeUploadSource(
+        self, archive, pocket=PackagePublishingPocket.RELEASE
+    ):
+        upload = self.factory.makePackageUpload(
+            distroseries=self.distroseries, archive=archive, pocket=pocket
+        )
+        return removeSecurityProxy(
+            upload.addSource(
+                self.factory.makeSourcePackageRelease(
+                    distroseries=self.distroseries,
+                    sourcepackagename=self.spn,
+                    version="1.0-1ppa1",
+                )
+            )
+        )
+
+    def assertAncestryVersions(self, expected, upload_source):
+        self.assertEqual(
+            expected,
+            [
+                ancestry.sourcepackagerelease.version
+                for ancestry in upload_source.getSourceAncestriesForDiffs()
+            ],
+        )
+
+    def test_no_ancestry(self):
+        # Without any previous publication there is nothing to diff against.
+        ppa = self.factory.makeArchive(
+            distribution=self.distroseries.distribution,
+            purpose=ArchivePurpose.PPA,
+        )
+        self.assertAncestryVersions([], self.makeUploadSource(ppa))
+
+    def test_ppa_uses_newest_version_in_distribution(self):
+        # A PPA upload is diffed against the newest version of the package
+        # in the series, whichever pocket it happens to be in.
+        self.makePublication(
+            self.primary, PackagePublishingPocket.RELEASE, "1.0-1"
+        )
+        self.makePublication(
+            self.primary, PackagePublishingPocket.SECURITY, "1.0-1ubuntu0.1"
+        )
+        self.makePublication(
+            self.primary, PackagePublishingPocket.UPDATES, "1.0-1ubuntu0.2"
+        )
+        ppa = self.factory.makeArchive(
+            distribution=self.distroseries.distribution,
+            purpose=ArchivePurpose.PPA,
+        )
+        self.assertAncestryVersions(
+            ["1.0-1ubuntu0.2"], self.makeUploadSource(ppa)
+        )
+
+    def test_ppa_also_uses_previous_version_in_the_ppa(self):
+        # Both the newest version in the distribution and the previous
+        # version in the PPA are offered.
+        self.makePublication(
+            self.primary, PackagePublishingPocket.RELEASE, "1.0-1"
+        )
+        self.makePublication(
+            self.primary, PackagePublishingPocket.UPDATES, "1.0-1ubuntu0.2"
+        )
+        ppa = self.factory.makeArchive(
+            distribution=self.distroseries.distribution,
+            purpose=ArchivePurpose.PPA,
+        )
+        self.makePublication(ppa, PackagePublishingPocket.RELEASE, "1.0-1ppa0")
+        self.assertAncestryVersions(
+            ["1.0-1ubuntu0.2", "1.0-1ppa0"], self.makeUploadSource(ppa)
+        )
+
+    def test_ppa_without_distribution_ancestry(self):
+        # A package that only ever existed in the PPA is diffed against the
+        # previous version there.
+        ppa = self.factory.makeArchive(
+            distribution=self.distroseries.distribution,
+            purpose=ArchivePurpose.PPA,
+        )
+        self.makePublication(ppa, PackagePublishingPocket.RELEASE, "1.0-1ppa0")
+        self.assertAncestryVersions(["1.0-1ppa0"], self.makeUploadSource(ppa))
+
+    def test_ignores_duplicate_releases(self):
+        # A source copied out of the distribution into the PPA is the same
+        # source package release in both archives; only diff against it once.
+        published = self.makePublication(
+            self.primary, PackagePublishingPocket.UPDATES, "1.0-1ubuntu0.2"
+        )
+        ppa = self.factory.makeArchive(
+            distribution=self.distroseries.distribution,
+            purpose=ArchivePurpose.PPA,
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            archive=ppa,
+            distroseries=self.distroseries,
+            sourcepackagerelease=published.sourcepackagerelease,
+            pocket=PackagePublishingPocket.RELEASE,
+        )
+        self.assertAncestryVersions(
+            ["1.0-1ubuntu0.2"], self.makeUploadSource(ppa)
+        )
+
+    def test_falls_back_to_release_pocket_of_another_series(self):
+        # A series with nothing published yet is diffed against the release
+        # pocket of whichever series does have the package.
+        self.makePublication(
+            self.primary, PackagePublishingPocket.RELEASE, "1.0-1"
+        )
+        self.makePublication(
+            self.primary, PackagePublishingPocket.UPDATES, "1.0-1ubuntu0.2"
+        )
+        self.distroseries = self.factory.makeDistroSeries(
+            distribution=self.distroseries.distribution
+        )
+        self.assertAncestryVersions(
+            ["1.0-1"], self.makeUploadSource(self.primary)
+        )
+
+    def test_ppa_ancestry_does_not_fall_back_to_another_series(self):
+        # The cross-series fallback applies to the primary archive only, so
+        # a PPA that has the package in a different series contributes
+        # nothing.
+        self.makePublication(
+            self.primary, PackagePublishingPocket.RELEASE, "1.0-1"
+        )
+        ppa = self.factory.makeArchive(
+            distribution=self.distroseries.distribution,
+            purpose=ArchivePurpose.PPA,
+        )
+        self.makePublication(
+            ppa,
+            PackagePublishingPocket.RELEASE,
+            "1.0-1ppa0",
+            distroseries=self.factory.makeDistroSeries(
+                distribution=self.distroseries.distribution
+            ),
+        )
+        self.assertAncestryVersions(["1.0-1"], self.makeUploadSource(ppa))
+
+    def test_uses_newest_version_rather_than_newest_publication(self):
+        # Publications are ranked by Debian version, so an older version
+        # published more recently does not win.
+        self.makePublication(
+            self.primary, PackagePublishingPocket.UPDATES, "1.0-1ubuntu0.2"
+        )
+        self.makePublication(
+            self.primary, PackagePublishingPocket.RELEASE, "1.0-1"
+        )
+        ppa = self.factory.makeArchive(
+            distribution=self.distroseries.distribution,
+            purpose=ArchivePurpose.PPA,
+        )
+        self.makePublication(ppa, PackagePublishingPocket.RELEASE, "1.0-0ppa2")
+        self.makePublication(ppa, PackagePublishingPocket.RELEASE, "1.0-0ppa1")
+        self.assertAncestryVersions(
+            ["1.0-1ubuntu0.2", "1.0-0ppa2"], self.makeUploadSource(ppa)
+        )
+
+    def test_primary_upload_uses_newest_version_in_distribution(self):
+        # An SRU to -proposed is diffed against the newest version in the
+        # series rather than the one in the release pocket, so that a
+        # preceding security update is not mistaken for the base.
+        self.makePublication(
+            self.primary, PackagePublishingPocket.RELEASE, "1.0-1"
+        )
+        self.makePublication(
+            self.primary, PackagePublishingPocket.SECURITY, "1.0-1ubuntu0.1"
+        )
+        self.assertAncestryVersions(
+            ["1.0-1ubuntu0.1"],
+            self.makeUploadSource(
+                self.primary, pocket=PackagePublishingPocket.PROPOSED
+            ),
+        )
 
 
 class TestPackageUploadCustom(TestCase):
