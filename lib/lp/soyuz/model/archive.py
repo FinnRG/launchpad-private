@@ -883,7 +883,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                 IPublishingSet
             ).getBinaryPublicationSummariesForSources(rows)
             for pub_source in rows:
-                get_property_cache(pub_source).published_binaries_summary = (
+                get_property_cache(pub_source).published_binaries = (
                     summaries.get(pub_source.id, [])
                 )
 

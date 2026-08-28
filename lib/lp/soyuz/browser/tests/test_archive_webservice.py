@@ -1357,7 +1357,7 @@ class TestGetPublishedBinaries(TestCaseWithFactory):
         ]
         return spph, das, bpphs
 
-    def test_getPublishedSources_published_binaries_summary(self):
+    def test_getPublishedSources_published_binaries(self):
         # Each source entry embeds its active binaries, so a single page
         # provides binary_package_name and web_link.
         with admin_logged_in():
@@ -1370,8 +1370,19 @@ class TestGetPublishedBinaries(TestCaseWithFactory):
                 archive, distroseries, pocket, ["foo-bin", "foo-dev"]
             )
             arch_tag = das.architecturetag
-            bin_ids = {
-                bpph.binary_package_name: removeSecurityProxy(bpph).id
+            # web_link points at the binary publication page and
+            # build_web_link at the build page (ending with /+build/<id>).
+            web_link_suffixes = {
+                bpph.binary_package_name: "/+binarypub/%d"
+                % removeSecurityProxy(bpph).id
+                for bpph in bpphs
+            }
+            build_web_link_suffixes = {
+                bpph.binary_package_name: "/+build/%d" % bpph.build.id
+                for bpph in bpphs
+            }
+            date_created = {
+                bpph.binary_package_name: bpph.datecreated.isoformat()
                 for bpph in bpphs
             }
             archive_url = api_url(archive)
@@ -1381,24 +1392,38 @@ class TestGetPublishedBinaries(TestCaseWithFactory):
         entries = response.jsonBody()["entries"]
         self.assertEqual(1, len(entries))
         self.assertThat(
-            entries[0]["published_binaries_summary"],
+            entries[0]["published_binaries"],
             MatchesListwise(
                 [
                     ContainsDict(
                         {
                             "binary_package_name": Equals("foo-bin"),
-                            "distro_arch_series": Equals(arch_tag),
-                            "web_link": EndsWith(
-                                "/+binarypub/%d" % bin_ids["foo-bin"]
+                            "architecture_tag": Equals(arch_tag),
+                            "status": Equals("Published"),
+                            "pocket": Equals("Release"),
+                            "date_created": Equals(date_created["foo-bin"]),
+                            "date_made_pending": Equals(None),
+                            "date_superseded": Equals(None),
+                            "date_removed": Equals(None),
+                            "web_link": EndsWith(web_link_suffixes["foo-bin"]),
+                            "build_web_link": EndsWith(
+                                build_web_link_suffixes["foo-bin"]
                             ),
                         }
                     ),
                     ContainsDict(
                         {
                             "binary_package_name": Equals("foo-dev"),
-                            "distro_arch_series": Equals(arch_tag),
-                            "web_link": EndsWith(
-                                "/+binarypub/%d" % bin_ids["foo-dev"]
+                            "architecture_tag": Equals(arch_tag),
+                            "status": Equals("Published"),
+                            "pocket": Equals("Release"),
+                            "date_created": Equals(date_created["foo-dev"]),
+                            "date_made_pending": Equals(None),
+                            "date_superseded": Equals(None),
+                            "date_removed": Equals(None),
+                            "web_link": EndsWith(web_link_suffixes["foo-dev"]),
+                            "build_web_link": EndsWith(
+                                build_web_link_suffixes["foo-dev"]
                             ),
                         }
                     ),
@@ -1406,7 +1431,80 @@ class TestGetPublishedBinaries(TestCaseWithFactory):
             ),
         )
 
-    def test_getPublishedSources_binaries_summary_defaults_to_active(self):
+    def test_getPublishedSources_published_binaries_anonymous(self):
+        # An anonymous caller can read the embedded binaries of a public
+        # archive.
+        with admin_logged_in():
+            archive = self.factory.makeArchive()
+            distroseries = self.factory.makeDistroSeries(
+                distribution=archive.distribution
+            )
+            pocket = PackagePublishingPocket.RELEASE
+            self._make_source_with_binaries(
+                archive, distroseries, pocket, ["foo-bin"]
+            )
+            archive_url = api_url(archive)
+        ws = webservice_for_person(None, default_api_version="devel")
+        response = ws.named_get(archive_url, "getPublishedSources")
+        self.assertEqual(200, response.status)
+        summary = response.jsonBody()["entries"][0]["published_binaries"]
+        self.assertEqual(
+            ["foo-bin"],
+            [entry["binary_package_name"] for entry in summary],
+        )
+
+    def test_getPublishedSources_published_binaries_private_subscriber(self):
+        # A subscriber to a private archive can read the embedded binaries.
+        with admin_logged_in():
+            archive = self.factory.makeArchive(private=True)
+            distroseries = self.factory.makeDistroSeries(
+                distribution=archive.distribution
+            )
+            pocket = PackagePublishingPocket.RELEASE
+            self._make_source_with_binaries(
+                archive, distroseries, pocket, ["foo-bin"]
+            )
+            subscriber = self.factory.makePerson()
+            with person_logged_in(archive.owner):
+                archive.newSubscription(subscriber, archive.owner)
+            archive_url = api_url(archive)
+        ws = webservice_for_person(
+            subscriber,
+            permission=OAuthPermission.READ_PRIVATE,
+            default_api_version="devel",
+        )
+        response = ws.named_get(archive_url, "getPublishedSources")
+        self.assertEqual(200, response.status)
+        summary = response.jsonBody()["entries"][0]["published_binaries"]
+        self.assertEqual(
+            ["foo-bin"],
+            [entry["binary_package_name"] for entry in summary],
+        )
+
+    def test_getPublishedSources_published_binaries_private_non_subscriber(
+        self,
+    ):
+        # A non-subscriber cannot read a private archive's publications at
+        # all, so they never see the embedded binaries.
+        with admin_logged_in():
+            archive = self.factory.makeArchive(private=True)
+            distroseries = self.factory.makeDistroSeries(
+                distribution=archive.distribution
+            )
+            pocket = PackagePublishingPocket.RELEASE
+            self._make_source_with_binaries(
+                archive, distroseries, pocket, ["foo-bin"]
+            )
+            archive_url = api_url(archive)
+        ws = webservice_for_person(
+            self.factory.makePerson(),
+            permission=OAuthPermission.READ_PRIVATE,
+            default_api_version="devel",
+        )
+        response = ws.named_get(archive_url, "getPublishedSources")
+        self.assertEqual(401, response.status)
+
+    def test_getPublishedSources_published_binaries_defaults_to_active(self):
         # By default only active (published/pending) binaries are embedded;
         # superseded ones are omitted.
         with admin_logged_in():
@@ -1430,9 +1528,7 @@ class TestGetPublishedBinaries(TestCaseWithFactory):
         ws = webservice_for_person(self.person, default_api_version="devel")
         response = ws.named_get(archive_url, "getPublishedSources")
         self.assertEqual(200, response.status)
-        summary = response.jsonBody()["entries"][0][
-            "published_binaries_summary"
-        ]
+        summary = response.jsonBody()["entries"][0]["published_binaries"]
         self.assertEqual(
             ["active-bin"],
             [entry["binary_package_name"] for entry in summary],
@@ -1468,8 +1564,8 @@ class TestGetPublishedBinaries(TestCaseWithFactory):
             )
         self.assertEqual(["active-bin", "superseded-bin"], names)
 
-    def test_getPublishedSources_binaries_summary_query_count(self):
-        # Loading the binary summaries for a whole page of sources uses a
+    def test_getPublishedSources_published_binaries_query_count(self):
+        # Loading the binaries for a whole page of sources uses a
         # constant number of queries regardless of how many sources are
         # returned; there is no per-source binary query.
         archive = self.factory.makeArchive()

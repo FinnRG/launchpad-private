@@ -516,15 +516,17 @@ class ISourcePackagePublishingHistoryPublic(IPublishingView):
         )
     )
 
-    published_binaries_summary = exported(
+    published_binaries = exported(
         SchemaList(
-            title=_("Published binaries summary"),
+            title=_("Published binaries"),
             description=_(
                 "A summary of the active binary publications built from "
                 "this source publication. Each entry is a dict with the keys "
-                "'binary_package_name', 'distro_arch_series' (the "
-                "architecture tag) and 'web_link' (the binary "
-                "publication's web page)."
+                "'binary_package_name', 'architecture_tag', 'status', "
+                "'pocket', 'date_created', 'date_made_pending', "
+                "'date_superseded', 'date_removed', 'web_link' (the binary "
+                "publication page) and 'build_web_link' (the binary's build "
+                "page)."
             ),
             value_type=SchemaDict(key_type=TextLine()),
             required=False,
@@ -1368,8 +1370,8 @@ class IPublishingSet(Interface):
             binary publications with an active publishing status.
 
         :return: a dict mapping each `SourcePackagePublishingHistory` id to a
-            list of dicts with the keys "binary_package_name",
-            "distro_arch_series" and "web_link".
+            list of dicts as described by the exported `published_binaries`
+            attribute of `ISourcePackagePublishingHistory`.
         """
 
     def getBuiltPackagesSummaryForSourcePublication(source_publication):
