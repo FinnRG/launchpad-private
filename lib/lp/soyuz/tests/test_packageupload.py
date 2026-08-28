@@ -873,6 +873,23 @@ class TestPackageUploadSet(TestCaseWithFactory):
             self.upload_set.getAll(distroseries, custom_type=custom_type),
         )
 
+    def test_getAll_deduplicates_multiple_matching_custom_files(self):
+        # When an upload has more than one custom file matching the
+        # requested custom_type, the join can return the upload once per
+        # matching file. getAll must de-duplicate so that the upload is
+        # returned only once.
+        distroseries = self.factory.makeDistroSeries()
+        custom_type = PackageUploadCustomFormat.DDTP_TARBALL
+        upload = self.factory.makeCustomPackageUpload(
+            distroseries, custom_type=custom_type
+        )
+        # Attach a second custom file of the same type to the same upload.
+        upload.addCustom(self.factory.makeLibraryFileAlias(), custom_type)
+        self.assertContentEqual(
+            [upload],
+            self.upload_set.getAll(distroseries, custom_type=custom_type),
+        )
+
     def test_getAll_filters_by_custom_type(self):
         distroseries = self.factory.makeDistroSeries()
         one_type = PackageUploadCustomFormat.DIST_UPGRADER
