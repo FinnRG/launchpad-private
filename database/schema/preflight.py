@@ -71,12 +71,19 @@ MAX_LAG = timedelta(seconds=60)
 
 
 class DatabasePreflight:
-    def __init__(self, log, controller, replication_paused=False):
+    def __init__(
+        self,
+        log,
+        controller,
+        replication_paused=False,
+        skip_replication_checks=False,
+    ):
         primary_con = psycopg2.connect(str(controller.primary))
         primary_con.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
 
         self.log = log
         self.replication_paused = replication_paused
+        self.skip_replication_checks = skip_replication_checks
 
         node = Node(None, None, None, True)
         node.con = primary_con
@@ -337,10 +344,14 @@ class DatabasePreflight:
         success = True
         if not self.check_standby_count():
             success = False
-        if not self.replication_paused and not self.check_replication_lag():
-            success = False
-        if not self.replication_paused and not self.check_can_sync():
-            success = False
+        if not self.skip_replication_checks:
+            if (
+                not self.replication_paused
+                and not self.check_replication_lag()
+            ):
+                success = False
+            if not self.replication_paused and not self.check_can_sync():
+                success = False
         # Do checks on open transactions last to minimize race
         # conditions.
         if not self.check_open_connections():
@@ -454,6 +465,13 @@ def main():
         metavar="USERNAME",
         help="Connect as USERNAME to databases",
     )
+    parser.add_option(
+        "--skip-replication-checks",
+        dest="skip_replication_checks",
+        default=False,
+        action="store_true",
+        help="Skip replication lag and sync checks",
+    )
 
     (options, args) = parser.parse_args()
     if args:
@@ -471,11 +489,23 @@ def main():
     )
 
     if options.kill_connections:
-        preflight_check = KillConnectionsPreflight(log, controller)
+        preflight_check = KillConnectionsPreflight(
+            log,
+            controller,
+            skip_replication_checks=options.skip_replication_checks,
+        )
     elif options.skip_connection_check:
-        preflight_check = NoConnectionCheckPreflight(log, controller)
+        preflight_check = NoConnectionCheckPreflight(
+            log,
+            controller,
+            skip_replication_checks=options.skip_replication_checks,
+        )
     else:
-        preflight_check = DatabasePreflight(log, controller)
+        preflight_check = DatabasePreflight(
+            log,
+            controller,
+            skip_replication_checks=options.skip_replication_checks,
+        )
 
     if preflight_check.check_all():
         log.info("Preflight check succeeded. Good to go.")
