@@ -77,6 +77,7 @@ class DatabasePreflight:
         controller,
         replication_paused=False,
         skip_replication_checks=False,
+        skip_standby_count_check=False,
     ):
         primary_con = psycopg2.connect(str(controller.primary))
         primary_con.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
@@ -84,6 +85,7 @@ class DatabasePreflight:
         self.log = log
         self.replication_paused = replication_paused
         self.skip_replication_checks = skip_replication_checks
+        self.skip_standby_count_check = skip_standby_count_check
 
         node = Node(None, None, None, True)
         node.con = primary_con
@@ -342,7 +344,10 @@ class DatabasePreflight:
         self.report_patches()
 
         success = True
-        if not self.check_standby_count():
+        if (
+            not self.skip_standby_count_check
+            and not self.check_standby_count()
+        ):
             success = False
         if not self.skip_replication_checks:
             if (
@@ -472,6 +477,13 @@ def main():
         action="store_true",
         help="Skip replication lag and sync checks",
     )
+    parser.add_option(
+        "--skip-standby-count-check",
+        dest="skip_standby_count_check",
+        default=False,
+        action="store_true",
+        help="Skip standby server count validation",
+    )
 
     (options, args) = parser.parse_args()
     if args:
@@ -493,18 +505,21 @@ def main():
             log,
             controller,
             skip_replication_checks=options.skip_replication_checks,
+            skip_standby_count_check=options.skip_standby_count_check,
         )
     elif options.skip_connection_check:
         preflight_check = NoConnectionCheckPreflight(
             log,
             controller,
             skip_replication_checks=options.skip_replication_checks,
+            skip_standby_count_check=options.skip_standby_count_check,
         )
     else:
         preflight_check = DatabasePreflight(
             log,
             controller,
             skip_replication_checks=options.skip_replication_checks,
+            skip_standby_count_check=options.skip_standby_count_check,
         )
 
     if preflight_check.check_all():

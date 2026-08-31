@@ -103,6 +103,13 @@ def main():
         action="store_true",
         help="Skip replication lag and sync checks",
     )
+    parser.add_option(
+        "--skip-standby-count-check",
+        dest="skip_standby_count_check",
+        default=False,
+        action="store_true",
+        help="Skip standby server count validation",
+    )
 
     logger_options(parser, milliseconds=True)
     (options, args) = parser.parse_args()
@@ -136,6 +143,7 @@ def main():
         log,
         controller,
         skip_replication_checks=options.skip_replication_checks,
+        skip_standby_count_check=options.skip_standby_count_check,
     ).check_all():
         return 99
 
@@ -173,6 +181,7 @@ def main():
             controller,
             replication_paused=replication_paused,
             skip_replication_checks=options.skip_replication_checks,
+            skip_standby_count_check=options.skip_standby_count_check,
         ).check_all():
             return 100
 
@@ -230,6 +239,7 @@ def main():
             log,
             controller,
             skip_replication_checks=options.skip_replication_checks,
+            skip_standby_count_check=options.skip_standby_count_check,
         ).check_all():
             return 101
 
