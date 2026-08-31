@@ -59,7 +59,6 @@ def run_security(options, log, primary_con):
     # Fake expected command line arguments and global log
     options.dryrun = False
     options.revoke = True
-    options.owner = "postgres"
     options.dbname = None
     security.options = options
     security.log = log
@@ -109,6 +108,15 @@ def main():
         default=False,
         action="store_true",
         help="Skip standby server count validation",
+    )
+    parser.add_option(
+        "-o",
+        "--owner",
+        dest="owner",
+        default="postgres",
+        metavar="USERNAME",
+        help="Owner of PostgreSQL objects to be used for security.py ACLs. "
+        'Defaults to "postgres"',
     )
 
     logger_options(parser, milliseconds=True)
