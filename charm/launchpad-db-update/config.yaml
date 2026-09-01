@@ -10,3 +10,28 @@ options:
     type: string
     description: User name to use when connecting to backend databases.
     default: "postgres"
+  database_object_owner:
+    type: string
+    description: >
+      Owner of PostgreSQL objects used by the security.py script.
+      This option was added to support the modern DPE PostgreSQL
+      charm, which creates a custom role to own all database objects.
+
+      WARNING: Use this value with extreme caution, as security.py
+      will use it to reset ownership of PostgreSQL objects.
+    default: "postgres"
+  skip_replication_checks:
+    type: boolean
+    description: >
+      Skip replication lag and sync checks. Intended for use with
+      the modern DPE PostgreSQL charm, where replication is managed
+      by the charm and should not be modified externally to avoid
+      unintended side effects.
+    default: false
+  skip_standby_count_check:
+    type: boolean
+    description: >
+      Skip standby count validation. Primarily intended for use with the modern
+      DPE PostgreSQL charm, which exposes a single connection string for all 
+      read replicas.
+    default: false
