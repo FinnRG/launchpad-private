@@ -496,7 +496,7 @@ class Snap(StormBase, WebhookTargetMixin):
 
     @property
     def valid_webhook_event_types(self):
-        return ["snap:build:0.1"]
+        return ["snap:build:0.1", "snap:build:0.1::fullybuilt"]
 
     @property
     def _api_git_path(self):

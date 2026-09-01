@@ -49,6 +49,13 @@ def _sync_sbom_webhook(snap, delivery_url, secret):
     with edit rights on this specific snap's webhooks), so it operates
     on the unproxied snap and talks to `IWebhookSet` directly rather
     than via the permission-checked `ISnap.webhooks` property.
+
+    This does a plain check-then-insert with no locking, so two
+    concurrent edits enabling use_fetch_service on the same snap could
+    in principle create two active hooks pointed at the same URL. That
+    would only mean a duplicate SBOM generation attempt per build, not
+    data loss or corruption, so it isn't guarded against here; revisit
+    if this graduates beyond a proof of concept.
     """
     naked_snap = removeSecurityProxy(snap)
     webhook_set = getUtility(IWebhookSet)
@@ -62,6 +69,11 @@ def _sync_sbom_webhook(snap, delivery_url, secret):
             for hook in existing_hooks:
                 if not hook.active:
                     hook.active = True
+                # Keep the hook in sync with the current configuration,
+                # so that rotating sbom_webhook_secret takes effect for
+                # snaps that already have a (possibly inactive) hook.
+                if hook.secret != secret:
+                    hook.setSecret(secret)
         else:
             webhook_set.new(
                 naked_snap,

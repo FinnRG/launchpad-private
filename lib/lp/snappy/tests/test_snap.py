@@ -1964,6 +1964,17 @@ class TestSnap(TestCaseWithFactory):
                 snap.fetch_service_policy, FetchServicePolicy.PERMISSIVE
             )
 
+    def test_fullybuilt_webhook_subscope_is_valid(self):
+        # "snap:build:0.1::fullybuilt" is a selectable webhook event
+        # type for snaps, not just something the automatic SBOM webhook
+        # management can use internally.
+        person = self.factory.makePerson()
+        with person_logged_in(person):
+            snap = self.factory.makeSnap(registrant=person, owner=person)
+            self.assertIn(
+                "snap:build:0.1::fullybuilt", snap.valid_webhook_event_types
+            )
+
 
 class TestSnapSBOMWebhook(TestCaseWithFactory):
     """Tests for the automatically-managed SBOM generation webhook."""
@@ -2002,6 +2013,28 @@ class TestSnapSBOMWebhook(TestCaseWithFactory):
         self.assertTrue(hook.active)
         self.assertEqual(["snap:build:0.1::fullybuilt"], hook.event_types)
         self.assertEqual("sbom-secret", hook.secret)
+
+    def test_reenabling_fetch_service_refreshes_rotated_secret(self):
+        # If sbom_webhook_secret is rotated while a snap's automatic
+        # webhook is inactive, re-enabling use_fetch_service adopts the
+        # new secret rather than keeping the stale one.
+        snap = self.factory.makeSnap()
+        naked_snap = removeSecurityProxy(snap)
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = True
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = False
+        self.pushConfig(
+            "snappy",
+            sbom_webhook_url="https://sbom.example.com/webhook",
+            sbom_webhook_secret="rotated-secret",
+        )
+
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = True
+
+        [hook] = self._getSBOMWebhooks(snap)
+        self.assertEqual("rotated-secret", hook.secret)
 
     def test_disabling_fetch_service_deactivates_webhook(self):
         # Disabling use_fetch_service deactivates (but does not delete)
