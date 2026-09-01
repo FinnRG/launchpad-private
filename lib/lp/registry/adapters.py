@@ -6,18 +6,21 @@
 __all__ = [
     "sourcepackage_to_archive",
     "distroseries_to_distribution",
+    "MilestoneSearchResultsCollection",
     "PollSubset",
     "productseries_to_product",
     "sourcepackage_to_distribution",
 ]
 
 
+from lazr.restful import ScopedCollection
 from zope.component import getUtility
 from zope.interface import implementer
 from zope.interface.interfaces import ComponentLookupError
 
 from lp.archivepublisher.interfaces.publisherconfig import IPublisherConfigSet
 from lp.registry.enums import PollSort
+from lp.registry.interfaces.milestone import IHasMilestones
 from lp.registry.interfaces.poll import (
     IPollSet,
     IPollSubset,
@@ -25,6 +28,14 @@ from lp.registry.interfaces.poll import (
     PollStatus,
 )
 from lp.services.webapp.interfaces import ILaunchpadPrincipal
+
+
+class MilestoneSearchResultsCollection(ScopedCollection):
+    """Expose milestone search results as a typed scoped collection."""
+
+    def __init__(self, context, request):
+        super().__init__(context.target, context.results, request)
+        self.relationship = IHasMilestones["all_milestones"]
 
 
 def sourcepackage_to_distribution(source_package):
