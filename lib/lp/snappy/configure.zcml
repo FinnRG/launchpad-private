@@ -36,6 +36,9 @@
     <subscriber
         for="lp.snappy.interfaces.snap.ISnap zope.lifecycleevent.interfaces.IObjectModifiedEvent"
         handler="lp.snappy.model.snap.snap_modified" />
+    <subscriber
+        for="lp.snappy.interfaces.snap.ISnap zope.lifecycleevent.interfaces.IObjectModifiedEvent"
+        handler="lp.snappy.subscribers.snap.snap_use_fetch_service_changed" />
 
     <!-- SnapSet -->
     <lp:securedutility
