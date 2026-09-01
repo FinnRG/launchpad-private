@@ -14,6 +14,10 @@
 
 /** A YUI DOM event passed to a node event handler. */
 export interface EventFacade {
+  /** The node that dispatched the event. */
+  target: YuiNode;
+  /** Prevent the event's default action and stop it propagating. */
+  halt(): void;
   /** Prevent the browser's default response to the event. */
   preventDefault(): void;
 }
