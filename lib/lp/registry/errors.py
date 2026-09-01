@@ -12,6 +12,7 @@ __all__ = [
     "CountryMirrorAlreadySet",
     "DeleteSubscriptionError",
     "InvalidFilename",
+    "InvalidMilestoneOrder",
     "InvalidMirrorReviewState",
     "InvalidName",
     "InvalidTranslationCoverageOrder",
@@ -57,6 +58,11 @@ class InclusiveTeamLinkageError(ValueError):
 @error_status(http.client.CONFLICT)
 class NameAlreadyTaken(Exception):
     """The name given for a person is already in use by other person."""
+
+
+@error_status(http.client.BAD_REQUEST)
+class InvalidMilestoneOrder(ValueError):
+    """The milestone order contains an unknown field."""
 
 
 @error_status(http.client.BAD_REQUEST)

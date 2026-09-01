@@ -3,6 +3,8 @@
 
 """Milestone interfaces."""
 
+import typing
+
 __all__ = [
     "IAbstractMilestone",
     "ICanGetMilestonesDirectly",
@@ -10,7 +12,9 @@ __all__ = [
     "IMilestone",
     "IMilestoneData",
     "IMilestoneSet",
+    "IMilestoneSearchResults",
     "IProjectGroupMilestone",
+    "ISearchableMilestones",
 ]
 
 from lazr.lifecycle.snapshot import doNotSnapshot
@@ -26,6 +30,7 @@ from lazr.restful.declarations import (
     exported_as_webservice_entry,
     operation_for_version,
     operation_parameters,
+    operation_returns_collection_of,
     operation_returns_entry,
     rename_parameters_as,
 )
@@ -382,6 +387,65 @@ class IHasMilestones(Interface):
         result does not trigger an additional query per row.  Use this instead
         of `all_milestones` whenever you iterate the result and access
         `product_release` on the individual milestones.
+        """
+
+
+class IMilestoneSearchResults(Interface):
+    """Milestones selected by ``searchMilestones``."""
+
+    target = Attribute("The distribution or distribution series searched.")
+    results = Attribute("The matching milestones.")
+
+
+class ISearchableMilestones(Interface):
+    """A distribution target that supports milestone searches."""
+
+    @operation_parameters(
+        is_active=Bool(
+            title=_("Whether milestones are active."),
+            description=_(
+                "If true, return only active milestones. If false, return "
+                "only inactive milestones. If omitted, return all milestones."
+            ),
+            required=False,
+        ),
+        order_by=List(
+            title=_("List of fields by which the results are ordered."),
+            description=_(
+                "Use date_targeted or name. Prefix a field with '-' for "
+                "descending order. Fields are applied in the order given."
+            ),
+            value_type=TextLine(),
+            required=False,
+        ),
+    )
+    @operation_returns_collection_of(IMilestone)
+    @export_read_operation()
+    @operation_for_version("devel")
+    def searchMilestones(
+        is_active=None, order_by=None
+    ) -> typing.Iterable[IMilestone]:
+        """Return milestones associated with this distribution target.
+
+        The target may be a distribution or one of its series. Results are
+        returned as a batched collection of milestone entries.
+
+        If ``is_active`` is omitted, all milestones are returned. If it is
+        true, only active milestones are returned; if false, only inactive
+        milestones are returned.
+
+        By default, results use the same descending date-targeted and natural
+        name order as the existing milestone collections. Milestones without
+        a target date are treated as later than dated milestones. When
+        ``order_by`` is given, its fields are applied in sequence, and
+        ascending natural name order resolves remaining ties. The collection
+        is empty when the target has no matching milestones.
+
+        :param is_active: Whether to restrict results by active state.
+        :param order_by: Public field names to sort by. Prefix a field with
+            "-" for descending order.
+        :raises InvalidMilestoneOrder: If ``order_by`` contains an unsupported
+            field.
         """
 
 

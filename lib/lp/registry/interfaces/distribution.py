@@ -84,6 +84,7 @@ from lp.registry.interfaces.karma import IKarmaContext
 from lp.registry.interfaces.milestone import (
     ICanGetMilestonesDirectly,
     IHasMilestones,
+    ISearchableMilestones,
 )
 from lp.registry.interfaces.oopsreferences import IHasOOPSReferences
 from lp.registry.interfaces.person import IPerson
@@ -261,6 +262,7 @@ class IDistributionView(
     IHasBuildRecords,
     IHasDrivers,
     IHasMilestones,
+    ISearchableMilestones,
     IHasSharingPolicies,
     IHasOOPSReferences,
     IHasSprints,
