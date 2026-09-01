@@ -59,7 +59,6 @@ def run_security(options, log, primary_con):
     # Fake expected command line arguments and global log
     options.dryrun = False
     options.revoke = True
-    options.owner = "postgres"
     options.dbname = None
     security.options = options
     security.log = log
@@ -96,6 +95,29 @@ def main():
         metavar="USERNAME",
         help="Connect as USERNAME to databases",
     )
+    parser.add_option(
+        "--skip-replication-checks",
+        dest="skip_replication_checks",
+        default=False,
+        action="store_true",
+        help="Skip replication lag and sync checks",
+    )
+    parser.add_option(
+        "--skip-standby-count-check",
+        dest="skip_standby_count_check",
+        default=False,
+        action="store_true",
+        help="Skip standby server count validation",
+    )
+    parser.add_option(
+        "-o",
+        "--owner",
+        dest="owner",
+        default="postgres",
+        metavar="USERNAME",
+        help="Owner of PostgreSQL objects to be used for security.py ACLs. "
+        'Defaults to "postgres"',
+    )
 
     logger_options(parser, milliseconds=True)
     (options, args) = parser.parse_args()
@@ -123,8 +145,14 @@ def main():
     # Preflight checks. Confirm as best we can that the upgrade will
     # work unattended. Here we ignore open connections, as they
     # will shortly be killed.
-    controller.ensure_replication_enabled()
-    if not NoConnectionCheckPreflight(log, controller).check_all():
+    if not options.skip_replication_checks:
+        controller.ensure_replication_enabled()
+    if not NoConnectionCheckPreflight(
+        log,
+        controller,
+        skip_replication_checks=options.skip_replication_checks,
+        skip_standby_count_check=options.skip_standby_count_check,
+    ).check_all():
         return 99
 
     #
@@ -142,9 +170,10 @@ def main():
 
     try:
         # Pause replication.
-        replication_paused = controller.pause_replication()
-        if not replication_paused:
-            return 93
+        if not options.skip_replication_checks:
+            replication_paused = controller.pause_replication()
+            if not replication_paused:
+                return 93
 
         # Start the outage clock.
         log.info("Outage starts.")
@@ -156,7 +185,11 @@ def main():
             return 95
 
         if not KillConnectionsPreflight(
-            log, controller, replication_paused=replication_paused
+            log,
+            controller,
+            replication_paused=replication_paused,
+            skip_replication_checks=options.skip_replication_checks,
+            skip_standby_count_check=options.skip_standby_count_check,
         ).check_all():
             return 100
 
@@ -184,19 +217,21 @@ def main():
         standbys_disabled = controller.disable_standbys()
 
         # Resume replication.
-        replication_paused = not controller.resume_replication()
-        if replication_paused:
-            log.error(
-                "Failed to resume replication. Run pg_wal_replay_pause() "
-                "on all standbys to manually resume."
-            )
-        else:
-            if controller.sync():
-                log.info("Standbys in sync. Updates replicated.")
-            else:
+        if not options.skip_replication_checks:
+            replication_paused = not controller.resume_replication()
+            if replication_paused:
                 log.error(
-                    "Standbys failed to sync. Updates may not be replicated."
+                    "Failed to resume replication. Run pg_wal_replay_pause() "
+                    "on all standbys to manually resume."
                 )
+            else:
+                if controller.sync():
+                    log.info("Standbys in sync. Updates replicated.")
+                else:
+                    log.error(
+                        "Standbys failed to sync. Updates may not be "
+                        "replicated."
+                    )
 
         if standbys_disabled:
             standbys_disabled = not controller.enable_standbys()
@@ -208,7 +243,12 @@ def main():
 
         # We will start seeing connections as soon as pgbouncer is
         # reenabled, so ignore them here.
-        if not NoConnectionCheckPreflight(log, controller).check_all():
+        if not NoConnectionCheckPreflight(
+            log,
+            controller,
+            skip_replication_checks=options.skip_replication_checks,
+            skip_standby_count_check=options.skip_standby_count_check,
+        ).check_all():
             return 101
 
         log.info("All good. All done.")
@@ -232,7 +272,7 @@ def main():
                     "Primary is still disabled in pgbouncer. Outage ongoing."
                 )
 
-        if replication_paused:
+        if not options.skip_replication_checks and replication_paused:
             controller.resume_replication()
 
         if standbys_disabled:
