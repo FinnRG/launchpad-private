@@ -33,6 +33,32 @@ from lp.scripts.utilities import importpedant, warninghandler
 from lp.services.config import config
 
 
+def start_coverage():
+    """Measure this process with coverage.py, using `.coveragerc`."""
+    import atexit
+
+    import coverage
+
+    cov = coverage.Coverage(
+        config_file=os.path.join(config.root, ".coveragerc"),
+        # `main` changes the working directory, and restores it before atexit
+        # handlers run, so pin the data files to the top of the tree.
+        data_file=os.environ.get(
+            "COVERAGE_FILE", os.path.join(config.root, ".coverage")
+        ),
+    )
+    cov.config.source = [
+        os.path.join(config.root, path) for path in cov.config.source or []
+    ]
+    cov.start()
+
+    def save_coverage():
+        cov.stop()
+        cov.save()
+
+    atexit.register(save_coverage)
+
+
 def fix_doctest_output():
     # Fix doctest so that it can handle mixed unicode and encoded output.
     _RealSpoofOut = doctest._SpoofOut
@@ -178,6 +204,10 @@ class LaunchpadRunner(Runner):
 
 
 def main():
+    # Start measuring before the working directory changes below
+    if "--coverage-py" in sys.argv:
+        start_coverage()
+
     # The working directory change is just so that the test script
     # can be invoked from places other than the root of the source
     # tree. This is very useful for IDE integration, so an IDE can
@@ -238,6 +268,12 @@ def main():
         action="store_true",
         help="Run tests in parallel processes. "
         "Poorly isolated tests will break.",
+    )
+    options.parser.add_argument(
+        "--coverage-py",
+        action="store_true",
+        help="Measure coverage with coverage.py, configured by .coveragerc. "
+        "Report on the result with 'coverage combine' and 'coverage report'.",
     )
 
     # tests_pattern is a regexp, so the parsed value is hard to compare
