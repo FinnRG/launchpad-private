@@ -62,9 +62,13 @@ LPCONFIG=launchpad-scripts
 13 * * * * {{ code_dir }}/cronscripts/garbo-hourly.py -qq --log-file=DEBUG2:{{ logs_dir }}/garbo-hourly.log
 5 23 * * * {{ code_dir }}/cronscripts/garbo-daily.py --abort-script=72000 -q --log-file=INFO:{{ logs_dir }}/garbo-daily.log
 
-# Jobs which need to be run frequently
+# Jobs which need to be run every minute
 * * * * * {{ code_dir }}/cronscripts/process-job-source.py IPlainPackageCopyJobSource -q --log-file=DEBUG:{{ logs_dir }}/process-job-source.IPlainPackageCopyJobSource.log
 * * * * * {{ code_dir }}/cronscripts/process-job-source.py IProcessAcceptedBugsJobSource -q --log-file=INFO:{{ logs_dir }}/process-job-source.IProcessAcceptedBugsJobSource.log
+
+# Update or create preview diffs for branch merge proposals &
+# Send email about new merge proposals, generating a diff first if needed
+* * * * * {{ code_dir }}/cronscripts/process-job-source.py IBranchMergeProposalJobSource -q --log-file=DEBUG:{{ logs_dir }}/process-job-source.IBranchMergeProposalJobSource.log
 
 # Per https://portal.admin.canonical.com/C48031
 */5 * * * * {{ code_dir }}/cronscripts/process-job-source.py IInitializeDistroSeriesJobSource -q --log-file=INFO:{{ logs_dir }}/process-job-source.IInitializeDistroSeriesJobSource.log
