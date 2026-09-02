@@ -198,4 +198,4 @@ class SourcesListEntriesWidget:
         the view to determine whether to display "This PPA does not yet
         have any published sources" or "No sources matching 'blah'."
         """
-        return not self.archive.getPublishedSources().is_empty()
+        return not self.archive.getPublishedSources(ordered=False).is_empty()

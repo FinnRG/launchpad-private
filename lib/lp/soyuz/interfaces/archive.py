@@ -855,6 +855,12 @@ class IArchiveSubscriberView(Interface):
             Ubuntu has changed rather than taken from Debian unmodified.
             If False, only return publications without that marker. If
             None, do not filter on this at all.
+        :param ordered: Normally publications are ordered by source
+            package name and then descending version and ID.  If this
+            parameter is False then the default name/version ordering
+            (and the join with tables it requires) is skipped. Use this
+            when the caller only intends to call `count()`, `sum()`, or
+            `is_empty()`, where ordering has no effect.
 
         :return: SelectResults containing `ISourcePackagePublishingHistory`,
             ordered by name. If there are multiple results for the same
