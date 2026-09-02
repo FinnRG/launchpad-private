@@ -151,6 +151,24 @@ filename order on top of the `launchpad-2211-00-0.sql` baseline.
 - Write comments and docstrings in plain, direct English. Prefer simple,
   widely understood wording over jargon or nouns pressed into use as verbs.
   A comment should be clear on the first read.
+- Keep content clean and low-noise. The comments, docstrings, and commit
+  messages produced must read as if a careful human wrote them. The few minutes
+  the author spends cleaning this up saves far more time for every reviewer and
+  everyone who reads the code later.
+  - Do not add the thinking process, narration, or step-by-step reasoning as
+    comments or commit messages. Explain what the code does and why, not how
+    you arrived at it.
+  - Cut over-explanation. Comment only what is non-obvious; delete restatements
+    of the code, comments that teach general concepts, and defensive caveats no
+    reader needs.
+  - Do not leak the prompting context. Reference files, examples, or tickets to
+    guide an implementation do not belong in the comment or commit message.
+    Describe the change on its own terms.
+  - Avoid vague, hard-to-parse phrasing. If a comment would make
+    the next human stop and decode it, rewrite it in direct language.
+  - Keep commit messages tight: a clear summary line and only the context a
+    reviewer actually needs. Reviewers should not have to wade through walls of
+    generated prose to find the point.
 - Formatting/linting is enforced by pre-commit; run before committing:
 
   ```sh
