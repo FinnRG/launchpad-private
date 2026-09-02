@@ -877,16 +877,6 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                 spr = pub_source.sourcepackagerelease
                 get_property_cache(spr).published_archives = [self]
 
-            # Load the active binaries for the whole page and cache them on
-            # each source.
-            summaries = getUtility(
-                IPublishingSet
-            ).getBinaryPublicationSummariesForSources(rows)
-            for pub_source in rows:
-                get_property_cache(pub_source).published_binaries = (
-                    summaries.get(pub_source.id, [])
-                )
-
         return DecoratedResultSet(
             published_sources, pre_iter_hook=load_api_extra_objects
         )
