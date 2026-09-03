@@ -276,7 +276,7 @@
             comment_list_container: Y.one('#conversation')
         });
         if (comment !== null) {
-            comment.on('CodeReviewComment.appended', cl.bind_new_comment);
+            comment.on('CodeReviewComment.appended', cl.bindNewComment);
             comment.on('CodeReviewComment.appended', Y.lp.code.branchmergeproposal.requestmerge.refresh);
         }
         cl.render();
