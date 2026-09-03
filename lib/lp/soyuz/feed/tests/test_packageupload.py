@@ -154,7 +154,7 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
     def test_title_contains_distroseries_name(self):
         distroseries = self.factory.makeDistroSeries(name="focal")
         feed = self._make_feed(distroseries)
-        self.assertIn("focal", feed.title)
+        self.assertIn("Focal", feed.title)
 
     def test_getItemsWorker_returns_empty_list_when_no_uploads(self):
         distroseries = self.factory.makeDistroSeries()
