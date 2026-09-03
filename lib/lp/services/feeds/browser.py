@@ -253,7 +253,9 @@ class NewPackageUploadsFeedLink(FeedLinkBase):
 
     @property
     def title(self):
-        return "New Package Uploads for %s" % self.context.displayname
+        return (
+            "%s — new package uploads" % self.context.displayname.capitalize()
+        )
 
     @property
     def href(self):

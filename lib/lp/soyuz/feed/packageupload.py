@@ -43,7 +43,7 @@ class NewPackageUploadsFeed(FeedBase):
 
     @property
     def title(self) -> str:
-        return "New package uploads for %s" % self.context.name
+        return "%s — new package uploads" % self.context.name.capitalize()
 
     @property
     def logo(self) -> str:
