@@ -13,16 +13,21 @@ from datetime import date, datetime, timedelta, timezone
 import transaction
 from testtools.matchers import Equals
 from zope.component import getUtility
+from zope.schema.interfaces import IInt, TooSmall
 from zope.security.interfaces import Unauthorized
 from zope.security.proxy import removeSecurityProxy
 
+from lp.app.enums import InformationType
 from lp.app.interfaces.launchpad import ILaunchpadCelebrities
 from lp.bugs.interfaces.bugtargetparent import IBugTargetParent
 from lp.bugs.interfaces.bugtask import BugTaskImportance, BugTaskStatus
 from lp.buildmaster.enums import BuildStatus
 from lp.registry.errors import NoSuchDistroSeries
 from lp.registry.interfaces.distribution import IDistribution
-from lp.registry.interfaces.distroseries import IDistroSeriesSet
+from lp.registry.interfaces.distroseries import (
+    IDistroSeriesPublic,
+    IDistroSeriesSet,
+)
 from lp.registry.interfaces.externalpackage import ExternalPackageType
 from lp.registry.interfaces.pocket import PackagePublishingPocket
 from lp.services.database.interfaces import IStore
@@ -54,7 +59,11 @@ from lp.testing import (
     login,
     person_logged_in,
 )
-from lp.testing.layers import DatabaseFunctionalLayer, LaunchpadFunctionalLayer
+from lp.testing.layers import (
+    BaseLayer,
+    DatabaseFunctionalLayer,
+    LaunchpadFunctionalLayer,
+)
 from lp.testing.matchers import HasQueryCount
 from lp.testing.pages import webservice_for_person
 from lp.translations.interfaces.distroserieslanguage import (
@@ -1336,6 +1345,309 @@ class TestDistroSeriesBuildRecordsCountsWebservice(TestCaseWithFactory):
             {"name", "build_state", "pocket"},
             set(exported["params"]),
         )
+
+
+class TestDistroSeriesPackageCounts(TestCaseWithFactory):
+    layer = DatabaseFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        self.distroseries = self.factory.makeDistroSeries()
+        self.distroarchseries = self.factory.makeDistroArchSeries(
+            distroseries=self.distroseries
+        )
+        self.partner_archive = self.factory.makeArchive(
+            distribution=self.distroseries.distribution,
+            purpose=ArchivePurpose.PARTNER,
+        )
+        self.ppa = self.factory.makeArchive(
+            distribution=self.distroseries.distribution,
+            purpose=ArchivePurpose.PPA,
+        )
+        self.copy_archive = self.factory.makeArchive(
+            distribution=self.distroseries.distribution,
+            purpose=ArchivePurpose.COPY,
+        )
+        other_distribution = self.factory.makeDistribution()
+        self.foreign_archive = other_distribution.main_archive
+        self.other_distroseries = self.factory.makeDistroSeries(
+            distribution=self.distroseries.distribution
+        )
+        self.other_distroarchseries = self.factory.makeDistroArchSeries(
+            distroseries=self.other_distroseries
+        )
+
+    def updateAndAssertSourceCount(self, expected):
+        self.distroseries.updatePackageCount()
+        self.assertEqual(expected, self.distroseries.sourcecount)
+
+    def updateAndAssertBinaryCount(self, expected):
+        self.distroseries.updatePackageCount()
+        self.assertEqual(expected, self.distroseries.binarycount)
+
+    def makeSourcePublication(
+        self,
+        sourcepackagename=None,
+        status=PackagePublishingStatus.PENDING,
+        pocket=PackagePublishingPocket.RELEASE,
+        archive=None,
+        distroseries=None,
+    ):
+        if sourcepackagename is None:
+            sourcepackagename = self.factory.makeSourcePackageName()
+        if archive is None:
+            archive = self.distroseries.main_archive
+        if distroseries is None:
+            distroseries = self.distroseries
+        return self.factory.makeSourcePackagePublishingHistory(
+            sourcepackagename=sourcepackagename,
+            distroseries=distroseries,
+            archive=archive,
+            status=status,
+            pocket=pocket,
+        )
+
+    def makeBinaryPublication(
+        self,
+        binarypackagename=None,
+        status=PackagePublishingStatus.PENDING,
+        pocket=PackagePublishingPocket.RELEASE,
+        archive=None,
+        distroarchseries=None,
+    ):
+        if binarypackagename is None:
+            binarypackagename = self.factory.makeBinaryPackageName()
+        if archive is None:
+            archive = self.distroseries.main_archive
+        if distroarchseries is None:
+            distroarchseries = self.distroarchseries
+        return self.factory.makeBinaryPackagePublishingHistory(
+            binarypackagename=binarypackagename,
+            distroarchseries=distroarchseries,
+            archive=archive,
+            status=status,
+            pocket=pocket,
+        )
+
+    def test_source_package_count_membership(self):
+        self.updateAndAssertSourceCount(0)
+
+        self.makeSourcePublication(status=PackagePublishingStatus.PENDING)
+        self.updateAndAssertSourceCount(1)
+        self.makeSourcePublication(status=PackagePublishingStatus.PUBLISHED)
+        self.updateAndAssertSourceCount(2)
+
+        duplicate_name = self.factory.makeSourcePackageName()
+        self.makeSourcePublication(sourcepackagename=duplicate_name)
+        self.updateAndAssertSourceCount(3)
+        self.makeSourcePublication(
+            sourcepackagename=duplicate_name,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        self.updateAndAssertSourceCount(3)
+
+        for status in (
+            PackagePublishingStatus.SUPERSEDED,
+            PackagePublishingStatus.DELETED,
+            PackagePublishingStatus.OBSOLETE,
+        ):
+            self.makeSourcePublication(status=status)
+        self.updateAndAssertSourceCount(3)
+
+        self.makeSourcePublication(pocket=PackagePublishingPocket.UPDATES)
+        self.makeSourcePublication(archive=self.ppa)
+        self.makeSourcePublication(archive=self.copy_archive)
+        # Publication creation rejects cross-distribution archive pairs, so
+        # set the archive ID directly to exercise this defensive filter.
+        foreign_publication = self.makeSourcePublication()
+        removeSecurityProxy(foreign_publication).archive_id = (
+            self.foreign_archive.id
+        )
+        self.makeSourcePublication(distroseries=self.other_distroseries)
+        self.updateAndAssertSourceCount(3)
+
+        self.makeSourcePublication(archive=self.partner_archive)
+        self.updateAndAssertSourceCount(4)
+
+    def test_binary_package_count_membership(self):
+        self.updateAndAssertBinaryCount(0)
+
+        self.makeBinaryPublication(status=PackagePublishingStatus.PENDING)
+        self.updateAndAssertBinaryCount(1)
+        self.makeBinaryPublication(status=PackagePublishingStatus.PUBLISHED)
+        self.updateAndAssertBinaryCount(2)
+
+        duplicate_name = self.factory.makeBinaryPackageName()
+        self.makeBinaryPublication(binarypackagename=duplicate_name)
+        self.updateAndAssertBinaryCount(3)
+        self.makeBinaryPublication(
+            binarypackagename=duplicate_name,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        self.updateAndAssertBinaryCount(3)
+
+        for status in (
+            PackagePublishingStatus.SUPERSEDED,
+            PackagePublishingStatus.DELETED,
+            PackagePublishingStatus.OBSOLETE,
+        ):
+            self.makeBinaryPublication(status=status)
+        self.updateAndAssertBinaryCount(3)
+
+        self.makeBinaryPublication(pocket=PackagePublishingPocket.UPDATES)
+        self.makeBinaryPublication(archive=self.ppa)
+        self.makeBinaryPublication(archive=self.copy_archive)
+        # Publication creation rejects cross-distribution archive pairs, so
+        # set the archive ID directly to exercise this defensive filter.
+        foreign_publication = self.makeBinaryPublication()
+        removeSecurityProxy(foreign_publication).archive_id = (
+            self.foreign_archive.id
+        )
+        self.makeBinaryPublication(
+            distroarchseries=self.other_distroarchseries
+        )
+        self.updateAndAssertBinaryCount(3)
+
+        self.makeBinaryPublication(archive=self.partner_archive)
+        self.updateAndAssertBinaryCount(4)
+
+
+class TestDistroSeriesPackageCountSchema(TestCase):
+    layer = BaseLayer
+
+    def test_fields_require_non_negative_integers(self):
+        for name in ("sourcecount", "binarycount"):
+            field = IDistroSeriesPublic[name]
+            self.assertTrue(field.required)
+            self.assertTrue(IInt.providedBy(field))
+            self.assertTrue(field.readonly)
+            self.assertEqual(0, field.min)
+            self.assertRaises(TooSmall, field.validate, -1)
+            field.validate(0)
+
+
+class TestDistroSeriesPackageCountsWebservice(TestCaseWithFactory):
+    layer = DatabaseFunctionalLayer
+
+    def getEntry(self, distroseries, version="devel"):
+        with person_logged_in(None):
+            distroseries_url = api_url(distroseries)
+        webservice = webservice_for_person(None, default_api_version=version)
+        response = webservice.get(distroseries_url)
+        self.assertEqual(200, response.status, response.body)
+        return response.jsonBody()
+
+    def test_empty_devel_representation_is_anonymously_accessible(self):
+        entry = self.getEntry(self.factory.makeDistroSeries())
+
+        self.assertEqual(
+            {
+                "source_package_count": 0,
+                "binary_package_count": 0,
+            },
+            {
+                name: entry[name]
+                for name in (
+                    "source_package_count",
+                    "binary_package_count",
+                )
+            },
+        )
+        self.assertIs(int, type(entry["source_package_count"]))
+        self.assertIs(int, type(entry["binary_package_count"]))
+
+    def test_private_distribution_visibility(self):
+        owner = self.factory.makePerson()
+        unrelated_person = self.factory.makePerson()
+        with person_logged_in(owner):
+            distribution = self.factory.makeDistribution(
+                owner=owner,
+                information_type=InformationType.PROPRIETARY,
+            )
+            distroseries = self.factory.makeDistroSeries(
+                distribution=distribution
+            )
+            distroarchseries = self.factory.makeDistroArchSeries(
+                distroseries=distroseries
+            )
+            self.factory.makeSourcePackagePublishingHistory(
+                distroseries=distroseries,
+                archive=distroseries.main_archive,
+                pocket=PackagePublishingPocket.RELEASE,
+                status=PackagePublishingStatus.PUBLISHED,
+            )
+            self.factory.makeBinaryPackagePublishingHistory(
+                distroarchseries=distroarchseries,
+                archive=distroseries.main_archive,
+                pocket=PackagePublishingPocket.RELEASE,
+                status=PackagePublishingStatus.PENDING,
+            )
+            distroseries.updatePackageCount()
+            distroseries_url = api_url(distroseries)
+
+        owner_webservice = webservice_for_person(
+            owner,
+            default_api_version="devel",
+            permission=OAuthPermission.READ_PRIVATE,
+        )
+        response = owner_webservice.get(distroseries_url)
+        self.assertEqual(200, response.status, response.body)
+        owner_entry = response.jsonBody()
+        expected_counts = {
+            "source_package_count": 2,
+            "binary_package_count": 1,
+        }
+        self.assertEqual(
+            expected_counts,
+            {name: owner_entry[name] for name in expected_counts},
+        )
+
+        unrelated_webservice = webservice_for_person(
+            unrelated_person,
+            default_api_version="devel",
+            permission=OAuthPermission.READ_PRIVATE,
+        )
+        response = unrelated_webservice.get(distroseries_url)
+        self.assertEqual(404, response.status)
+
+        anonymous_webservice = webservice_for_person(
+            None, default_api_version="devel"
+        )
+        response = anonymous_webservice.get(distroseries_url)
+        self.assertEqual(404, response.status)
+
+    def test_fields_are_absent_from_older_versions(self):
+        distroseries = self.factory.makeDistroSeries()
+        for version in ("beta", "1.0"):
+            entry = self.getEntry(distroseries, version=version)
+            self.assertNotIn("source_package_count", entry, version)
+            self.assertNotIn("binary_package_count", entry, version)
+
+    def test_api_values_match_updated_model_counts(self):
+        distroseries = self.factory.makeDistroSeries()
+        distroarchseries = self.factory.makeDistroArchSeries(
+            distroseries=distroseries
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=distroseries,
+            archive=distroseries.main_archive,
+            pocket=PackagePublishingPocket.RELEASE,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        self.factory.makeBinaryPackagePublishingHistory(
+            distroarchseries=distroarchseries,
+            archive=distroseries.main_archive,
+            pocket=PackagePublishingPocket.RELEASE,
+            status=PackagePublishingStatus.PENDING,
+        )
+        distroseries.updatePackageCount()
+
+        entry = self.getEntry(distroseries)
+
+        self.assertEqual(2, distroseries.sourcecount)
+        self.assertEqual(1, distroseries.binarycount)
+        self.assertEqual(2, entry["source_package_count"])
+        self.assertEqual(1, entry["binary_package_count"])
 
 
 class TestDistroSeriesWebservice(TestCaseWithFactory):
