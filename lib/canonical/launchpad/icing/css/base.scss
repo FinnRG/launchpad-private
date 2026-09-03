@@ -549,6 +549,11 @@ body {
   }
 
   .editable-message {
+    .editable-message-edit-btn,
+    .editable-message-delete-btn {
+      cursor: pointer;
+    }
+
     .editable-message-notification {
       position: absolute;
       width: 100%;
