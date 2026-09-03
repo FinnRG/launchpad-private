@@ -2,7 +2,7 @@
 # GNU Affero General Public License version 3 (see the file LICENSE).
 
 """BinaryPackageBuild interfaces."""
-from typing import Dict
+from typing import Dict, Tuple
 
 __all__ = [
     "BuildSetStatus",
@@ -481,8 +481,28 @@ class IBinaryPackageBuildSet(ISpecificBuildFarmJobSource):
         sourcepackagename matches (SQL LIKE).
         """
 
+    def getBuildCountsForDistro(
+        context,
+        status=None,
+        name=None,
+        pocket=None,
+        date_finished_since=None,
+        date_finished_before=None,
+    ) -> Dict[Tuple[BuildStatus, PackagePublishingPocket], int]:
+        """Count distro builds grouped by status and pocket.
+
+        Builds may be filtered by status, a source package name substring,
+        pocket, and finish time.  Finish times use the half-open interval
+        ``[date_finished_since, date_finished_before)``.
+
+        :return: Counts keyed by ``(BuildStatus,
+            PackagePublishingPocket)``.
+        """
+
     def getCountsForDistro(
-        context, date_finished_since=None
+        context,
+        date_finished_since=None,
+        date_finished_before=None,
     ) -> Dict[BuildStatus, int]:
         """Count builds grouped by status for a Distribution/DS/DAS.
 
@@ -499,6 +519,8 @@ class IBinaryPackageBuildSet(ISpecificBuildFarmJobSource):
         :param date_finished_since: Optional datetime; when given, only
             builds with ``date_finished >= date_finished_since`` are
             counted.
+        :param date_finished_before: Optional datetime; when given, only
+            builds with ``date_finished < date_finished_before`` are counted.
         :return: ``dict`` of ``{BuildStatus: int}`` containing an entry
             for every ``BuildStatus`` value.
         """
@@ -506,6 +528,8 @@ class IBinaryPackageBuildSet(ISpecificBuildFarmJobSource):
     def getPocketCountsForDistro(
         context,
         statuses=None,
+        date_finished_since=None,
+        date_finished_before=None,
     ) -> Dict[PackagePublishingPocket, int]:
         """Count builds grouped by pocket for a Distribution/DS/DAS.
 
@@ -523,6 +547,11 @@ class IBinaryPackageBuildSet(ISpecificBuildFarmJobSource):
         :param statuses: Optional iterable of `BuildStatus` values to filter
             by. If ``None`` (the default), builds across all statuses are
             counted.
+        :param date_finished_since: Optional datetime; when given, only
+            builds with ``date_finished >= date_finished_since`` are
+            counted.
+        :param date_finished_before: Optional datetime; when given, only
+            builds with ``date_finished < date_finished_before`` are counted.
         :return: ``dict`` of ``{PackagePublishingPocket: int}`` containing
             an entry for every ``PackagePublishingPocket`` value.
         """

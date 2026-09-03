@@ -942,3 +942,14 @@ a getBuildRecords() method.
 
 For further options that can be used with getBuildRecords(), please
 see hasbuildrecords.rst
+
+The ``devel`` web API also provides ``getBuildRecordsCounts`` to efficiently
+summarize distro-archive binary package build records by state and pocket.
+Filters are optional and apply before counting.  Finish times use
+``finished_since <= date_finished < finished_before``, and the bounds must
+not be reversed.  Successful build records without a finish time are excluded.
+
+The response always contains ``total``, ``by_build_state``, and ``by_pocket``.
+Both mappings contain every value from their enum, keyed by stable enum name
+and zero-filled when necessary.  Empty results use the same shape with all
+counts set to zero, and each mapping independently sums to ``total``.
