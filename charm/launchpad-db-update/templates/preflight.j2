@@ -9,11 +9,11 @@ set -e
 LPCONFIG=launchpad-db-update {{ code_dir }}/database/schema/preflight.py \
     --skip-connection-check --pgbouncer='{{ pgbouncer_primary }}' \
     --dbname='{{ backend_database_name }}' \
-{% if skip_replication_checks %}
+{%- if skip_replication_checks %}
     --skip-replication-checks \
-{% endif %}
-{% if skip_standby_count_check %}
+{%- endif %}
+{%- if skip_standby_count_check %}
     --skip-standby-count-check \
-{% endif %}
+{%- endif %}
     --dbuser='{{ backend_database_user }}'
 
