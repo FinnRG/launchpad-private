@@ -228,6 +228,12 @@ class TestUpdatePreviewDiffJob(DiffTestCase):
         """UpdatePreviewDiffJob implements IUpdatePreviewDiffJobSource."""
         verifyObject(IUpdatePreviewDiffJobSource, UpdatePreviewDiffJob)
 
+    def test_task_queue_is_shared_with_git(self):
+        """UpdatePreviewDiffJob must route to a queue that serves both
+        VCSes, not one dedicated to Bazaar-only jobs such as bzrsyncd_job.
+        """
+        self.assertEqual("launchpad_job", UpdatePreviewDiffJob.task_queue)
+
     def test_providesInterface(self):
         """UpdatePreviewDiffJob provides expected interfaces."""
         bmp = self.factory.makeBranchMergeProposal()
@@ -787,7 +793,7 @@ class TestMergeProposalUpdatedEmailJob(TestCaseWithFactory):
         )
 
 
-class TestViaCelery(TestCaseWithFactory):
+class TestViaCelery(DiffTestCase):
     layer = CeleryJobLayer
 
     def test_MergeProposalNeedsReviewEmailJob(self):
@@ -846,12 +852,15 @@ class TestViaCelery(TestCaseWithFactory):
             transaction.commit()
         self.assertEqual(2, len(pop_remote_notifications()))
 
+    def test_UpdatePreviewDiffJob_bzr(self):
+        """UpdatePreviewDiffJob runs under Celery for Bazaar proposals.
 
-class TestViaBzrsyncdCelery(DiffTestCase):
-    layer = CeleryBzrsyncdJobLayer
-
-    def test_UpdatePreviewDiffJob(self):
-        """UpdatePreviewDiffJob runs under Celery."""
+        There's no Git counterpart: the Git path needs GitHostingFixture,
+        which only patches this test process's component registry, so
+        the separate Celery worker process never sees it. Git diff
+        generation is covered without Celery by
+        TestUpdatePreviewDiffJob.test_run_git instead.
+        """
         bmp = self.createExampleBzrMerge()[0]
         self.factory.makeRevisionsForBranch(bmp.source_branch, count=1)
         self.useFixture(
@@ -863,6 +872,10 @@ class TestViaBzrsyncdCelery(DiffTestCase):
             UpdatePreviewDiffJob.create(bmp)
             transaction.commit()
         self.assertIsNot(None, bmp.preview_diff)
+
+
+class TestViaBzrsyncdCelery(DiffTestCase):
+    layer = CeleryBzrsyncdJobLayer
 
     def test_GenerateIncrementalDiffJob(self):
         """GenerateIncrementalDiffJob runs under Celery."""

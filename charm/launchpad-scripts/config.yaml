@@ -35,6 +35,14 @@ options:
       script depends on the mirrored data being available locally and hence
       it may throw some errors if it is missing.
     default: false
+  internal_branch_by_id_root:
+    type: string
+    description: |
+      The URL prefix for where branches are served by URLs based on the
+      branch ID. Required by UpdatePreviewDiffJob and
+      GenerateIncrementalDiffJob to generate diffs for Bazaar merge
+      proposals.
+    default:
   language_pack_exporter_schedule:
     type: string
     description: >-

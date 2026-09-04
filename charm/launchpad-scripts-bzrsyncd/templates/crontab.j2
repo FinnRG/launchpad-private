@@ -21,10 +21,6 @@ LPCONFIG=launchpad-scripts-bzrsyncd
 # processes code branches that have new translations imports pending
 */10 * * * * {{ code_dir }}/cronscripts/process-job-source.py IRosettaUploadJobSource -q --log-file=DEBUG:{{ logs_dir }}/process-job-source.IRosettaUploadJobSource.log
 
-# Update or create preview diffs for branch merge proposals &
-# Send email about new merge proposals, generating a diff first if needed
-* * * * * {{ code_dir }}/cronscripts/process-job-source.py IBranchMergeProposalJobSource -q --log-file=DEBUG:{{ logs_dir }}/process-job-source.IBranchMergeProposalJobSource.log
-
 # Script requests builds for source package recipes that have "build daily" enabled
 */15 * * * * {{ code_dir }}/cronscripts/request_daily_builds.py -v >> {{ logs_dir }}/request_daily_builds.log 2>&1
 
