@@ -208,7 +208,7 @@ class LibraryFileAliasResource(resource.Resource):
                 503,
                 "Database unavailable",
                 "A required database is unavailable.\n"
-                "See https://ubuntu.social/@launchpadstatus "
+                "See https://status.canonical.com/ "
                 "for maintenance and outage notifications.",
             )
         else:

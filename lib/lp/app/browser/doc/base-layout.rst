@@ -162,7 +162,7 @@ Page Footers
     Contact Launchpad Support /feedback
     Blog http://blog.launchpad.net/
     Careers https://canonical.com/careers
-    System status https://ubuntu.social/@launchpadstatus
+    System status https://status.canonical.com/
     Get the code! https://documentation.ubuntu.com/.../get-source-code/
 
 
