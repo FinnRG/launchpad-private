@@ -188,9 +188,13 @@ class UploadProcessor:
         self.ztm = ztm
 
     def reportStatsdMetrics(self, handler, upload_duration):
-        upload_type = "UserUpload"
-        if hasattr(handler, "build"):
-            upload_type = handler.build.job_type.name
+        if isinstance(handler, BuildUploadHandler):
+            # The leaf name encodes the build type and is how the build is
+            # looked up, so this works even when the build was deleted after
+            # its upload was queued.
+            upload_type, _ = parse_build_upload_leaf_name(handler.upload)
+        else:
+            upload_type = "UserUpload"
         statsd_client = getUtility(IStatsdClient)
         statsd_client.timing(
             "upload_duration",

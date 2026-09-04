@@ -1690,6 +1690,44 @@ class TestUploadProcessor(StatsMixin, TestUploadProcessorBase):
             ),
         )
 
+    def testUploadStatsdMetricsBuildUploadDeletedBuild(self):
+        # If a build is deleted after its upload is queued, the build
+        # handler's build attribute is None, since getByID returns None for
+        # charm recipe builds (among others). The build type is still
+        # recovered from the leaf name so the metric is reported.
+        self.setUpStats()
+        self.useFixture(FeatureFixture({CHARM_RECIPE_ALLOW_CREATE: "on"}))
+        self.setupBreezy()
+        self.switchToAdmin()
+        build = self.factory.makeCharmRecipeBuild(
+            distro_arch_series=self.breezy["i386"]
+        )
+        # Refer to a build id that does not exist, standing in for a build
+        # deleted between the upload being queued and processed.
+        missing_build_id = build.id + 1
+        self.layer.txn.commit()
+        upload_name = "statsd-CHARMRECIPEBUILD-%s" % missing_build_id
+        os.makedirs(os.path.join(self.queue_folder, upload_name))
+        self.switchToUploader()
+        uploadprocessor = self.getUploadProcessor(self.layer.txn, builds=True)
+        self.queueUpload(upload_name, "", self.queue_folder)
+
+        uploadprocessor.processUploadQueue()
+
+        self.assertEqual(1, self.stats_client.timing.call_count)
+        self.assertThat(
+            self.stats_client.timing.call_args_list[0][0],
+            MatchesListwise(
+                (
+                    Equals(
+                        "upload_duration,env=test,"
+                        "upload_type=CHARMRECIPEBUILD"
+                    ),
+                    GreaterThan(0),
+                )
+            ),
+        )
+
     def testUploadStatsdMetricsBuildUploadSnap(self):
         self.setUpStats()
         self.setupBreezy()
