@@ -327,7 +327,9 @@ class UpdatePreviewDiffJob(BranchMergeProposalJobDerived):
 
     class_job_type = BranchMergeProposalJobType.UPDATE_PREVIEW_DIFF
 
-    task_queue = "bzrsyncd_job"
+    # Not bzrsyncd_job: bzrsyncd is being decommissioned, and this job
+    # also handles Git merge proposals, which bzrsyncd never served.
+    task_queue = "launchpad_job"
 
     config = config.IBranchMergeProposalJobSource
 

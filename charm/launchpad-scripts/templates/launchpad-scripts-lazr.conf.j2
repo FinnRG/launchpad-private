@@ -15,6 +15,9 @@ extends: ../launchpad-db-lazr.conf
 batch_query_threshold: {{ checkwatches_batch_query_threshold }}
 xmlrpc_url: http://{{ domain_xmlrpc_private }}:{{ port_xmlrpc }}/bugs
 
+[codehosting]
+{{- opt("internal_branch_by_id_root", internal_branch_by_id_root) }}
+
 [commitment_tracker]
 base_url: {{ commitment_tracker_base_url }}
 timeout: {{ commitment_tracker_timeout }}
