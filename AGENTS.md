@@ -154,7 +154,7 @@ filename order on top of the `launchpad-2211-00-0.sql` baseline.
 - Keep content clean and low-noise. The comments, docstrings, and commit
   messages produced must read as if a careful human wrote them. The few minutes
   the author spends cleaning this up saves far more time for every reviewer and
-  everyone who reads the code later.
+  everyone who reads the code later. Keep it concise.
   - Do not add the thinking process, narration, or step-by-step reasoning as
     comments or commit messages. Explain what the code does and why, not how
     you arrived at it.
@@ -169,6 +169,7 @@ filename order on top of the `launchpad-2211-00-0.sql` baseline.
   - Keep commit messages tight: a clear summary line and only the context a
     reviewer actually needs. Reviewers should not have to wade through walls of
     generated prose to find the point.
+  - Use single backticks in Python code comments.
 - Formatting/linting is enforced by pre-commit; run before committing:
 
   ```sh
