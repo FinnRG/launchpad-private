@@ -312,6 +312,9 @@ def configure_vhost():
     config["domain_librarian_aliases"] = yaml.safe_load(
         config["domain_librarian_aliases"]
     )
+    config["restricted_domain_librarian"] = (
+        f"restricted.{config['domain_librarian']}"
+    )
     site_configs = defaultdict(list)
     for vhost_name in ("librarian", "restricted-librarian"):
         for scheme in ("http", "https"):

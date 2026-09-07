@@ -5,14 +5,22 @@
         RemoteIPProxyProtocol On
     </IfModule>
 {% endif %}
-    ServerName wildcard.restricted.{{ domain_librarian }}
-    ServerAlias *.restricted.{{ domain_librarian }}
+    ServerName wildcard.{{ restricted_domain_librarian }}
+    ServerAlias *.{{ restricted_domain_librarian }}
 
     SSLEngine on
+{%- if use_per_vhost_certificate %}
+    SSLCertificateFile /etc/ssl/certs/{{ restricted_domain_librarian }}.crt
+    SSLCertificateKeyFile /etc/ssl/private/{{ restricted_domain_librarian }}.key
+{%- if ssl_chain_required %}
+    SSLCertificateChainFile /etc/ssl/certs/{{ restricted_domain_librarian }}_chain.crt
+{%- endif %}
+{%- else %}
     SSLCertificateFile /etc/ssl/certs/{{ domain_librarian }}.crt
     SSLCertificateKeyFile /etc/ssl/private/{{ domain_librarian }}.key
 {%- if ssl_chain_required %}
     SSLCertificateChainFile /etc/ssl/certs/{{ domain_librarian }}_chain.crt
+{%- endif %}
 {%- endif %}
 
     CustomLog /var/log/apache2/{{ domain_librarian }}-access.log combined
