@@ -110,6 +110,12 @@ options:
       the real client IP.  Enable only when the load balancer is configured
       to send PROXY protocol headers.
     default: false
+  use_per_vhost_certificate:
+    type: boolean
+    description: >
+      Whether the restricted librarian vhost uses its own "restricted."
+      certificate.  When false, it reuses the main librarian certificate.
+    default: false
   ssl_chain_required:
     type: boolean
     description: >
