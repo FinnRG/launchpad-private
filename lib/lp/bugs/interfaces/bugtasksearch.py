@@ -182,6 +182,7 @@ class BugTaskSearchParams:
         linked_blueprints=None,
         structural_subscriber=None,
         modified_since=None,
+        modified_before=None,
         created_since=None,
         exclude_conjoined_tasks=False,
         cve=None,
@@ -231,6 +232,7 @@ class BugTaskSearchParams:
         self.linked_blueprints = linked_blueprints
         self.structural_subscriber = structural_subscriber
         self.modified_since = modified_since
+        self.modified_before = modified_before
         self.created_since = created_since
         self.created_before = created_before
         self.exclude_conjoined_tasks = exclude_conjoined_tasks
@@ -487,6 +489,7 @@ class BugTaskSearchParams:
         linked_blueprints=None,
         structural_subscriber=None,
         modified_since=None,
+        modified_before=None,
         created_since=None,
         created_before=None,
         information_type=None,
@@ -550,6 +553,7 @@ class BugTaskSearchParams:
         search_params.linked_blueprints = linked_blueprints
         search_params.structural_subscriber = structural_subscriber
         search_params.modified_since = modified_since
+        search_params.modified_before = modified_before
         search_params.created_since = created_since
         search_params.created_before = created_before
         search_params.information_type = information_type

@@ -960,6 +960,11 @@ def _build_query(params):
             BugTaskFlat.date_last_updated > params.modified_since
         )
 
+    if params.modified_before:
+        extra_clauses.append(
+            BugTaskFlat.date_last_updated < params.modified_before
+        )
+
     if params.created_since:
         extra_clauses.append(BugTaskFlat.datecreated > params.created_since)
 

@@ -130,6 +130,12 @@ search_tasks_params_common = {
         ),
         required=False,
     ),
+    "modified_before": Datetime(
+        title=_(
+            "Search for bugs that have been modified before the given date."
+        ),
+        required=False,
+    ),
     "created_since": Datetime(
         title=_(
             "Search for bugs that have been created since the given " "date."
@@ -241,6 +247,7 @@ class IHasBugs(Interface):
         linked_blueprints=None,
         structural_subscriber=None,
         modified_since=None,
+        modified_before=None,
         created_since=None,
         created_before=None,
         information_type=None,
@@ -289,6 +296,7 @@ class IHasBugs(Interface):
         linked_blueprints=None,
         structural_subscriber=None,
         modified_since=None,
+        modified_before=None,
         created_since=None,
         created_before=None,
         information_type=None,
