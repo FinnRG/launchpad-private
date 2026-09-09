@@ -156,6 +156,7 @@ def close_account(username, log):
         ("question", "answerer"),
         ("questionreopening", "answerer"),
         ("questionreopening", "reopener"),
+        ("registeredauthenticator", "revoked_by"),
         ("revisionstatusreport", "creator"),
         ("snapbuild", "requester"),
         ("sourcepackagepublishinghistory", "creator"),
@@ -329,6 +330,7 @@ def close_account(username, log):
         ("PersonLanguage", "person"),
         ("PersonLocation", "person"),
         ("SshKey", "person"),
+        ("RegisteredAuthenticator", "owner"),
         # Karma
         ("Karma", "person"),
         ("KarmaCache", "person"),

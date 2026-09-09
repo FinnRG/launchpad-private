@@ -57,6 +57,7 @@ from lp.services.identity.interfaces.emailaddress import (
     IEmailAddressSet,
 )
 from lp.services.webapp.authorization import check_permission
+from lp.services.webauthn.interfaces import IRegisteredAuthenticatorSet
 from lp.snappy.interfaces.snap import ISnapSet
 from lp.soyuz.enums import ArchiveStatus
 from lp.soyuz.interfaces.livefs import LIVEFS_FEATURE_FLAG, ILiveFSSet
@@ -696,6 +697,23 @@ class TestMergePeople(TestCaseWithFactory, KarmaTestMixin):
         login_person(mergee)
         duplicate, mergee = self._do_merge(duplicate, mergee)
         self.assertEqual(1, getUtility(ISnapSet).findByOwner(mergee).count())
+
+    def test_merge_moves_registered_authenticators(self):
+        # When people are merged, WebAuthn authenticators registered by the
+        # duplicate person are moved, so that they keep working.
+        duplicate = self.factory.makePerson()
+        mergee = self.factory.makePerson()
+        authenticator = self.factory.makeRegisteredAuthenticator(
+            owner=duplicate
+        )
+        self._do_premerge(duplicate, mergee)
+        login_person(mergee)
+        duplicate, mergee = self._do_merge(duplicate, mergee)
+        authenticator_set = getUtility(IRegisteredAuthenticatorSet)
+        self.assertContentEqual(
+            [authenticator], authenticator_set.findByOwner(mergee)
+        )
+        self.assertContentEqual([], authenticator_set.findByOwner(duplicate))
 
     def test_merge_with_duplicated_snaps(self):
         # If both the from and to people have snap packages with the same
