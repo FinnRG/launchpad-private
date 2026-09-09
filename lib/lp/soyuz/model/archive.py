@@ -23,6 +23,7 @@ from pathlib import PurePath
 import six
 from lazr.lifecycle.event import ObjectCreatedEvent
 from lazr.restful.declarations import error_status
+from lazr.restful.utils import get_current_browser_request
 from storm.databases.postgres import JSON as PgJSON
 from storm.databases.postgres import Case
 from storm.expr import (
@@ -816,6 +817,15 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         """See `IArchive`."""
         # 'eager_load' and 'include_removed' arguments are always True
         # for API calls.
+        #
+        # If the client only asked for the total size (ws.show=total_size),
+        # lazr.restful will only serialize `total_size` in the response.
+        # Ordering has no effect on that count, so skip building the default
+        # name/version ordering (and the join it requires) in that case.
+        request = get_current_browser_request()
+        ordered = not (
+            request is not None and request.form.get("ws.show") == "total_size"
+        )
         published_sources = self.getPublishedSources(
             name=name,
             version=version,
@@ -838,6 +848,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             packageset=packageset,
             maintainer_team=maintainer_team,
             ubuntu_change=ubuntu_change,
+            ordered=ordered,
         )
 
         def load_api_extra_objects(rows):

@@ -4679,6 +4679,29 @@ class TestGetPublishedSourcesWebService(TestCaseWithFactory):
         self.assertEqual(5, response.jsonBody()["total_size"])
         self.assertThat(collector, HasQueryCount(LessThan(28)))
 
+    def test_query_count_total_size_only(self):
+        # When the client only asks for ws.show=total_size, the default
+        # name/version ordering (and the join it requires) is skipped,
+        # since ordering has no effect on the reported total_size. This
+        # should issue fewer queries than a full listing request.
+        ppa = self.createTestingPPA()
+        ppa_url = f"/~{ppa.owner.name}/+archive/ubuntu/ppa"
+        webservice = webservice_for_person(
+            ppa.owner, permission=OAuthPermission.READ_PRIVATE
+        )
+
+        collector = RequestTimelineCollector()
+        collector.register()
+        self.addCleanup(collector.unregister)
+
+        response = webservice.named_get(
+            ppa_url, "getPublishedSources", **{"ws.show": "total_size"}
+        )
+
+        self.assertEqual(200, response.status)
+        self.assertEqual(5, response.jsonBody())
+        self.assertThat(collector, HasQueryCount(LessThan(20)))
+
     def test_getPublishedSources_order_by_published(self):
         ppa = self.createTestingPPA()
         ppa_url = f"/~{ppa.owner.name}/+archive/ubuntu/ppa"
