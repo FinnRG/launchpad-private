@@ -56,6 +56,7 @@ from lp.services.log.logger import BufferLogger, DevNullLogger
 from lp.services.scripts.base import LaunchpadScriptFailure
 from lp.services.verification.interfaces.authtoken import LoginTokenType
 from lp.services.verification.interfaces.logintoken import ILoginTokenSet
+from lp.services.webauthn.interfaces import IRegisteredAuthenticatorSet
 from lp.soyuz.enums import ArchiveSubscriberStatus, PackagePublishingStatus
 from lp.soyuz.model.archive import Archive
 from lp.soyuz.model.archiveauthtoken import ArchiveAuthToken
@@ -109,6 +110,7 @@ class TestCloseAccount(TestCaseWithFactory):
         self.factory.makeSpecification().subscribe(person)
         person.addLanguage(self.factory.makeLanguage())
         self.factory.makeSSHKey(person=person)
+        self.factory.makeRegisteredAuthenticator(owner=person)
         self.factory.makeAccessArtifactGrant(grantee=person)
         self.factory.makeAccessPolicyGrant(grantee=person)
         self.factory.makeGitRuleGrant(grantee=person)
@@ -1040,6 +1042,36 @@ class TestCloseAccount(TestCaseWithFactory):
         self.assertContentEqual([], person.oauth_access_tokens)
         self.assertContentEqual(
             [other_access_token], other_person.oauth_access_tokens
+        )
+
+    def test_handles_registered_authenticators(self):
+        person = self.factory.makePerson()
+        other_person = self.factory.makePerson()
+        authenticator = self.factory.makeRegisteredAuthenticator(owner=person)
+        other_authenticator = self.factory.makeRegisteredAuthenticator(
+            owner=other_person
+        )
+        # Revoking someone else's authenticator leaves an audit trail that
+        # survives closing the revoker's account.
+        removeSecurityProxy(other_authenticator).revoke(person)
+        authenticator_set = getUtility(IRegisteredAuthenticatorSet)
+        self.assertContentEqual(
+            [authenticator], authenticator_set.findByOwner(person)
+        )
+        person_id = person.id
+        account_id = person.account.id
+        script = self.makeScript([person.name])
+        with dbuser("launchpad"):
+            self.runScript(script)
+        self.assertRemoved(account_id, person_id)
+        self.assertContentEqual([], authenticator_set.findByOwner(person))
+        self.assertContentEqual(
+            [other_authenticator],
+            authenticator_set.findByOwner(other_person),
+        )
+        self.assertEqual(
+            person_id,
+            removeSecurityProxy(other_authenticator).revoked_by_id,
         )
 
     def test_fails_on_undeleted_ppa(self):

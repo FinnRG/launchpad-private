@@ -271,6 +271,7 @@ from lp.services.temporaryblobstorage.model import TemporaryBlobStorage
 from lp.services.utils import AutoDecorateMetaClass
 from lp.services.webapp.interfaces import OAuthPermission
 from lp.services.webapp.sorting import sorted_version_numbers
+from lp.services.webauthn.interfaces import IRegisteredAuthenticatorSet
 from lp.services.webhooks.interfaces import IWebhookSet
 from lp.services.worlddata.interfaces.country import ICountrySet
 from lp.services.worlddata.interfaces.language import ILanguageSet
@@ -6095,6 +6096,41 @@ class LaunchpadObjectFactory(ObjectFactory):
         )
         IStore(token).flush()
         return secret, token
+
+    def makeRegisteredAuthenticator(
+        self,
+        owner=None,
+        credential_id=None,
+        public_key=None,
+        sign_count=0,
+        aaguid=None,
+        attestation_format="none",
+        name=None,
+        transports=None,
+    ):
+        """Create a registered FIDO2/WebAuthn authenticator."""
+        if owner is None:
+            owner = self.makePerson()
+        if credential_id is None:
+            credential_id = self.getUniqueBytes(prefix="credential")
+        if public_key is None:
+            public_key = self.getUniqueBytes(prefix="public-key")
+        if aaguid is None:
+            aaguid = (self.getUniqueBytes(prefix="aaguid") + b"\x00" * 16)[:16]
+        if name is None:
+            name = self.getUniqueUnicode("authenticator")
+        authenticator = getUtility(IRegisteredAuthenticatorSet).new(
+            owner,
+            credential_id,
+            public_key,
+            sign_count,
+            aaguid,
+            attestation_format,
+            name,
+            transports=transports,
+        )
+        IStore(authenticator).flush()
+        return authenticator
 
     def makeCVE(
         self,
