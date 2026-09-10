@@ -251,7 +251,10 @@ class OCIRecipeBuild(PackageBuildMixin, StormBase):
 
     def calculateScore(self):
         # XXX twom 2020-02-11 - This might need an addition?
-        return 2510
+        # XXX ikoruk 2026-09-03: We should introduce relative_build_score
+        # everywhere. But for now, we will put this at the same build score as
+        # PROPOSED + main + MEDIUM urgency.
+        return 4010
 
     def estimateDuration(self):
         """See `IBuildFarmJob`."""
