@@ -1197,7 +1197,7 @@ class ArchiveView(ArchiveSourcePackageListViewBase):
         now = datetime.now(tz=timezone.utc)
         created_since = now - timedelta(num_days)
         return self.context.getPublishedSources(
-            created_since_date=created_since
+            created_since_date=created_since, ordered=False
         ).count()
 
     @property
@@ -2626,7 +2626,8 @@ class ArchiveAdminView(BaseArchiveEditView, EnableProcessorsMixin):
         # catch exceptions somewhere?
         if data.get("private") != self.context.private:
             # The privacy is being switched.
-            if not self.context.getPublishedSources().is_empty():
+            sources = self.context.getPublishedSources(ordered=False)
+            if not sources.is_empty():
                 if (
                     # For local publishing, we can't switch privacy after
                     # anything has been published to it, because the publisher
@@ -2671,8 +2672,9 @@ class ArchiveAdminView(BaseArchiveEditView, EnableProcessorsMixin):
 
         if data.get("publishing_method") != self.context.publishing_method:
             # The publishing method is being switched.
+            sources = self.context.getPublishedSources(ordered=False)
             if (
-                not self.context.getPublishedSources().is_empty()
+                not sources.is_empty()
                 or not self.context.getAllPublishedBinaries().is_empty()
             ):
                 self.setFieldError(
@@ -2683,8 +2685,9 @@ class ArchiveAdminView(BaseArchiveEditView, EnableProcessorsMixin):
 
         if data.get("repository_format") != self.context.repository_format:
             # The repository format is being switched.
+            sources = self.context.getPublishedSources(ordered=False)
             if (
-                not self.context.getPublishedSources().is_empty()
+                not sources.is_empty()
                 or not self.context.getAllPublishedBinaries().is_empty()
             ):
                 self.setFieldError(

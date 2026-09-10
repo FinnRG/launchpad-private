@@ -23,6 +23,7 @@ from pathlib import PurePath
 import six
 from lazr.lifecycle.event import ObjectCreatedEvent
 from lazr.restful.declarations import error_status
+from lazr.restful.utils import get_current_browser_request
 from storm.databases.postgres import JSON as PgJSON
 from storm.databases.postgres import Case
 from storm.expr import (
@@ -357,7 +358,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                 self.owner.visibility != PersonVisibility.PRIVATE
             ), "Private teams may not have public PPAs."
 
-        if not self.getPublishedSources().is_empty():
+        if not self.getPublishedSources(ordered=False).is_empty():
             if (
                 # For local publishing, we can't switch privacy after
                 # anything has been published to it, because the publisher
@@ -816,6 +817,15 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         """See `IArchive`."""
         # 'eager_load' and 'include_removed' arguments are always True
         # for API calls.
+        #
+        # If the client only asked for the total size (ws.show=total_size),
+        # lazr.restful will only serialize `total_size` in the response.
+        # Ordering has no effect on that count, so skip building the default
+        # name/version ordering (and the join it requires) in that case.
+        request = get_current_browser_request()
+        ordered = not (
+            request is not None and request.form.get("ws.show") == "total_size"
+        )
         published_sources = self.getPublishedSources(
             name=name,
             version=version,
@@ -838,6 +848,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             packageset=packageset,
             maintainer_team=maintainer_team,
             ubuntu_change=ubuntu_change,
+            ordered=ordered,
         )
 
         def load_api_extra_objects(rows):
@@ -905,6 +916,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         packageset=None,
         maintainer_team=None,
         ubuntu_change=None,
+        ordered=True,
     ):
         """See `IArchive`."""
         clauses = [SourcePackagePublishingHistory.archive == self]
@@ -956,13 +968,23 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                 Asc(SourcePackagePublishingHistory.datecreated),
                 Asc(SourcePackagePublishingHistory.id),
             ]
+        elif not ordered:
+            # The caller doesn't need any particular ordering (e.g. it
+            # only wants an aggregate via count/sum/is_empty). Skip
+            # ordering entirely so we don't need to join with
+            # SourcePackageName just to sort by name.
+            order_by_list = []
         else:
             order_by_list = [
                 SourcePackageName.name,
                 Desc(SourcePackagePublishingHistory.id),
             ]
 
-        if not explicit_order_by or name is not None or order_by_source_name:
+        if (
+            name is not None
+            or order_by_source_name
+            or (not explicit_order_by and ordered)
+        ):
             clauses.append(
                 SourcePackagePublishingHistory.sourcepackagename_id
                 == SourcePackageName.id
@@ -989,13 +1011,13 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                 clauses.append(SourcePackageName.name.is_in(name))
 
         if (
-            not explicit_order_by
-            or version is not None
+            version is not None
             or maintained_by is not None
             or changed_by is not None
             or signed_by is not None
             or maintainer_team is not None
             or ubuntu_change is not None
+            or (not explicit_order_by and ordered)
         ):
             clauses.append(
                 SourcePackagePublishingHistory.sourcepackagerelease_id
@@ -1012,7 +1034,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                 Cast(SourcePackageRelease.version, "text")
                 == six.ensure_text(version)
             )
-        elif not explicit_order_by:
+        elif not explicit_order_by and ordered:
             order_by_list.insert(1, Desc(SourcePackageRelease.version))
 
         order_by = order_by_list
@@ -1301,7 +1323,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
     def number_of_sources(self):
         """See `IArchive`."""
         return self.getPublishedSources(
-            status=PackagePublishingStatus.PUBLISHED
+            status=PackagePublishingStatus.PUBLISHED, ordered=False
         ).count()
 
     @property
