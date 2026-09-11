@@ -379,6 +379,48 @@ class TestSnapBuild(TestCaseWithFactory):
                 ),
             )
 
+    def test_updateStatus_triggers_fullybuilt_subscope_webhook(self):
+        # A webhook scoped to "snap:build:0.1::fullybuilt" only receives
+        # deliveries once the build reaches BuildStatus.FULLYBUILT, not on
+        # other status changes.
+        hook = self.factory.makeWebhook(
+            target=self.build.snap,
+            event_types=["snap:build:0.1::fullybuilt"],
+        )
+        self.build.updateStatus(BuildStatus.BUILDING)
+        self.assertEqual(0, hook.deliveries.count())
+        self.build.updateStatus(BuildStatus.FULLYBUILT)
+        self.assertEqual(1, hook.deliveries.count())
+        # IWebhookSet.trigger() always delivers using the parent event
+        # type, so subscope subscribers still see the same event_type and
+        # payload shape as parent-scope subscribers.
+        delivery = hook.deliveries.one()
+        self.assertThat(
+            delivery,
+            MatchesStructure(
+                event_type=Equals("snap:build:0.1"),
+                payload=ContainsDict(
+                    {
+                        "action": Equals("status-changed"),
+                        "status": Equals("Successfully built"),
+                    }
+                ),
+            ),
+        )
+
+    def test_updateStatus_parent_scope_webhook_still_sees_every_status(self):
+        # Adding the "fullybuilt" subscope does not change the behaviour
+        # of webhooks that remain subscribed to the parent
+        # "snap:build:0.1" scope: they keep receiving every status
+        # change, including intermediate ones.
+        hook = self.factory.makeWebhook(
+            target=self.build.snap, event_types=["snap:build:0.1"]
+        )
+        self.build.updateStatus(BuildStatus.BUILDING)
+        self.assertEqual(1, hook.deliveries.count())
+        self.build.updateStatus(BuildStatus.FULLYBUILT)
+        self.assertEqual(2, hook.deliveries.count())
+
     def test_updateStatus_no_change_does_not_trigger_webhooks(self):
         # An updateStatus call that changes details such as the revision_id
         # but that doesn't change the build's status attribute does not
