@@ -1,0 +1,96 @@
+<html
+  xmlns="http://www.w3.org/1999/xhtml"
+  xmlns:tal="http://xml.zope.org/namespaces/tal"
+  xmlns:metal="http://xml.zope.org/namespaces/metal"
+  xmlns:i18n="http://xml.zope.org/namespaces/i18n"
+  metal:use-macro="view/macro:page/main_only"
+  i18n:domain="launchpad"
+>
+  <head>
+    <tal:block metal:fill-slot="head_epilogue">
+      <script type="text/javascript">
+        LPJS.use('lp.registry.javascript.person_register_authenticator');
+      </script>
+    </tal:block>
+  </head>
+  <body>
+  <div metal:fill-slot="main">
+    <div class="top-portlet">
+      <h1>Hardware authenticators</h1>
+      
+      <p>
+        Hardware authenticators (also known as security keys or FIDO2/WebAuthn devices) 
+        provide strong two-factor authentication for your Launchpad account. These physical 
+        devices help protect your account even if your password is compromised.
+      </p>
+      
+      <p>
+        Supported devices include YubiKeys, Google Titan keys, and other FIDO2-compatible 
+        hardware authenticators. You can register multiple devices for backup purposes.
+      </p>
+    </div>
+
+    <div id="authenticator-section">
+      <h2>Registered authenticators</h2>
+      <div id="authenticators-list"
+           tal:content="structure
+             context/@@+register-authenticator-authenticators-list">
+      </div>
+    </div>
+    <div id="add-authenticator-section">
+      <h2>Add hardware authenticator</h2>
+      
+      <div id="browser-not-supported" class="error message" style="display: none;">
+        <strong>Browser not supported:</strong> Your browser does not support WebAuthn. 
+        Please use a modern browser like Chrome, Firefox, Safari, or Edge.
+      </div>
+      
+      <form id="add-authenticator-form">
+        <div class="field">
+          <label for="authenticator-name">Authenticator name:</label>
+          <input type="text" id="authenticator-name" name="authenticator-name" 
+                 placeholder="e.g., 'YubiKey 5C' or 'Backup key'" 
+                 maxlength="255" required />
+          <div class="formHelp">
+            Choose a descriptive name to help you identify this authenticator.
+          </div>
+        </div>
+        
+        <div class="actions">
+          <input type="button" id="register-button" 
+                 value="Register hardware authenticator" class="button" />
+          <span id="registration-spinner" class="loading-indicator" style="display: none;">
+            <img src="/@@/spinner" alt="Registering..." /> Registering authenticator...
+          </span>
+        </div>
+      </form>
+      
+      <div class="formHelp">
+        <p>
+          <strong>Instructions:</strong>
+        </p>
+        <ol>
+          <li>Enter a name for your authenticator</li>
+          <li>Click "Register hardware authenticator"</li>
+          <li>Follow your browser's prompts to activate your security key</li>
+          <li>Touch or activate your hardware authenticator when prompted</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="actions">
+      <a tal:attributes="href view/cancel_url" class="button">Back to profile</a>
+    </div>
+
+    <div id="messages-container"></div>
+
+    <script type="text/javascript">
+      if (typeof navigator === 'undefined' || !navigator.credentials || !navigator.credentials.create) {
+        document.getElementById('browser-not-supported').style.display = 'block';
+        document.getElementById('add-authenticator-form').style.display = 'none';
+      }
+    </script>
+  </div>
+  </body>
+</html>
+

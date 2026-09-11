@@ -1344,6 +1344,20 @@
         template="../templates/person-editsshkeys.pt"
         />
     <browser:page
+        name="+register-authenticator"
+        for="lp.registry.interfaces.person.IPerson"
+        class="lp.registry.browser.person.PersonRegisterAuthenticatorView"
+        permission="launchpad.Special"
+        template="../templates/person-register-authenticator.pt"
+        />
+      <browser:page
+        name="+register-authenticator-authenticators-list"
+        for="lp.registry.interfaces.person.IPerson"
+        class="lp.registry.browser.person.PersonAuthenticatorListView"
+        permission="launchpad.Special"
+        template="../templates/person-authenticators-list.pt"
+        />
+    <browser:page
         name="+deactivate-account"
         for="lp.registry.interfaces.person.IPerson"
         class="lp.registry.browser.person.PersonDeactivateAccountView"
