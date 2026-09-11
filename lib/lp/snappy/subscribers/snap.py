@@ -38,16 +38,17 @@ def _sync_sbom_webhook(snap, delivery_url, secret):
     needing launchpad.Edit on every snap, so this operates on the
     unproxied snap via IWebhookSet directly, not ISnap.webhooks.
 
-    Known limitations, accepted for this proof of concept:
-    - No locking: concurrent use_fetch_service edits could create two
-      active hooks. Worst case is a duplicate SBOM generation, not data
-      loss, so this isn't guarded against.
-    - The hook isn't hidden or protected: a snap owner can delete or
-      disable it via the normal +webhooks UI/API. This function only
-      notices on the next use_fetch_service toggle (off/on fixes it).
-      A "Launchpad-managed" UI label is a reasonable follow-up -
-      registrant is already the janitor, so no schema change needed.
+    Known limitation, accepted for this proof of concept: no locking.
+    Concurrent use_fetch_service edits could create two active hooks.
+    Worst case is a duplicate SBOM generation, not data loss, so this
+    isn't guarded against.
     """
+    # XXX kelsharkawy 2026-09-11: The hook managed here isn't hidden or
+    # protected: a snap owner can delete or disable it via the normal
+    # +webhooks UI/API, and this function has no way to notice until the
+    # next use_fetch_service toggle (off/on is the workaround). Add a
+    # "Launchpad-managed" UI label so this is at least visible -
+    # registrant is already the janitor, so no schema change is needed.
     naked_snap = removeSecurityProxy(snap)
     webhook_set = getUtility(IWebhookSet)
     existing_hooks = [
