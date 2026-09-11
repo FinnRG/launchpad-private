@@ -1,4 +1,4 @@
-# Copyright 2010-2018 Canonical Ltd.  This software is licensed under the
+# Copyright 2010-2026 Canonical Ltd.  This software is licensed under the
 # GNU Affero General Public License version 3 (see the file LICENSE).
 
 """Test SourcePackageRelease."""
@@ -7,7 +7,8 @@ from textwrap import dedent
 
 import transaction
 
-from lp.testing import TestCaseWithFactory
+from lp.services.webapp.authorization import check_permission
+from lp.testing import ANONYMOUS, TestCaseWithFactory, login, login_person
 from lp.testing.layers import LaunchpadFunctionalLayer
 
 
@@ -128,3 +129,32 @@ class TestSourcePackageRelease(TestCaseWithFactory):
         test_string = "test string with null \0 character"
         package = self.factory.makeSourcePackageRelease(copyright=test_string)
         self.assertEqual(package.copyright, "test string with null  character")
+
+
+class TestViewSourcePackageRelease(TestCaseWithFactory):
+    """Tests for ViewSourcePackageRelease security adapter."""
+
+    layer = LaunchpadFunctionalLayer
+
+    def _makePublishedSPR(self, private=False, enabled=True):
+        archive = self.factory.makeArchive(private=private, enabled=enabled)
+        spph = self.factory.makeSourcePackagePublishingHistory(archive=archive)
+        login_person(archive.owner)
+        return spph.sourcepackagerelease
+
+    def test_anon_can_view_spr_in_public_enabled_archive(self):
+        spr = self._makePublishedSPR(private=False, enabled=True)
+        login(ANONYMOUS)
+        self.assertTrue(check_permission("launchpad.View", spr))
+
+    def test_anon_cannot_view_spr_in_private_archive(self):
+        spr = self._makePublishedSPR(private=True, enabled=True)
+        login(ANONYMOUS)
+        self.assertFalse(check_permission("launchpad.View", spr))
+
+    def test_anon_cannot_view_spr_in_disabled_public_archive(self):
+        # Regression test: checkUnauthenticated must also check
+        # archive.enabled, matching ViewArchive.checkUnauthenticated.
+        spr = self._makePublishedSPR(private=False, enabled=False)
+        login(ANONYMOUS)
+        self.assertFalse(check_permission("launchpad.View", spr))
