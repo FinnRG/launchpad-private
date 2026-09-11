@@ -13,19 +13,16 @@ from lp.app.interfaces.launchpad import ILaunchpadCelebrities
 from lp.services.config import config
 from lp.services.webhooks.interfaces import IWebhookSet
 
-# The event type used to notify the external SBOM generation service
-# about snap builds it should process. Kept in sync with the "fullybuilt"
-# subscope registered in lp.services.webhooks.interfaces so that only
-# successfully completed builds are delivered.
+# Event type delivered to the external SBOM generation service.
+# Must match the "fullybuilt" subscope in lp.services.webhooks.interfaces.
 SBOM_WEBHOOK_EVENT_TYPE = "snap:build:0.1::fullybuilt"
 
 
 def _get_sbom_webhook_config():
-    """Return (delivery_url, secret) for the automatic SBOM webhook.
+    """Return (delivery_url, secret), or (None, None) if unconfigured.
 
-    Returns (None, None) if automatic SBOM webhook management is not
-    configured for this instance, in which case callers should do
-    nothing.
+    Automatic SBOM webhook management is opt-in per instance; callers
+    should no-op when this returns (None, None).
     """
     delivery_url = config.snappy.sbom_webhook_url
     secret = config.snappy.sbom_webhook_secret
@@ -35,27 +32,21 @@ def _get_sbom_webhook_config():
 
 
 def _sync_sbom_webhook(snap, delivery_url, secret):
-    """Ensure `snap` has an active SBOM webhook iff it should.
+    """Ensure `snap` has an active SBOM webhook iff use_fetch_service is set.
 
-    Snaps with `use_fetch_service` enabled should have an active
-    Launchpad-managed webhook delivering
-    `snap:build:0.1::fullybuilt` events to the external SBOM generation
-    service, so that it can be automatically triggered for those builds
-    without needing edit access to every snap recipe. Snaps without
-    `use_fetch_service` should not.
+    Lets the external SBOM service receive fullybuilt events without
+    needing launchpad.Edit on every snap, so this operates on the
+    unproxied snap via IWebhookSet directly, not ISnap.webhooks.
 
-    This is a system action performed on behalf of Launchpad itself
-    (triggered by an object-modified event, not necessarily by a user
-    with edit rights on this specific snap's webhooks), so it operates
-    on the unproxied snap and talks to `IWebhookSet` directly rather
-    than via the permission-checked `ISnap.webhooks` property.
-
-    This does a plain check-then-insert with no locking, so two
-    concurrent edits enabling use_fetch_service on the same snap could
-    in principle create two active hooks pointed at the same URL. That
-    would only mean a duplicate SBOM generation attempt per build, not
-    data loss or corruption, so it isn't guarded against here; revisit
-    if this graduates beyond a proof of concept.
+    Known limitations, accepted for this proof of concept:
+    - No locking: concurrent use_fetch_service edits could create two
+      active hooks. Worst case is a duplicate SBOM generation, not data
+      loss, so this isn't guarded against.
+    - The hook isn't hidden or protected: a snap owner can delete or
+      disable it via the normal +webhooks UI/API. This function only
+      notices on the next use_fetch_service toggle (off/on fixes it).
+      A "Launchpad-managed" UI label is a reasonable follow-up -
+      registrant is already the janitor, so no schema change needed.
     """
     naked_snap = removeSecurityProxy(snap)
     webhook_set = getUtility(IWebhookSet)
@@ -69,9 +60,7 @@ def _sync_sbom_webhook(snap, delivery_url, secret):
             for hook in existing_hooks:
                 if not hook.active:
                     hook.active = True
-                # Keep the hook in sync with the current configuration,
-                # so that rotating sbom_webhook_secret takes effect for
-                # snaps that already have a (possibly inactive) hook.
+                # Apply a rotated sbom_webhook_secret to existing hooks.
                 if hook.secret != secret:
                     hook.setSecret(secret)
         else:
@@ -100,8 +89,7 @@ def snap_use_fetch_service_changed(snap, event):
         return
     delivery_url, secret = _get_sbom_webhook_config()
     if delivery_url is None:
-        # Automatic SBOM webhook management isn't configured for this
-        # instance; nothing to do.
+        # Automatic SBOM webhook management isn't configured; no-op.
         return
     try:
         _sync_sbom_webhook(snap, delivery_url, secret)
