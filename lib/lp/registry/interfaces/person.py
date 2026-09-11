@@ -150,6 +150,7 @@ from lp.services.identity.interfaces.account import AccountStatus, IAccount
 from lp.services.identity.interfaces.emailaddress import IEmailAddress
 from lp.services.webapp.authorization import check_permission
 from lp.services.webapp.interfaces import ILaunchpadApplication
+from lp.services.webauthn.interfaces import IRegisteredAuthenticator
 from lp.services.webservice.apihelpers import (
     patch_collection_property,
     patch_collection_return_type,
@@ -2201,9 +2202,70 @@ class IPersonEditRestricted(Interface):
         If the given language is not present, nothing  will happen.
         """
 
+    @operation_returns_collection_of(IRegisteredAuthenticator)
+    @export_read_operation()
+    @operation_for_version("devel")
+    def getRegisteredAuthenticators():
+        """Return this person's registered FIDO2/WebAuthn authenticators.
+
+        :return: A `ResultSet` of `IRegisteredAuthenticator`, most
+            recently registered first.
+        """
+
 
 class IPersonSpecialRestricted(Interface):
     """IPerson methods that require launchpad.Special permission to use."""
+
+    @export_write_operation()
+    @operation_for_version("devel")
+    def beginWebAuthnRegistration():
+        """Start registering a new FIDO2/WebAuthn authenticator.
+
+        :return: A dict of WebAuthn `PublicKeyCredentialCreationOptions`
+            (the `create()` options, as `{"publicKey": {...}}`), to be
+            passed to `navigator.credentials.create()` (or an equivalent
+            client).
+        """
+
+    @operation_parameters(
+        response=Text(
+            title=_("Registration response"),
+            description=_(
+                "A JSON-encoded WebAuthn RegistrationResponseJSON, as "
+                "produced by navigator.credentials.create() (or an "
+                "equivalent client) in response to the options returned "
+                "by beginWebAuthnRegistration()."
+            ),
+            required=True,
+        ),
+        name=TextLine(
+            title=_("Name"),
+            description=_(
+                "A name for the new authenticator, to help its owner tell "
+                "their registered authenticators apart."
+            ),
+            required=True,
+        ),
+    )
+    @export_write_operation()
+    @operation_for_version("devel")
+    def completeWebAuthnRegistration(response, name):
+        """Finish registering a new FIDO2/WebAuthn authenticator.
+
+        :return: The ID of the newly registered authenticator.
+        """
+
+    @operation_parameters(
+        authenticator_id=Int(title=_("Authenticator ID"), required=True)
+    )
+    @export_write_operation()
+    @operation_for_version("devel")
+    def revokeWebAuthnRegistration(authenticator_id):
+        """Revoke one of this person's registered WebAuthn authenticators.
+
+        :param authenticator_id: The ID of a `RegisteredAuthenticator`
+            owned by this person.
+        """
 
     def canDeactivate():
         """Verify we safely deactivate this user account.
@@ -3302,3 +3364,5 @@ patch_reference_property(IJabberID, "person", IPerson)
 patch_reference_property(IWikiName, "person", IPerson)
 patch_reference_property(IEmailAddress, "person", IPerson)
 patch_reference_property(ISocialAccount, "person", IPerson)
+patch_reference_property(IRegisteredAuthenticator, "owner", IPerson)
+patch_reference_property(IRegisteredAuthenticator, "revoked_by", IPerson)
