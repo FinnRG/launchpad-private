@@ -52,6 +52,9 @@ def set_default_openid_fetcher():
             instance_name = config.instance_name
         cert_path = f"configs/{instance_name}/launchpad-ca.crt"
         cafile = os.path.join(config.root, cert_path)
+        if not os.path.exists(cafile):
+            cert_path = f"configs/{instance_name}/launchpad.crt"
+            cafile = os.path.join(config.root, cert_path)
 
         # Create SSL context with certificate and add HTTPS handler
         if os.path.exists(cafile):
