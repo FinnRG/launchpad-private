@@ -10,8 +10,7 @@ configs/development/launchpad.key and configs/development/launchpad.crt, and
 these changes should be committed.
 """
 
-import atexit
-import os.path
+import os
 import shutil
 import subprocess
 import sys
@@ -33,44 +32,165 @@ vhosts = [
 
 
 def main():
-    """Run the script."""
-    key = "configs/development/launchpad.key"
-    certificate = "configs/development/launchpad.crt"
-    tmpdir = tempfile.mkdtemp()
-    atexit.register(shutil.rmtree, tmpdir)
-    config = os.path.join(tmpdir, "launchpad.cnf")
-    shutil.copy2("/etc/ssl/openssl.cnf", config)
-    with open(config, "a") as f:
-        f.write(
-            "\n[subjectAltName]\nsubjectAltName=%s\n"
-            % ",".join("DNS:%s" % vhost for vhost in vhosts)
+    """Create a local CA if needed and issue a development certificate."""
+    directory = "configs/development"
+    key = os.path.join(directory, "launchpad.key")
+    certificate = os.path.join(directory, "launchpad.crt")
+    ca_key = os.path.join(directory, "launchpad-ca.key")
+    ca_certificate = os.path.join(directory, "launchpad-ca.crt")
+
+    if os.path.exists(ca_key) != os.path.exists(ca_certificate):
+        raise RuntimeError(
+            "The development CA key and certificate must both exist or "
+            "both be absent. Restore the missing file before continuing."
         )
-    subprocess.check_call(
-        [
-            "openssl",
-            "req",
-            "-config",
-            config,
-            "-new",
-            "-newkey",
-            "rsa:4096",
-            "-nodes",
-            "-sha256",
-            "-subj",
-            "/CN=%s/" % vhosts[0],
-            "-extensions",
-            "subjectAltName",
-            "-x509",
-            "-days",
-            "3650",
-            "-keyout",
-            key,
-            "-out",
-            certificate,
+
+    create_ca = not os.path.exists(ca_certificate)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config = os.path.join(tmpdir, "launchpad.cnf")
+        new_key = os.path.join(tmpdir, "launchpad.key")
+        new_certificate = os.path.join(tmpdir, "launchpad.crt")
+        csr = os.path.join(tmpdir, "launchpad.csr")
+
+        signing_key = ca_key
+        signing_certificate = ca_certificate
+        if create_ca:
+            signing_key = os.path.join(tmpdir, "launchpad-ca.key")
+            signing_certificate = os.path.join(tmpdir, "launchpad-ca.crt")
+
+        with open(config, "w") as f:
+            f.write(
+                """[req]
+distinguished_name = distinguished_name
+prompt = no
+
+[distinguished_name]
+CN = launchpad.test development CA
+
+[local_ca]
+basicConstraints = critical, CA:true, pathlen:0
+keyUsage = critical, keyCertSign, cRLSign
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer
+
+[server_certificate]
+basicConstraints = critical, CA:false
+keyUsage = critical, digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alternative_names
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+
+[alternative_names]
+%s
+"""
+                % "\n".join(
+                    "DNS.%d = %s" % (index, vhost)
+                    for index, vhost in enumerate(vhosts, 1)
+                )
+            )
+
+        if create_ca:
+            subprocess.check_call(
+                [
+                    "openssl",
+                    "req",
+                    "-config",
+                    config,
+                    "-new",
+                    "-newkey",
+                    "rsa:4096",
+                    "-nodes",
+                    "-sha256",
+                    "-extensions",
+                    "local_ca",
+                    "-x509",
+                    "-days",
+                    "3650",
+                    "-keyout",
+                    signing_key,
+                    "-out",
+                    signing_certificate,
+                ]
+            )
+
+        subprocess.check_call(
+            [
+                "openssl",
+                "req",
+                "-config",
+                config,
+                "-new",
+                "-newkey",
+                "rsa:4096",
+                "-nodes",
+                "-sha256",
+                "-subj",
+                "/CN=%s/" % vhosts[0],
+                "-keyout",
+                new_key,
+                "-out",
+                csr,
+            ]
+        )
+
+        subprocess.check_call(
+            [
+                "openssl",
+                "x509",
+                "-req",
+                "-in",
+                csr,
+                "-CA",
+                signing_certificate,
+                "-CAkey",
+                signing_key,
+                "-CAserial",
+                os.path.join(tmpdir, "launchpad-ca.srl"),
+                "-CAcreateserial",
+                "-days",
+                "3650",
+                "-sha256",
+                "-extfile",
+                config,
+                "-extensions",
+                "server_certificate",
+                "-out",
+                new_certificate,
+            ]
+        )
+
+        subprocess.check_call(
+            [
+                "openssl",
+                "verify",
+                "-x509_strict",
+                "-purpose",
+                "sslserver",
+                "-CAfile",
+                signing_certificate,
+                new_certificate,
+            ]
+        )
+
+        # Copy only after generation and verification have succeeded.
+        files = [
+            (new_key, key, 0o600),
+            (new_certificate, certificate, 0o644),
         ]
-    )
-    print("Created new local key and self-signed certificate.")
-    subprocess.check_call(["openssl", "x509", "-in", certificate, "-text"])
+        if create_ca:
+            files = [
+                (signing_key, ca_key, 0o600),
+                (signing_certificate, ca_certificate, 0o644),
+            ] + files
+
+        for source, destination, mode in files:
+            os.chmod(source, mode)
+            shutil.copy2(source, destination)
+
+    print("Created CA-signed development server certificate.")
+    print("Trust %s in the browser's certificate store." % ca_certificate)
     return 0
 
 
