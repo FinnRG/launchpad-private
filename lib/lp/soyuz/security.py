@@ -279,7 +279,7 @@ class ModerateBinaryPackageBuild(ViewBinaryPackageBuild):
             self.obj.archive
         ).checkAuthenticated(user)
 
-    def checkUnauthenticated(self, user):
+    def checkUnauthenticated(self):
         return False
 
 
