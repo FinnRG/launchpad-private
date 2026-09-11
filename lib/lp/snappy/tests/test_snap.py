@@ -2094,6 +2094,64 @@ class TestSnapSBOMWebhook(TestCaseWithFactory):
 
         self.assertEqual([], self._getSBOMWebhooks(snap))
 
+    def test_only_url_configured_does_nothing(self):
+        # Both sbom_webhook_url and sbom_webhook_secret must be set;
+        # having only one configured is treated as unconfigured.
+        self.pushConfig(
+            "snappy",
+            sbom_webhook_url="https://sbom.example.com/webhook",
+            sbom_webhook_secret=None,
+        )
+        snap = self.factory.makeSnap()
+        naked_snap = removeSecurityProxy(snap)
+
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = True
+
+        self.assertEqual([], self._getSBOMWebhooks(snap))
+
+    def test_only_secret_configured_does_nothing(self):
+        self.pushConfig(
+            "snappy",
+            sbom_webhook_url=None,
+            sbom_webhook_secret="sbom-secret",
+        )
+        snap = self.factory.makeSnap()
+        naked_snap = removeSecurityProxy(snap)
+
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = True
+
+        self.assertEqual([], self._getSBOMWebhooks(snap))
+
+    def test_ignores_unrelated_webhook_with_same_delivery_url(self):
+        # A webhook created independently by the snap's owner (not by
+        # the automation) is left untouched even if it happens to share
+        # the same delivery_url, because it isn't registered by the
+        # janitor.
+        snap = self.factory.makeSnap()
+        naked_snap = removeSecurityProxy(snap)
+        owner_hook = getUtility(IWebhookSet).new(
+            naked_snap,
+            snap.owner,
+            "https://sbom.example.com/webhook",
+            ["snap:build:0.1"],
+            True,
+            "owners-own-secret",
+        )
+
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = True
+
+        hooks = self._getSBOMWebhooks(snap)
+        self.assertEqual(2, len(hooks))
+        unrelated = removeSecurityProxy(owner_hook)
+        self.assertEqual("owners-own-secret", unrelated.secret)
+        self.assertEqual(["snap:build:0.1"], unrelated.event_types)
+        managed = [hook for hook in hooks if hook.id != unrelated.id][0]
+        self.assertEqual("sbom-secret", managed.secret)
+        self.assertEqual(["snap:build:0.1::fullybuilt"], managed.event_types)
+
     def test_failure_does_not_propagate(self):
         # A failure while managing the SBOM webhook is logged as an OOPS
         # but does not prevent the use_fetch_service change itself from

@@ -51,10 +51,12 @@ def _sync_sbom_webhook(snap, delivery_url, secret):
     # registrant is already the janitor, so no schema change is needed.
     naked_snap = removeSecurityProxy(snap)
     webhook_set = getUtility(IWebhookSet)
+    janitor = getUtility(ILaunchpadCelebrities).janitor
     existing_hooks = [
         removeSecurityProxy(hook)
         for hook in webhook_set.findByTarget(naked_snap)
         if removeSecurityProxy(hook).delivery_url == delivery_url
+        and removeSecurityProxy(hook).registrant == janitor
     ]
     if naked_snap.use_fetch_service:
         if existing_hooks:
@@ -67,7 +69,7 @@ def _sync_sbom_webhook(snap, delivery_url, secret):
         else:
             webhook_set.new(
                 naked_snap,
-                getUtility(ILaunchpadCelebrities).janitor,
+                janitor,
                 delivery_url,
                 [SBOM_WEBHOOK_EVENT_TYPE],
                 True,
