@@ -105,6 +105,7 @@ class SnapTestHelpers:
     event_type = "snap:build:0.1"
     expected_event_types = [
         ("snap:build:0.1", "Snap build"),
+        ("snap:build:0.1::fullybuilt", "Snap build fully built"),
     ]
 
     def makeTarget(self):
