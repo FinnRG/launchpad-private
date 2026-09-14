@@ -138,3 +138,8 @@ def configure_apache_website():
 @when_not_all("apache-website.available", "service.configured")
 def deconfigure_apache_website():
     clear_flag("service.apache-website.configured")
+
+
+@when("config.changed.frontend_proxy_protocol_enabled")
+def reconfigure_proxy_protocol():
+    clear_flag("service.apache-website.configured")
