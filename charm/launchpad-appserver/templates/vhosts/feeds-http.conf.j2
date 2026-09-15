@@ -12,24 +12,6 @@
     CustomLog /var/log/apache2/feeds.{{ domain }}-access.log combined
     LogLevel warn
 
-    DocumentRoot {{ base_dir }}/www
-
-    <Directory {{ base_dir }}/www/>
-        Require all granted
-    </Directory>
-
-    ProxyRequests off
-    <Proxy *>
-        Require all granted
-        ErrorDocument 500 /offline.html
-        ErrorDocument 502 /offline.html
-        ErrorDocument 503 /offline.html
-    </Proxy>
-
-    ProxyPass /robots.txt !
-    ProxyPass /offline.html !
-    ProxyPass / balancer://cached-launchpad-appserver-main/
-    ProxyPassReverse / balancer://cached-launchpad-appserver-main/
-    ProxyPreserveHost on
+    Redirect permanent / https://feeds.{{ domain }}/
 </VirtualHost>
 

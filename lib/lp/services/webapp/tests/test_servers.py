@@ -545,11 +545,14 @@ class LaunchpadBrowserResponseHeaderInjection(TestCase):
 class TestFeedsBrowserRequest(TestCase):
     """Tests for `FeedsBrowserRequest`."""
 
-    def test_not_strict_transport_security(self):
-        # Feeds are served over HTTP, so no Strict-Transport-Security
+    def test_strict_transport_security(self):
+        # Feeds are served over HTTPS, so a Strict-Transport-Security
         # header is sent.
         response = FeedsBrowserRequest(io.BytesIO(b""), {}).response
-        self.assertIs(None, response.getHeader("Strict-Transport-Security"))
+        self.assertEqual(
+            "max-age=15552000",
+            response.getHeader("Strict-Transport-Security"),
+        )
 
 
 class TestPrivateXMLRPCRequest(TestCase):
