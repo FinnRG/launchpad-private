@@ -4,6 +4,7 @@ from storm.expr import SQL
 from zope.component import getUtility
 from zope.security.proxy import removeSecurityProxy
 
+from lp.app.errors import NotFoundError
 from lp.app.interfaces.launchpad import ILaunchpadCelebrities
 from lp.registry.interfaces.distroseries import IDistroSeries
 from lp.registry.interfaces.person import IPersonSet
@@ -18,7 +19,6 @@ from lp.services.librarian.browser import ProxiedLibraryFileAlias
 from lp.services.webapp import canonical_url
 from lp.services.webapp.escaping import structured
 from lp.soyuz.enums import PackageUploadStatus
-from lp.soyuz.interfaces.archive import CannotCopy
 from lp.soyuz.interfaces.queue import (
     PACKAGE_UPLOAD_STATUS_MAPPING_TO_STR,
     IPackageUpload,
@@ -61,9 +61,7 @@ class NewPackageUploadsFeed(FeedBase):
                     upload.concrete_package_copy_job.findSourcePublication()
                 )
                 return publication.sourcepackagerelease
-            # TODO: fix exception name, makes no sense to be raising
-            # "CannotCopy" from a method to find a source publication
-            except CannotCopy:
+            except NotFoundError:
                 return None
         return upload.sourcepackagerelease
 

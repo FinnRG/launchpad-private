@@ -620,7 +620,7 @@ class PlainPackageCopyJob(PackageCopyJobDerived):
             pocket=self.source_pocket,
         ).first()
         if source_package is None:
-            raise CannotCopy("Package %r %r not found." % (name, version))
+            raise NotFoundError("Package %r %r not found." % (name, version))
         return source_package
 
     def _checkPolicies(
@@ -781,7 +781,10 @@ class PlainPackageCopyJob(PackageCopyJobDerived):
                 "Silent copies need queue admin privileges on the target."
             )
 
-        source_package = self.findSourcePublication()
+        try:
+            source_package = self.findSourcePublication()
+        except NotFoundError as e:
+            raise CannotCopy(e.args[0])
 
         # If there's a PackageUpload associated with this job then this
         # job has just been released by an archive admin from the queue.

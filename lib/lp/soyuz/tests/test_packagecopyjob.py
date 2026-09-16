@@ -18,6 +18,7 @@ from zope.component import getUtility
 from zope.security.interfaces import Unauthorized
 from zope.security.proxy import removeSecurityProxy
 
+from lp.app.errors import NotFoundError
 from lp.bugs.interfaces.bugtask import BugTaskStatus
 from lp.registry.interfaces.pocket import PackagePublishingPocket
 from lp.registry.interfaces.series import SeriesStatus
@@ -454,8 +455,9 @@ class PlainPackageCopyJobTests(TestCaseWithFactory, LocalTestHelper):
         naked_job = removeSecurityProxy(job)
         naked_job.reportFailure = FakeMethod()
 
-        self.assertRaises(CannotCopy, job.run)
+        error = self.assertRaises(CannotCopy, job.run)
 
+        self.assertEqual("Package 'foo' '1.0-1' not found.", str(error))
         self.assertEqual(1, naked_job.reportFailure.call_count)
 
     def test_copy_with_packageupload(self):
@@ -2107,6 +2109,15 @@ class PlainPackageCopyJobTests(TestCaseWithFactory, LocalTestHelper):
         pcj.addSourceOverride(override)
 
         self.assertEqual(override, pcj.getSourceOverride())
+
+    def test_findSourcePublication_unknown_package(self):
+        job = self.factory.makePlainPackageCopyJob(
+            package_name="missing", package_version="1.0-1"
+        )
+
+        error = self.assertRaises(NotFoundError, job.findSourcePublication)
+
+        self.assertEqual(("Package 'missing' '1.0-1' not found.",), error.args)
 
     def test_findSourcePublication_with_source_series_and_pocket(self):
         # The source_distroseries and source_pocket parameters cause
