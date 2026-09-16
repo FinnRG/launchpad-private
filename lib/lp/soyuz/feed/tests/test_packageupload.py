@@ -619,6 +619,81 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         self.assertEqual(1, len(items))
         self.assertIn(manual_upload.displayname, items[0].link_alternate)
 
+    def _make_debian_sync(self, distroseries, requester=None):
+        debian = self.factory.makeDistribution()
+        unstable = self.factory.makeDistroSeries(
+            distribution=debian, name="unstable"
+        )
+        publication = self.factory.makeSourcePackagePublishingHistory(
+            distroseries=unstable,
+            archive=debian.main_archive,
+        )
+        spr = publication.sourcepackagerelease
+        removeSecurityProxy(spr).changelog_entry = "* Changes from Debian"
+        with admin_logged_in():
+            job = self.factory.makePlainPackageCopyJob(
+                package_name=spr.name,
+                package_version=spr.version,
+                source_archive=debian.main_archive,
+                target_archive=distroseries.main_archive,
+                target_distroseries=distroseries,
+                target_pocket=PackagePublishingPocket.RELEASE,
+                requester=requester,
+            )
+            upload = self.factory.makePackageUpload(
+                distroseries=distroseries,
+                archive=distroseries.main_archive,
+                status=PackageUploadStatus.DONE,
+                package_copy_job=removeSecurityProxy(job).context,
+            )
+        return upload, spr
+
+    def test_debian_sync_is_included(self):
+        distroseries = self.factory.makeDistroSeries()
+        upload, spr = self._make_debian_sync(distroseries)
+        removeSecurityProxy(spr).creator = getUtility(
+            ILaunchpadCelebrities
+        ).katie
+        transaction.commit()
+
+        items = self._make_feed(distroseries)._getItemsWorker()
+
+        self.assertEqual(1, len(items))
+        self.assertIn(spr.name, items[0].title.content)
+        self.assertIn("Accepted", items[0].title.content)
+        self.assertIn(spr.version, items[0].link_alternate)
+        self.assertIn("Changes from Debian", items[0].content.content)
+
+    def test_debian_sync_entry_resolves_source(self):
+        distroseries = self.factory.makeDistroSeries()
+        upload, spr = self._make_debian_sync(distroseries)
+        transaction.commit()
+
+        entry = self._make_feed(distroseries).itemToFeedEntry(upload)
+
+        self.assertIn(spr.name, entry.title.content)
+        self.assertIn(spr.version, entry.link_alternate)
+        self.assertIn("Changes from Debian", entry.content.content)
+
+    def test_debian_auto_sync_is_excluded(self):
+        distroseries = self.factory.makeDistroSeries()
+        self._make_debian_sync(
+            distroseries, requester=getUtility(ILaunchpadCelebrities).katie
+        )
+        transaction.commit()
+
+        self.assertEqual([], self._make_feed(distroseries)._getItemsWorker())
+
+    def test_debian_sync_with_missing_source_is_excluded(self):
+        distroseries = self.factory.makeDistroSeries()
+        upload, spr = self._make_debian_sync(distroseries)
+        removeSecurityProxy(upload.package_copy_job).package_name = (
+            "missing-source"
+        )
+        transaction.commit()
+
+        self.assertEqual([], self._make_feed(distroseries)._getItemsWorker())
+
     def test_signed_source_upload_is_included(self):
         # A regular signed source upload passes all filters and appears.
         distroseries = self.factory.makeDistroSeries()

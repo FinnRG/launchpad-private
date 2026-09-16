@@ -18,6 +18,7 @@ from lp.services.librarian.browser import ProxiedLibraryFileAlias
 from lp.services.webapp import canonical_url
 from lp.services.webapp.escaping import structured
 from lp.soyuz.enums import PackageUploadStatus
+from lp.soyuz.interfaces.archive import CannotCopy
 from lp.soyuz.interfaces.queue import (
     PACKAGE_UPLOAD_STATUS_MAPPING_TO_STR,
     IPackageUpload,
@@ -52,6 +53,19 @@ class NewPackageUploadsFeed(FeedBase):
     @property
     def quantity(self) -> int:
         return 100
+
+    def _getSourcePackageRelease(self, upload):
+        if upload.contains_copy:
+            try:
+                publication = (
+                    upload.concrete_package_copy_job.findSourcePublication()
+                )
+                return publication.sourcepackagerelease
+            # TODO: fix exception name, makes no sense to be raising
+            # "CannotCopy" from a method to find a source publication
+            except CannotCopy:
+                return None
+        return upload.sourcepackagerelease
 
     def _getItemsWorker(self) -> List[FeedEntry]:
         uploads = list(
@@ -90,7 +104,17 @@ class NewPackageUploadsFeed(FeedBase):
         # interest of time.
         filtered_uploads = []
         for upload in uploads:
-            spr = upload.sourcepackagerelease
+            spr = self._getSourcePackageRelease(upload)
+
+            changed_by_id = None
+            if upload.contains_copy:
+                if spr is None:
+                    continue
+                requester = upload.package_copy_job.job.requester
+                if requester is not None and requester.preferredemail:
+                    changed_by_id = requester.id
+            changed_by_id = changed_by_id or (spr.creator_id if spr else None)
+
             # Skip binary/mixed uploads unless it's a security upload
             if (
                 upload.builds
@@ -122,12 +146,12 @@ class NewPackageUploadsFeed(FeedBase):
             if (
                 spr
                 and not upload.builds
-                and spr.creator_id == katie_id
+                and changed_by_id == katie_id
                 and upload.pocket != PackagePublishingPocket.SECURITY
             ):
                 continue
 
-            filtered_uploads.append(upload)
+            filtered_uploads.append((upload, spr))
             if len(filtered_uploads) >= self.quantity:
                 break
 
@@ -136,8 +160,7 @@ class NewPackageUploadsFeed(FeedBase):
 
         # Collect all person IDs we'll need ahead and load them in one query
         person_ids = set()
-        for upload in filtered_uploads:
-            spr = upload.sourcepackagerelease
+        for upload, spr in filtered_uploads:
             if spr:
                 if spr.creator_id:
                     person_ids.add(spr.creator_id)
@@ -154,10 +177,14 @@ class NewPackageUploadsFeed(FeedBase):
                 )
             )
 
-        return [self.itemToFeedEntry(upload) for upload in filtered_uploads]
+        return [
+            self.itemToFeedEntry(upload, spr=spr)
+            for upload, spr in filtered_uploads
+        ]
 
-    def itemToFeedEntry(self, upload: IPackageUpload) -> FeedEntry:
-        spr = upload.sourcepackagerelease
+    def itemToFeedEntry(self, upload: IPackageUpload, spr=None) -> FeedEntry:
+        if spr is None:
+            spr = self._getSourcePackageRelease(upload)
         distroseries = upload.distroseries
 
         title = FeedTypedData(
