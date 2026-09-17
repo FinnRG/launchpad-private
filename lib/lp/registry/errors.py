@@ -11,6 +11,7 @@ __all__ = [
     "CannotPackageProprietaryProduct",
     "CountryMirrorAlreadySet",
     "DeleteSubscriptionError",
+    "InvalidDateRange",
     "InvalidFilename",
     "InvalidMilestoneOrder",
     "InvalidMirrorReviewState",
@@ -58,6 +59,11 @@ class InclusiveTeamLinkageError(ValueError):
 @error_status(http.client.CONFLICT)
 class NameAlreadyTaken(Exception):
     """The name given for a person is already in use by other person."""
+
+
+@error_status(http.client.BAD_REQUEST)
+class InvalidDateRange(ValueError):
+    """A date range has invalid bounds."""
 
 
 @error_status(http.client.BAD_REQUEST)

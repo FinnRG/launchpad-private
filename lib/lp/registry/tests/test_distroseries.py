@@ -19,6 +19,7 @@ from zope.security.proxy import removeSecurityProxy
 from lp.app.interfaces.launchpad import ILaunchpadCelebrities
 from lp.bugs.interfaces.bugtargetparent import IBugTargetParent
 from lp.bugs.interfaces.bugtask import BugTaskImportance, BugTaskStatus
+from lp.buildmaster.enums import BuildStatus
 from lp.registry.errors import NoSuchDistroSeries
 from lp.registry.interfaces.distribution import IDistribution
 from lp.registry.interfaces.distroseries import IDistroSeriesSet
@@ -33,6 +34,7 @@ from lp.soyuz.enums import (
     PackagePublishingStatus,
 )
 from lp.soyuz.interfaces.archive import IArchiveSet
+from lp.soyuz.interfaces.buildrecords import IHasBuildRecords
 from lp.soyuz.interfaces.component import IComponentSet
 from lp.soyuz.interfaces.distributionjob import (
     IInitializeDistroSeriesJobSource,
@@ -1067,6 +1069,273 @@ class TestDistroSeriesPackaging(TestCaseWithFactory):
         names = [packaging.sourcepackagename.name for packaging in packagings]
         expected = ["translatable", "linked", "importabletranslatable"]
         self.assertEqual(expected, names)
+
+
+class TestDistroSeriesBuildRecordsCountsWebservice(TestCaseWithFactory):
+    layer = DatabaseFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        self.distroseries = self.factory.makeDistroSeries()
+        self.distroarchseries = self.factory.makeDistroArchSeries(
+            distroseries=self.distroseries
+        )
+        self.distroseries_url = api_url(self.distroseries)
+        self.webservice = webservice_for_person(
+            None, default_api_version="devel"
+        )
+        self.cutoff = datetime(2026, 9, 2, 14, 30, tzinfo=timezone.utc)
+
+    def makeBuild(
+        self,
+        status,
+        pocket=PackagePublishingPocket.RELEASE,
+        name=None,
+        date_finished=None,
+        archive=None,
+    ):
+        with admin_logged_in():
+            sourcepackagename = (
+                self.factory.makeSourcePackageName(name=name) if name else None
+            )
+            build = self.factory.makeBinaryPackageBuild(
+                distroarchseries=self.distroarchseries,
+                archive=archive,
+                status=status,
+                pocket=pocket,
+                sourcepackagename=sourcepackagename,
+            )
+        if date_finished is not None:
+            removeSecurityProxy(build).date_finished = date_finished
+        return build
+
+    def getCounts(self, **parameters):
+        response = self.webservice.named_get(
+            self.distroseries_url,
+            "getBuildRecordsCounts",
+            **parameters,
+        )
+        self.assertEqual(200, response.status, response.body)
+        return response.jsonBody()
+
+    def test_empty_response_contract_and_anonymous_access(self):
+        response = self.getCounts()
+
+        self.assertEqual(
+            {"total", "by_build_state", "by_pocket"}, set(response)
+        )
+        self.assertEqual(0, response["total"])
+        self.assertEqual(
+            {status.name for status in BuildStatus.items},
+            set(response["by_build_state"]),
+        )
+        self.assertEqual(
+            {pocket.name for pocket in PackagePublishingPocket.items},
+            set(response["by_pocket"]),
+        )
+        self.assertTrue(
+            all(count == 0 for count in response["by_build_state"].values())
+        )
+        self.assertTrue(
+            all(count == 0 for count in response["by_pocket"].values())
+        )
+
+    def test_counts_complete_state_and_pocket_marginals(self):
+        builds = [
+            (
+                BuildStatus.FULLYBUILT,
+                PackagePublishingPocket.RELEASE,
+            ),
+            (
+                BuildStatus.FAILEDTOBUILD,
+                PackagePublishingPocket.UPDATES,
+            ),
+            (
+                BuildStatus.FAILEDTOUPLOAD,
+                PackagePublishingPocket.PROPOSED,
+            ),
+        ]
+        for status, pocket in builds:
+            self.makeBuild(
+                status,
+                pocket=pocket,
+                date_finished=self.cutoff,
+            )
+
+        response = self.getCounts()
+
+        self.assertEqual(3, response["total"])
+        for status, pocket in builds:
+            self.assertEqual(1, response["by_build_state"][status.name])
+            self.assertEqual(1, response["by_pocket"][pocket.name])
+        self.assertEqual(0, response["by_build_state"]["NEEDSBUILD"])
+        self.assertEqual(0, response["by_pocket"]["BACKPORTS"])
+        self.assertEqual(
+            response["total"], sum(response["by_build_state"].values())
+        )
+        self.assertEqual(
+            response["total"], sum(response["by_pocket"].values())
+        )
+
+        for status, pocket in builds:
+            filtered = self.getCounts(build_status=status.title)
+            self.assertEqual(1, filtered["total"])
+            self.assertEqual(1, filtered["by_build_state"][status.name])
+            self.assertEqual(1, filtered["by_pocket"][pocket.name])
+
+    def test_finish_date_bounds_and_imported_builds(self):
+        self.makeBuild(
+            BuildStatus.FULLYBUILT,
+            name="at-boundary",
+            date_finished=self.cutoff,
+        )
+        self.makeBuild(
+            BuildStatus.FAILEDTOBUILD,
+            name="older",
+            date_finished=self.cutoff - timedelta(seconds=1),
+        )
+        self.makeBuild(
+            BuildStatus.FAILEDTOUPLOAD,
+            name="newer",
+            date_finished=self.cutoff + timedelta(seconds=1),
+        )
+        self.makeBuild(
+            BuildStatus.NEEDSBUILD,
+            name="unfinished",
+        )
+        self.makeBuild(
+            BuildStatus.FULLYBUILT,
+            name="imported-success",
+        )
+
+        filtered = self.getCounts(finished_since=self.cutoff.isoformat())
+        self.assertEqual(2, filtered["total"])
+        self.assertEqual(1, filtered["by_build_state"]["FULLYBUILT"])
+        self.assertEqual(1, filtered["by_build_state"]["FAILEDTOUPLOAD"])
+
+        filtered = self.getCounts(finished_before=self.cutoff.isoformat())
+        self.assertEqual(1, filtered["total"])
+        self.assertEqual(0, filtered["by_build_state"]["FULLYBUILT"])
+        self.assertEqual(1, filtered["by_build_state"]["FAILEDTOBUILD"])
+
+        filtered = self.getCounts(
+            finished_since=self.cutoff.isoformat(),
+            finished_before=self.cutoff.isoformat(),
+        )
+        self.assertEqual(0, filtered["total"])
+        self.assertEqual(0, filtered["by_build_state"]["FULLYBUILT"])
+
+        unfiltered = self.getCounts()
+        self.assertEqual(4, unfiltered["total"])
+        self.assertEqual(1, unfiltered["by_build_state"]["FULLYBUILT"])
+        self.assertEqual(1, unfiltered["by_build_state"]["FAILEDTOBUILD"])
+        self.assertEqual(1, unfiltered["by_build_state"]["FAILEDTOUPLOAD"])
+        self.assertEqual(1, unfiltered["by_build_state"]["NEEDSBUILD"])
+
+    def test_rejects_reversed_finish_date_bounds(self):
+        response = self.webservice.named_get(
+            self.distroseries_url,
+            "getBuildRecordsCounts",
+            finished_since=(self.cutoff + timedelta(seconds=1)).isoformat(),
+            finished_before=self.cutoff.isoformat(),
+        )
+
+        self.assertEqual(400, response.status)
+        self.assertIn(
+            b"finished_since must not be later than finished_before.",
+            response.body,
+        )
+
+    def test_source_state_and_pocket_filters(self):
+        self.makeBuild(
+            BuildStatus.FULLYBUILT,
+            name="matching-built",
+            date_finished=self.cutoff,
+        )
+        self.makeBuild(
+            BuildStatus.FAILEDTOBUILD,
+            pocket=PackagePublishingPocket.UPDATES,
+            name="matching-failed",
+            date_finished=self.cutoff,
+        )
+        self.makeBuild(
+            BuildStatus.FAILEDTOUPLOAD,
+            name="unrelated",
+            date_finished=self.cutoff,
+        )
+
+        by_source = self.getCounts(source_name="matching")
+        self.assertEqual(2, by_source["total"])
+        self.assertEqual(0, by_source["by_build_state"]["FAILEDTOUPLOAD"])
+        self.assertEqual(1, by_source["by_pocket"]["RELEASE"])
+        self.assertEqual(1, by_source["by_pocket"]["UPDATES"])
+
+        by_state = self.getCounts(build_status=BuildStatus.FULLYBUILT.title)
+        self.assertEqual(1, by_state["total"])
+        self.assertEqual(1, by_state["by_pocket"]["RELEASE"])
+
+        by_pocket = self.getCounts(
+            pocket=PackagePublishingPocket.RELEASE.title
+        )
+        self.assertEqual(2, by_pocket["total"])
+        self.assertEqual(1, by_pocket["by_build_state"]["FULLYBUILT"])
+        self.assertEqual(1, by_pocket["by_build_state"]["FAILEDTOUPLOAD"])
+
+        combined = self.getCounts(
+            source_name="matching",
+            build_status=BuildStatus.FAILEDTOBUILD.title,
+            pocket=PackagePublishingPocket.UPDATES.title,
+        )
+        self.assertEqual(1, combined["total"])
+        self.assertEqual(1, combined["by_build_state"]["FAILEDTOBUILD"])
+        self.assertEqual(0, combined["by_build_state"]["FULLYBUILT"])
+        self.assertEqual(1, combined["by_pocket"]["UPDATES"])
+        self.assertEqual(0, combined["by_pocket"]["RELEASE"])
+
+    def test_excludes_ppa_and_other_series_builds(self):
+        self.makeBuild(
+            BuildStatus.FULLYBUILT,
+            date_finished=self.cutoff,
+        )
+        with admin_logged_in():
+            ppa = self.factory.makeArchive(
+                distribution=self.distroseries.distribution,
+                purpose=ArchivePurpose.PPA,
+                private=True,
+            )
+        self.makeBuild(
+            BuildStatus.FAILEDTOBUILD,
+            date_finished=self.cutoff,
+            archive=ppa,
+        )
+        with admin_logged_in():
+            self.factory.makeBinaryPackageBuild(
+                status=BuildStatus.FAILEDTOUPLOAD
+            )
+        response = self.getCounts()
+
+        self.assertEqual(1, response["total"])
+        self.assertEqual(1, response["by_build_state"]["FULLYBUILT"])
+
+    def test_operation_is_devel_only(self):
+        for version in ("beta", "1.0"):
+            webservice = webservice_for_person(
+                None, default_api_version=version
+            )
+            response = webservice.named_get(
+                self.distroseries_url, "getBuildRecordsCounts"
+            )
+            self.assertEqual(400, response.status, version)
+
+    def test_getBuildRecords_schema_is_unchanged(self):
+        exported = IHasBuildRecords["getBuildRecords"].queryTaggedValue(
+            "lazr.restful.exported"
+        )
+
+        self.assertEqual(
+            {"name", "build_state", "pocket"},
+            set(exported["params"]),
+        )
 
 
 class TestDistroSeriesWebservice(TestCaseWithFactory):
