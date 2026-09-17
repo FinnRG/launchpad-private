@@ -651,6 +651,10 @@ body {
     }
   }
 
+  .crawler {
+    display: none !important;
+  }
+
 @import 'typography',
         'colours',
         'forms',
