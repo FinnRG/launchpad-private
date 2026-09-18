@@ -111,6 +111,30 @@ class RegisteredAuthenticator(StormBase):
         )
         store.invalidate(self)
 
+    def recordAssertion(self, sign_count):
+        """See `IRegisteredAuthenticator`."""
+        if sign_count == 0:
+            counter_matches = RegisteredAuthenticator.sign_count == 0
+        else:
+            counter_matches = RegisteredAuthenticator.sign_count < sign_count
+        store = IPrimaryStore(RegisteredAuthenticator)
+        result = store.execute(
+            Update(
+                {
+                    RegisteredAuthenticator.sign_count: sign_count,
+                    RegisteredAuthenticator.date_last_used: UTC_NOW,
+                },
+                where=And(
+                    RegisteredAuthenticator.id == self.id,
+                    counter_matches,
+                    RegisteredAuthenticator.date_revoked == None,
+                ),
+                table=RegisteredAuthenticator,
+            )
+        )
+        store.invalidate(self)
+        return result.rowcount == 1
+
     def revoke(self, revoked_by):
         """See `IRegisteredAuthenticator`."""
         self.date_revoked = UTC_NOW

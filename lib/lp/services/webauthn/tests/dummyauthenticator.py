@@ -10,13 +10,16 @@ __all__ = [
 import os
 
 from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from fido2.cose import ES256
-from fido2.utils import sha256
+from fido2.utils import sha256, websafe_decode
 from fido2.webauthn import (
     Aaguid,
     AttestationObject,
     AttestedCredentialData,
+    AuthenticationResponse,
+    AuthenticatorAssertionResponse,
     AuthenticatorAttestationResponse,
     AuthenticatorData,
     CollectedClientData,
@@ -42,6 +45,7 @@ class DummyAuthenticator:
         self.aaguid = Aaguid(aaguid or b"\x00" * 16)
         # Maps credential_id to EllipticCurvePrivateKey
         self.credentials = {}
+        self.sign_counts = {}
 
     def create(self, options, origin):
         """Emulate `navigator.credentials.create()`.
@@ -61,6 +65,7 @@ class DummyAuthenticator:
         )
         credential_id = os.urandom(32)
         self.credentials[credential_id] = private_key
+        self.sign_counts[credential_id] = 0
 
         credential_data = AttestedCredentialData.create(
             self.aaguid,
@@ -86,6 +91,38 @@ class DummyAuthenticator:
             response=AuthenticatorAttestationResponse(
                 client_data=client_data,
                 attestation_object=attestation_object,
+            ),
+            type=PublicKeyCredentialType.PUBLIC_KEY,
+        )
+        return dict(response)
+
+    def get(self, options, origin):
+        """Emulate `navigator.credentials.get()`."""
+        public_key_options = options["publicKey"]
+        credential_id = websafe_decode(
+            public_key_options["allowCredentials"][0]["id"]
+        )
+        private_key = self.credentials[credential_id]
+        self.sign_counts[credential_id] += 1
+        auth_data = AuthenticatorData.create(
+            sha256(public_key_options["rpId"].encode()),
+            AuthenticatorData.FLAG.UP | AuthenticatorData.FLAG.UV,
+            self.sign_counts[credential_id],
+        )
+        client_data = CollectedClientData.create(
+            type=CollectedClientData.TYPE.GET,
+            challenge=public_key_options["challenge"],
+            origin=origin,
+        )
+        signature = private_key.sign(
+            auth_data + client_data.hash, ec.ECDSA(hashes.SHA256())
+        )
+        response = AuthenticationResponse(
+            id=credential_id,
+            response=AuthenticatorAssertionResponse(
+                client_data=client_data,
+                authenticator_data=auth_data,
+                signature=signature,
             ),
             type=PublicKeyCredentialType.PUBLIC_KEY,
         )
