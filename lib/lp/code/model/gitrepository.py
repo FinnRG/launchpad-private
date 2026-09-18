@@ -2598,7 +2598,16 @@ class GitRepositoryMacaroonIssuer(MacaroonIssuerBase):
         return get_transaction_timestamp(store) < expires
 
 
-def get_git_repository_privacy_filter(user, repository_class=GitRepository):
+def get_git_repository_privacy_filter(
+    user, repository_class=GitRepository, team_ids=None, policy_ids=None
+):
+    """Return the where clauses for visibility of `repository_class` rows.
+
+    :param team_ids: An optional precomputed expression giving the array
+        of team ids `user` participates in.
+    :param policy_ids: An optional precomputed expression giving the
+        array of access policy ids granted to `user`.
+    """
     public_filter = repository_class.information_type.is_in(
         PUBLIC_INFORMATION_TYPES
     )
@@ -2606,14 +2615,30 @@ def get_git_repository_privacy_filter(user, repository_class=GitRepository):
     if user is None:
         return [public_filter]
 
+    if team_ids is None:
+        team_ids = Select(
+            ArrayAgg(TeamParticipation.team_id),
+            tables=TeamParticipation,
+            where=(TeamParticipation.person == user),
+        )
+
+    if policy_ids is None:
+        policy_ids = Select(
+            ArrayAgg(AccessPolicyGrant.policy_id),
+            tables=(
+                AccessPolicyGrant,
+                Join(
+                    TeamParticipation,
+                    TeamParticipation.team_id == AccessPolicyGrant.grantee_id,
+                ),
+            ),
+            where=(TeamParticipation.person == user),
+        )
+
     artifact_grant_query = Coalesce(
         ArrayIntersects(
             SQL("%s.access_grants" % repository_class.__storm_table__),
-            Select(
-                ArrayAgg(TeamParticipation.team_id),
-                tables=TeamParticipation,
-                where=(TeamParticipation.person == user),
-            ),
+            team_ids,
         ),
         False,
     )
@@ -2621,18 +2646,7 @@ def get_git_repository_privacy_filter(user, repository_class=GitRepository):
     policy_grant_query = Coalesce(
         ArrayIntersects(
             Array(SQL("%s.access_policy" % repository_class.__storm_table__)),
-            Select(
-                ArrayAgg(AccessPolicyGrant.policy_id),
-                tables=(
-                    AccessPolicyGrant,
-                    Join(
-                        TeamParticipation,
-                        TeamParticipation.team_id
-                        == AccessPolicyGrant.grantee_id,
-                    ),
-                ),
-                where=(TeamParticipation.person == user),
-            ),
+            policy_ids,
         ),
         False,
     )

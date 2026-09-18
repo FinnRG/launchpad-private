@@ -19,6 +19,7 @@ from storm.expr import (
     Asc,
     Count,
     Desc,
+    Exists,
     In,
     Join,
     LeftJoin,
@@ -63,6 +64,7 @@ from lp.registry.model.person import Person
 from lp.registry.model.product import Product
 from lp.registry.model.sourcepackagename import SourcePackageName
 from lp.registry.model.teammembership import TeamParticipation
+from lp.registry.model.uservisibility import attach_user_visibility_cte
 from lp.services.database.bulk import load_referencing, load_related
 from lp.services.database.decoratedresultset import DecoratedResultSet
 from lp.services.database.interfaces import IStore
@@ -187,15 +189,19 @@ class GenericBranchCollection:
         branches = self.getBranches(eager_load=False, find_expr=columns)
         return branches.get_plain_result_set()._get_select()
 
-    def _getBranchExpressions(self):
+    def _getBranchExpressions(self, team_ids=None, policy_ids=None):
         """Return the where expressions for this collection."""
         return (
             self._branch_filter_expressions
             + self._asymmetric_filter_expressions
-            + self._getBranchVisibilityExpression()
+            + self._getBranchVisibilityExpression(
+                team_ids=team_ids, policy_ids=policy_ids
+            )
         )
 
-    def _getBranchVisibilityExpression(self, branch_class=None):
+    def _getBranchVisibilityExpression(
+        self, branch_class=None, team_ids=None, policy_ids=None
+    ):
         """Return the where clauses for visibility."""
         return []
 
@@ -569,18 +575,66 @@ class GenericBranchCollection:
             )
             return DecoratedResultSet(resultset, pre_iter_hook=loader)
 
-    def _getMergeProposalsForReviewerExpressions(self):
-        """Restrict merge proposals to those reviewable in this collection."""
+    def _getMergeProposalsForReviewerExpressions(
+        self, team_ids=None, policy_ids=None
+    ):
+        """Restrict merge proposals to those reviewable in this collection.
+
+        :param team_ids: An optional precomputed array expression of the
+            team ids the requesting user participates in, shared across
+            the merge proposal's source and target checks.
+        :param policy_ids: An optional precomputed array expression of the
+            access policy grants held by the requesting user, shared
+            across the merge proposal's source and target checks.
+        """
+        # Each subquery referencing team_ids/policy_ids must list their
+        # CTE in its own FROM clause, otherwise Postgres will reject the
+        # subquery with "missing FROM-clause entry".
+        cte_tables = [team_ids.table] if team_ids is not None else []
+        extra_tables = list(
+            set(self._tables.values()) | set(self._asymmetric_tables.values())
+        )
+        source_expressions = self._getBranchExpressions(
+            team_ids=team_ids, policy_ids=policy_ids
+        )
+        # Use correlated EXISTS checks
         expressions = [
-            BranchMergeProposal.source_branch_id.is_in(
-                self._getBranchSelect()
+            Exists(
+                Select(
+                    1,
+                    # `extra_tables` must come immediately after Branch
+                    # (before `cte_tables`): a `Join(...)` in the tables
+                    # list attaches to whichever table precedes it, and
+                    # extra_tables' joins reference Branch in their ON
+                    # clause (e.g. inProjectGroup's `Branch.product ==
+                    # Product.id`), which Postgres can't resolve if
+                    # `visibility_scope` (a plain comma-joined table) sits
+                    # between them.
+                    tables=[Branch] + extra_tables + cte_tables,
+                    where=And(
+                        Branch.id == BranchMergeProposal.source_branch_id,
+                        *source_expressions,
+                    ),
+                )
             ),
         ]
-        visibility = self._getBranchVisibilityExpression()
+        # Alias Branch so the target-branch EXISTS below doesn't collide
+        # with the source-branch EXISTS above, which also uses Branch.
+        Target = ClassAlias(Branch, "reviewer_target_branch")
+        visibility = self._getBranchVisibilityExpression(
+            Target, team_ids=team_ids, policy_ids=policy_ids
+        )
         if visibility:
             expressions.append(
-                BranchMergeProposal.target_branch_id.is_in(
-                    Select(Branch.id, visibility)
+                Exists(
+                    Select(
+                        1,
+                        tables=[Target] + cte_tables,
+                        where=And(
+                            Target.id == BranchMergeProposal.target_branch_id,
+                            *visibility,
+                        ),
+                    )
                 )
             )
         return expressions
@@ -603,10 +657,17 @@ class GenericBranchCollection:
         expressions = [
             CodeReviewVoteReference.reviewer == reviewer,
         ]
-        expressions.extend(self._getMergeProposalsForReviewerExpressions())
+        store, team_ids, policy_ids = attach_user_visibility_cte(
+            self._user, self.store
+        )
+        expressions.extend(
+            self._getMergeProposalsForReviewerExpressions(
+                team_ids=team_ids, policy_ids=policy_ids
+            )
+        )
         if status is not None:
             expressions.append(BranchMergeProposal.queue_status.is_in(status))
-        proposals = self.store.using(*tables).find(
+        proposals = store.using(*tables).find(
             BranchMergeProposal, *expressions
         )
         # Apply sorting here as we can't do it in the browser code.  We need
@@ -931,7 +992,9 @@ class GenericBranchCollection:
 class AnonymousBranchCollection(GenericBranchCollection):
     """Branch collection that only shows public branches."""
 
-    def _getBranchVisibilityExpression(self, branch_class=Branch):
+    def _getBranchVisibilityExpression(
+        self, branch_class=Branch, team_ids=None, policy_ids=None
+    ):
         """Return the where clauses for visibility."""
         return get_branch_privacy_filter(None, branch_class=branch_class)
 
@@ -993,13 +1056,26 @@ class VisibleBranchCollection(GenericBranchCollection):
             asymmetric_tables,
         )
 
-    def _getBranchVisibilityExpression(self, branch_class=Branch):
+    def _getBranchVisibilityExpression(
+        self, branch_class=Branch, team_ids=None, policy_ids=None
+    ):
         """Return the where clauses for visibility.
 
         :param branch_class: The Branch class to use - permits using
             ClassAliases.
+        :param team_ids: An optional precomputed array expression of the
+            team ids the user participates in, shared across several
+            visibility checks. See `get_branch_privacy_filter`.
+        :param policy_ids: An optional precomputed array expression of the
+            access policy grants held by the user, shared across several
+            visibility checks. See `get_branch_privacy_filter`.
         """
-        return get_branch_privacy_filter(self._user, branch_class=branch_class)
+        return get_branch_privacy_filter(
+            self._user,
+            branch_class=branch_class,
+            team_ids=team_ids,
+            policy_ids=policy_ids,
+        )
 
     def visibleByUser(self, person):
         """See `IBranchCollection`."""

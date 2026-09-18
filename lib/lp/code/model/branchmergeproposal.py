@@ -91,6 +91,7 @@ from lp.registry.interfaces.person import (
 from lp.registry.interfaces.product import IProduct
 from lp.registry.interfaces.role import IPersonRoles
 from lp.registry.model.person import Person
+from lp.registry.model.uservisibility import attach_user_visibility_cte
 from lp.services.config import config
 from lp.services.database.bulk import load, load_referencing, load_related
 from lp.services.database.constants import DEFAULT, UTC_NOW
@@ -2133,6 +2134,13 @@ class BranchMergeProposalGetter:
         git_collection = removeSecurityProxy(
             getUtility(IAllGitRepositories).visibleByUser(visible_by_user)
         )
+        # Compute the user's team and access policy grants once and share
+        # them across the source/target, Bazaar/Git visibility checks
+        # below, instead of letting each one recompute the same
+        # aggregates independently.
+        store, team_ids, policy_ids = attach_user_visibility_cte(
+            bzr_collection._user, IStore(BranchMergeProposal)
+        )
         tables = [
             BranchMergeProposal,
             Join(
@@ -2149,19 +2157,21 @@ class BranchMergeProposalGetter:
             CodeReviewVoteReference.reviewer == reviewer,
             Or(
                 And(
-                    *bzr_collection._getMergeProposalsForReviewerExpressions()
+                    *bzr_collection._getMergeProposalsForReviewerExpressions(
+                        team_ids=team_ids, policy_ids=policy_ids
+                    )
                 ),
                 And(
-                    *git_collection._getMergeProposalsForReviewerExpressions()
+                    *git_collection._getMergeProposalsForReviewerExpressions(
+                        team_ids=team_ids, policy_ids=policy_ids
+                    )
                 ),
             ),
         ]
         if status is not None:
             expressions.append(BranchMergeProposal.queue_status.is_in(status))
-        proposals = (
-            IStore(BranchMergeProposal)
-            .using(*tables)
-            .find(BranchMergeProposal, *expressions)
+        proposals = store.using(*tables).find(
+            BranchMergeProposal, *expressions
         )
         proposals.order_by(Desc(CodeReviewComment.vote))
         return proposals
