@@ -13,6 +13,8 @@ from zope.interface import alsoProvides
 from zope.publisher.interfaces import Unauthorized
 from zope.security.proxy import removeSecurityProxy
 
+from lp.app.errors import UnexpectedFormData
+from lp.registry.browser.person import PersonOAuthTokensView
 from lp.services.database.interfaces import IPrimaryStore
 from lp.services.oauth.browser import (
     OAuthHardwareAccessTokenView,
@@ -859,3 +861,92 @@ class TestHardwareOAuthWebService(TestCaseWithFactory):
             datetime.now(timezone.utc) + REFRESH_TOKEN_LIFETIME,
         )
         self.assertGreater(grant.date_expires, bootstrap_expiry)
+
+
+class TestPersonOAuthTokensView(TestCaseWithFactory):
+    """Tests for revoking hardware-bound grants from `+oauth-tokens`."""
+
+    layer = DatabaseFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        self.person = self.factory.makePerson()
+        self.consumer = self.factory.makeOAuthConsumer()
+        request = LaunchpadTestRequest()
+        login_person(self.person, participation=request)
+        device = DummyAuthenticator()
+        options = begin_registration(self.person, request=request)
+        self.authenticator = complete_registration(
+            self.person,
+            device.create(options, get_origin()),
+            "My key",
+            request=request,
+        )
+
+    def _revoke(self, **form):
+        request = LaunchpadTestRequest(form=form, method="POST")
+        view = PersonOAuthTokensView(self.person, request)
+        view.initialize()
+        return view
+
+    def test_revokes_refresh_token(self):
+        refresh_token, _ = issue_refresh_token(
+            self.person,
+            self.consumer,
+            self.authenticator,
+            AccessLevel.WRITE_PRIVATE,
+        )
+
+        self._revoke(
+            consumer_key=self.consumer.key,
+            token_key=refresh_token.key,
+            token_type="refresh_token",
+        )
+
+        self.assertTrue(refresh_token.is_revoked)
+        self.assertEqual(self.person, refresh_token.revoked_by)
+        self.assertEqual([], list(self.person.oauth_refresh_tokens))
+
+    def test_lists_refresh_tokens(self):
+        refresh_token, _ = issue_refresh_token(
+            self.person,
+            self.consumer,
+            self.authenticator,
+            AccessLevel.WRITE_PRIVATE,
+        )
+        request = LaunchpadTestRequest()
+
+        view = PersonOAuthTokensView(self.person, request)
+
+        self.assertEqual([refresh_token], view.refresh_tokens)
+
+    def test_revoking_unknown_refresh_token_is_harmless(self):
+        view = self._revoke(
+            consumer_key=self.consumer.key,
+            token_key="no-such-token",
+            token_type="refresh_token",
+        )
+
+        self.assertIn(
+            "Couldn&#x27;t find authorization given to %s" % self.consumer.key,
+            view.request.response.notifications[0].message,
+        )
+
+    def test_unknown_token_type_is_rejected(self):
+        self.assertRaisesRegex(
+            UnexpectedFormData,
+            "Invalid form value for token_type: 'nonsense'",
+            self._revoke,
+            token_key="whatever",
+            token_type="nonsense",
+        )
+
+    def test_unknown_consumer_is_rejected(self):
+        self.assertRaisesRegex(
+            UnexpectedFormData,
+            "Invalid OAuth consumer.",
+            self._revoke,
+            consumer_key="no-such-consumer",
+            token_key="whatever",
+            token_type="access_token",
+        )
