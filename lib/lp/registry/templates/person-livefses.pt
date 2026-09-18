@@ -30,7 +30,7 @@
             <th>Date created</th>
           </tr>
 
-          <tr tal:repeat="filesystem view/livefses">
+          <tr tal:repeat="filesystem view/livefses_navigator/currentBatch">
             <td>
               <a tal:content="filesystem/name"
                  tal:attributes="href filesystem/fmt:url" />
