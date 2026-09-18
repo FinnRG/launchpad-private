@@ -1,0 +1,28 @@
+{#-
+    Rewrite rules for abuse mitigation injected into vhosts.
+-#}
+{%- macro abuse_rules(rewrite_engine=false) -%}
+{%- if rewrite_engine and (blocked_user_agents or blocked_referers or throttled_user_agents) %}
+    RewriteEngine on
+{%- endif %}
+{%- if blocked_user_agents %}
+    # Block certain user agents (403)
+    RewriteCond %{HTTP_USER_AGENT} "({{ blocked_user_agents }})" [NC]
+    RewriteRule .* - [F,L]
+{%- endif %}
+{%- if blocked_referers %}
+    # Block certain referers (403)
+    RewriteCond %{HTTP_REFERER} "({{ blocked_referers }})" [NC]
+    RewriteRule .* - [F,L]
+{%- endif %}
+{%- if throttled_user_agents %}
+    # Throttle certain user agents (fake throttle: unconditional 429)
+    RewriteCond %{HTTP_USER_AGENT} "({{ throttled_user_agents }})" [NC]
+    # throttled_user_agent_platforms has no effect unless throttled_user_agents is also set.
+{%- if throttled_user_agent_platforms %}
+    RewriteCond %{HTTP_USER_AGENT} "\([^)]*({{ throttled_user_agent_platforms }})[^)]*\)" [NC]
+{%- endif %}
+    RewriteRule .* - [E=throttled:1,R=429,L]
+    Header always set Retry-After "60" env=throttled
+{%- endif %}
+{%- endmacro -%}

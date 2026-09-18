@@ -27,6 +27,7 @@ from charms.reactive import (
     set_flag,
     set_state,
     when,
+    when_any,
     when_none,
     when_not,
     when_not_all,
@@ -362,7 +363,12 @@ def deconfigure_vhost():
     remove_state("launchpad.vhost.configured")
 
 
-@when("config.changed.blocked_user_agents")
+@when_any(
+    "config.changed.blocked_user_agents",
+    "config.changed.blocked_referers",
+    "config.changed.throttled_user_agents",
+    "config.changed.throttled_user_agent_platforms",
+)
 def reconfigure_blocked_user_agents():
     remove_state("launchpad.vhost.configured")
     remove_state("launchpad.api-vhost.configured")

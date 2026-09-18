@@ -48,12 +48,8 @@
     ProxyPreserveHost on
 
     RewriteEngine on
-
-{%- if blocked_user_agents %}
-    # Block certain user agents
-    RewriteCond %{HTTP_USER_AGENT} ^.*({{ blocked_user_agents }}).*$ [NC]
-    RewriteRule .* - [F,L]
-{%- endif %}
+{% import "vhosts/abuse-rules.conf.j2" as abuse with context %}
+{{- abuse.abuse_rules() }}
 
 {% if google_site_verification %}
     # https://portal.admin.canonical.com/C49078: File needed for Google to

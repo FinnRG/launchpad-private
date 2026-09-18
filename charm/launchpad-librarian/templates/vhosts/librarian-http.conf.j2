@@ -21,6 +21,9 @@
 
     SetEnv force-proxy-request-1.0 1
 
+{% import "vhosts/abuse-rules.conf.j2" as abuse with context %}
+{{- abuse.abuse_rules(rewrite_engine=true) }}
+
     # Tokens may only be used on restricted librarian URLs.
     ProxyPass "\?.*token=" !
 
