@@ -80,6 +80,7 @@ from lp.scripts.garbo import (
     FrequentDatabaseGarbageCollector,
     HourlyDatabaseGarbageCollector,
     LoginTokenPruner,
+    OAuthAuthenticationChallengePruner,
     OpenIDConsumerAssociationPruner,
     PopulateCveSequence,
     ProductVCSPopulator,
@@ -108,11 +109,14 @@ from lp.services.job.model.job import Job
 from lp.services.librarian.model import TimeLimitedToken
 from lp.services.messages.interfaces.message import IMessageSet
 from lp.services.messages.model.message import Message
+from lp.services.oauth.hardware import issue_refresh_token
+from lp.services.oauth.model import OAuthAuthenticationChallenge
 from lp.services.openid.model.openidconsumer import OpenIDConsumerNonce
 from lp.services.session.model import SessionData, SessionPkgData
 from lp.services.signing.enums import SigningKeyType
 from lp.services.verification.interfaces.authtoken import LoginTokenType
 from lp.services.verification.model.logintoken import LoginToken
+from lp.services.webapp.interfaces import AccessLevel
 from lp.services.worlddata.interfaces.language import ILanguageSet
 from lp.snappy.model.snapbuild import SnapFile
 from lp.snappy.model.snapbuildjob import SnapBuildJob, SnapStoreUploadJob
@@ -2763,6 +2767,53 @@ class TestGarbo(FakeAdapterMixin, TestCaseWithFactory):
 
 class TestGarboTasks(TestCaseWithFactory):
     layer = LaunchpadZopelessLayer
+
+    def test_OAuthAuthenticationChallengePruner(self):
+        self.assertIn(
+            OAuthAuthenticationChallengePruner,
+            FrequentDatabaseGarbageCollector.tunable_loops,
+        )
+        person = self.factory.makePerson()
+        consumer = self.factory.makeOAuthConsumer()
+        authenticator = self.factory.makeRegisteredAuthenticator(owner=person)
+        refresh_token, _ = issue_refresh_token(
+            person,
+            consumer,
+            authenticator,
+            AccessLevel.WRITE_PRIVATE,
+        )
+        now = datetime.now(timezone.utc)
+        store = IPrimaryStore(OAuthAuthenticationChallenge)
+        expired = OAuthAuthenticationChallenge(
+            refresh_token, b"e" * 32, now - timedelta(seconds=1)
+        )
+        consumed = OAuthAuthenticationChallenge(
+            refresh_token, b"c" * 32, now + timedelta(minutes=5)
+        )
+        consumed.consumed = True
+        active = OAuthAuthenticationChallenge(
+            refresh_token, b"a" * 32, now + timedelta(minutes=5)
+        )
+        store.add(expired)
+        store.add(consumed)
+        store.add(active)
+        store.flush()
+        expired_id = expired.id
+        consumed_id = consumed.id
+        active_id = active.id
+        transaction.commit()
+
+        switch_dbuser("garbo_frequently")
+        pruner = OAuthAuthenticationChallengePruner(logging.getLogger("garbo"))
+        while not pruner.isDone():
+            pruner(10)
+        pruner.cleanUp()
+
+        self.assertIsNone(store.get(OAuthAuthenticationChallenge, expired_id))
+        self.assertIsNone(store.get(OAuthAuthenticationChallenge, consumed_id))
+        self.assertIsNotNone(
+            store.get(OAuthAuthenticationChallenge, active_id)
+        )
 
     def test_LoginTokenPruner(self):
         store = IPrimaryStore(LoginToken)
