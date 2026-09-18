@@ -62,8 +62,13 @@ def _is_sensitive(request, name):
     if "PASSWORD" in upper_name or "PASSWD" in upper_name:
         return True
 
-    # Block HTTP_COOKIE and oauth_signature.
-    if name in ("HTTP_COOKIE", "oauth_signature"):
+    # Block cookies and authentication credentials.
+    if name in (
+        "HTTP_COOKIE",
+        "oauth_signature",
+        "oauth_token_secret",
+        "assertion",
+    ):
         return True
 
     # Allow remaining UPPERCASE names and remaining form variables.  Note that
