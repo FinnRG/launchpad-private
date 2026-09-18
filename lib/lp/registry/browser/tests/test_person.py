@@ -2088,6 +2088,19 @@ class TestPersonLiveFSView(BrowserTestCase):
                         soupmatchers.Tag(
                             "next element",
                             "a",
+                            attrs={"id": "upper-batch-nav-batchnav-next"},
+                        ),
+                        soupmatchers.Tag("next link", "strong", text="Next"),
+                    )
+                ),
+            )
+            self.assertThat(
+                view.render(),
+                soupmatchers.HTMLContains(
+                    soupmatchers.Within(
+                        soupmatchers.Tag(
+                            "next element",
+                            "a",
                             attrs={"id": "lower-batch-nav-batchnav-next"},
                         ),
                         soupmatchers.Tag("next link", "strong", text="Next"),
