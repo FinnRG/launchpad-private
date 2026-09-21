@@ -139,6 +139,15 @@ class RegisteredAuthenticator(StormBase):
         """See `IRegisteredAuthenticator`."""
         self.date_revoked = UTC_NOW
         self.revoked_by = revoked_by
+        from lp.services.oauth.model import OAuthRefreshToken
+
+        store = IPrimaryStore(OAuthRefreshToken)
+        for refresh_token in store.find(
+            OAuthRefreshToken,
+            OAuthRefreshToken.authenticator == self,
+            OAuthRefreshToken.date_revoked == None,
+        ):
+            refresh_token.revoke(revoked_by)
 
 
 @implementer(IRegisteredAuthenticatorSet)

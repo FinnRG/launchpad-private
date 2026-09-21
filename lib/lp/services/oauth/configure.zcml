@@ -47,4 +47,13 @@
           set_schema="lp.services.oauth.interfaces.IOAuthAccessToken"/>
   </class>
 
+  <class class="lp.services.oauth.model.OAuthRefreshToken">
+      <allow
+          attributes="id consumer person authenticator date_created
+                      date_expires date_last_used date_revoked revoked_by
+                      key permission context is_expired is_revoked
+                      is_usable"/>
+      <require permission="launchpad.Edit" attributes="revoke"/>
+  </class>
+
 </configure>

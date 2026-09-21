@@ -6,7 +6,11 @@
 __all__ = []
 
 from lp.app.security import AuthorizationBase
-from lp.services.oauth.interfaces import IOAuthAccessToken, IOAuthRequestToken
+from lp.services.oauth.interfaces import (
+    IOAuthAccessToken,
+    IOAuthRefreshToken,
+    IOAuthRequestToken,
+)
 
 
 class EditOAuthAccessToken(AuthorizationBase):
@@ -20,3 +24,8 @@ class EditOAuthAccessToken(AuthorizationBase):
 class EditOAuthRequestToken(EditOAuthAccessToken):
     permission = "launchpad.Edit"
     usedfor = IOAuthRequestToken
+
+
+class EditOAuthRefreshToken(EditOAuthAccessToken):
+    permission = "launchpad.Edit"
+    usedfor = IOAuthRefreshToken
