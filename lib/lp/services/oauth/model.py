@@ -8,6 +8,7 @@ __all__ = [
     "OAuthRequestToken",
     "OAuthRequestTokenSet",
     "OAuthValidationError",
+    "lookup_oauth_context",
 ]
 
 import hashlib
@@ -15,12 +16,14 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from storm.locals import Bool, DateTime, Int, Reference, Unicode
+from zope.component import getUtility
 from zope.interface import implementer
 
-from lp.registry.interfaces.distribution import IDistribution
+from lp.registry.interfaces.distribution import IDistribution, IDistributionSet
 from lp.registry.interfaces.distributionsourcepackage import (
     IDistributionSourcePackage,
 )
+from lp.registry.interfaces.pillar import IPillarNameSet
 from lp.registry.interfaces.product import IProduct
 from lp.registry.interfaces.projectgroup import IProjectGroup
 from lp.services.database.constants import UTC_NOW
@@ -43,6 +46,26 @@ REQUEST_TOKEN_VALIDITY = 2
 
 class OAuthValidationError(Exception):
     """Raised when the OAuth token cannot be validated."""
+
+
+def lookup_oauth_context(context):
+    """Transform an OAuth context string into a context object.
+
+    :param context: A string to turn into a context object.
+    """
+    if "/" in context:
+        distro, package = context.split("/")
+        distro = getUtility(IDistributionSet).getByName(distro)
+        if distro is None:
+            raise ValueError(distro)
+        context = distro.getSourcePackage(package)
+        if context is None:
+            raise ValueError(package)
+    else:
+        context = getUtility(IPillarNameSet).getByName(context)
+        if context is None:
+            raise ValueError(context)
+    return context
 
 
 class OAuthBase:
