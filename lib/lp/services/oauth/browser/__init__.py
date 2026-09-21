@@ -4,12 +4,16 @@
 __all__ = [
     "OAuthAccessTokenView",
     "OAuthAuthorizeTokenView",
+    "OAuthHardwareAccessTokenView",
+    "OAuthHardwareChallengeView",
     "OAuthRequestTokenView",
     "lookup_oauth_context",
 ]
 
+import http.client
 import json
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
 
 from lazr.restful import HTTPResource
 from zope.component import getUtility
@@ -18,6 +22,12 @@ from zope.security.interfaces import Unauthorized
 
 from lp.app.browser.launchpadform import LaunchpadFormView
 from lp.app.errors import UnexpectedFormData
+from lp.services.oauth.hardware import (
+    HardwareAuthenticationError,
+    HardwareTokenError,
+    begin_token_exchange,
+    complete_token_exchange,
+)
 from lp.services.oauth.interfaces import (
     OAUTH_CHALLENGE,
     IOAuthConsumerSet,
@@ -464,3 +474,75 @@ class OAuthAccessTokenView(LaunchpadView):
             context_name,
         )
         return body
+
+
+class OAuthHardwareChallengeView(LaunchpadView):
+    """Issue a WebAuthn challenge for a hardware-bound refresh token."""
+
+    def __call__(self):
+        if self.request.method != "POST":
+            self.request.response.setStatus(http.client.METHOD_NOT_ALLOWED)
+            self.request.response.setHeader("Allow", "POST")
+            return "Only POST is allowed."
+        form = self.request.form
+        try:
+            options, challenge_id = begin_token_exchange(
+                form.get("oauth_token"), form.get("oauth_token_secret")
+            )
+        except HardwareAuthenticationError as error:
+            self.request.response.setStatus(http.client.UNAUTHORIZED)
+            return str(error)
+        options["challenge_id"] = challenge_id
+        self.request.response.setHeader("Content-Type", HTTPResource.JSON_TYPE)
+        return json.dumps(options)
+
+
+class OAuthHardwareAccessTokenView(LaunchpadView):
+    """Verify a WebAuthn assertion and mint an OAuth access token."""
+
+    def __call__(self):
+        if self.request.method != "POST":
+            self.request.response.setStatus(http.client.METHOD_NOT_ALLOWED)
+            self.request.response.setHeader("Allow", "POST")
+            return "Only POST is allowed."
+        form = self.request.form
+        date_expires = form.get("date_expires")
+        if date_expires is not None:
+            try:
+                date_expires = datetime.fromisoformat(
+                    date_expires.replace("Z", "+00:00")
+                )
+            except (AttributeError, TypeError, ValueError):
+                self.request.response.setStatus(http.client.BAD_REQUEST)
+                return "Invalid token expiry date."
+        try:
+            challenge_id = int(form.get("challenge_id"))
+            assertion = json.loads(form.get("assertion"))
+        except (TypeError, ValueError):
+            self.request.response.setStatus(http.client.UNAUTHORIZED)
+            return "Invalid hardware token exchange request."
+        try:
+            access_token, secret = complete_token_exchange(
+                form.get("oauth_token"),
+                form.get("oauth_token_secret"),
+                challenge_id,
+                assertion,
+                date_expires=date_expires,
+            )
+        except HardwareTokenError as error:
+            self.request.response.setStatus(http.client.BAD_REQUEST)
+            return str(error)
+        except HardwareAuthenticationError as error:
+            self.request.response.setStatus(http.client.UNAUTHORIZED)
+            return str(error)
+        context_name = None
+        if access_token.context is not None:
+            context_name = access_token.context.name
+        return urlencode(
+            {
+                "oauth_token": access_token.key,
+                "oauth_token_secret": secret,
+                "lp.context": context_name,
+                "expires_at": access_token.date_expires.isoformat(),
+            }
+        )

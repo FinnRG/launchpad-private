@@ -7,12 +7,17 @@ import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode
 
 from zope.interface import alsoProvides
 from zope.publisher.interfaces import Unauthorized
 from zope.security.proxy import removeSecurityProxy
 
+from lp.services.database.interfaces import IPrimaryStore
+from lp.services.oauth.browser import (
+    OAuthHardwareAccessTokenView,
+    OAuthHardwareChallengeView,
+)
 from lp.services.oauth.hardware import (
     REFRESH_TOKEN_LIFETIME,
     HardwareAuthenticationError,
@@ -22,7 +27,10 @@ from lp.services.oauth.hardware import (
     issue_refresh_token,
 )
 from lp.services.oauth.interfaces import IOAuthSignedRequest
-from lp.services.oauth.model import OAuthTokenExpiryError
+from lp.services.oauth.model import (
+    OAuthAuthenticationChallenge,
+    OAuthTokenExpiryError,
+)
 from lp.services.webapp.authentication import check_oauth_signature
 from lp.services.webapp.interfaces import AccessLevel, OAuthPermission
 from lp.services.webapp.publisher import canonical_url
@@ -112,6 +120,51 @@ class TestHardwareOAuthExchange(TestCaseWithFactory):
         token, _ = complete_token_exchange(*arguments)
         self.assertEqual(refresh_token, token.refresh_token)
 
+    def test_expired_challenge_is_rejected(self):
+        refresh_token, refresh_secret = self._issue_refresh_token()
+        options, challenge_id = begin_token_exchange(
+            refresh_token.key, refresh_secret
+        )
+        challenge = IPrimaryStore(OAuthAuthenticationChallenge).get(
+            OAuthAuthenticationChallenge, challenge_id
+        )
+        challenge.date_expires = datetime.now(timezone.utc) - timedelta(
+            seconds=1
+        )
+
+        self.assertRaises(
+            HardwareAuthenticationError,
+            complete_token_exchange,
+            refresh_token.key,
+            refresh_secret,
+            challenge_id,
+            self.device.get(options, get_origin()),
+        )
+
+    def test_challenge_cannot_be_completed_with_other_refresh_token(self):
+        refresh_token_a, refresh_secret_a = self._issue_refresh_token()
+        refresh_token_b, refresh_secret_b = self._issue_refresh_token()
+        options, challenge_id = begin_token_exchange(
+            refresh_token_a.key, refresh_secret_a
+        )
+
+        self.assertRaises(
+            HardwareAuthenticationError,
+            complete_token_exchange,
+            refresh_token_b.key,
+            refresh_secret_b,
+            challenge_id,
+            self.device.get(options, get_origin()),
+        )
+
+        token, _ = complete_token_exchange(
+            refresh_token_a.key,
+            refresh_secret_a,
+            challenge_id,
+            self.device.get(options, get_origin()),
+        )
+        self.assertEqual(refresh_token_a, token.refresh_token)
+
     def test_exchange_mints_short_lived_oauth_token(self):
         refresh_token, refresh_secret = self._issue_refresh_token()
         options, challenge_id = begin_token_exchange(
@@ -159,6 +212,104 @@ class TestHardwareOAuthExchange(TestCaseWithFactory):
             challenge_id,
             assertion,
         )
+
+    def test_views_exchange_refresh_token(self):
+        date_expires = datetime.now(timezone.utc) + timedelta(hours=1)
+        refresh_token, refresh_secret = self._issue_refresh_token(
+            date_expires=date_expires
+        )
+        challenge_request = LaunchpadTestRequest(
+            form={
+                "oauth_token": refresh_token.key,
+                "oauth_token_secret": refresh_secret,
+            },
+            method="POST",
+        )
+        challenge_body = OAuthHardwareChallengeView(None, challenge_request)()
+        challenge = json.loads(challenge_body)
+        self.assertEqual(
+            "application/json",
+            challenge_request.response.getHeader("Content-Type"),
+        )
+        challenge_id = challenge.pop("challenge_id")
+        assertion = self.device.get(challenge, get_origin())
+        access_request = LaunchpadTestRequest(
+            form={
+                "oauth_token": refresh_token.key,
+                "oauth_token_secret": refresh_secret,
+                "challenge_id": str(challenge_id),
+                "assertion": json.dumps(assertion),
+            },
+            method="POST",
+        )
+
+        body = OAuthHardwareAccessTokenView(None, access_request)()
+
+        response = parse_qs(body)
+        self.assertEqual(["None"], response["lp.context"])
+        self.assertEqual(
+            date_expires, datetime.fromisoformat(response["expires_at"][0])
+        )
+        [access_token_key] = response["oauth_token"]
+        access_token = self.consumer.getAccessToken(access_token_key)
+        self.assertEqual(refresh_token, access_token.refresh_token)
+        self.assertTrue(
+            access_token.isSecretValid(response["oauth_token_secret"][0])
+        )
+
+    def test_views_require_post(self):
+        for view_class, exchange in (
+            (OAuthHardwareChallengeView, "begin_token_exchange"),
+            (OAuthHardwareAccessTokenView, "complete_token_exchange"),
+        ):
+            for method in ("GET", "HEAD", "PUT", "DELETE", "OPTIONS"):
+                with self.subTest(view=view_class.__name__, method=method):
+                    request = LaunchpadTestRequest(method=method)
+                    with patch(
+                        "lp.services.oauth.browser." + exchange
+                    ) as mocked_exchange:
+                        view_class(None, request)()
+                    self.assertEqual(405, request.response.getStatus())
+                    self.assertEqual(
+                        "POST", request.response.getHeader("Allow")
+                    )
+                    mocked_exchange.assert_not_called()
+
+    def test_access_token_view_expiry_validation(self):
+        refresh_token, refresh_secret = self._issue_refresh_token()
+        options, challenge_id = begin_token_exchange(
+            refresh_token.key, refresh_secret
+        )
+        form = {
+            "oauth_token": refresh_token.key,
+            "oauth_token_secret": refresh_secret,
+            "challenge_id": str(challenge_id),
+            "assertion": json.dumps(self.device.get(options, get_origin())),
+        }
+        now = datetime.now(timezone.utc)
+        for expiry in (
+            "not-a-date",
+            "",
+            now.replace(tzinfo=None).isoformat(),
+            (now - timedelta(seconds=1)).isoformat(),
+            (now + timedelta(hours=13)).isoformat(),
+        ):
+            with self.subTest(expiry=expiry):
+                request = LaunchpadTestRequest(
+                    method="POST", form=dict(form, date_expires=expiry)
+                )
+                OAuthHardwareAccessTokenView(None, request)()
+                self.assertEqual(400, request.response.getStatus())
+                self.assertIsNone(refresh_token.date_last_used)
+
+        date_expires = now + timedelta(minutes=10)
+        request = LaunchpadTestRequest(
+            method="POST",
+            form=dict(form, date_expires=date_expires.isoformat()),
+        )
+        response = parse_qs(OAuthHardwareAccessTokenView(None, request)())
+        self.assertIn("oauth_token", response)
+        self.assertEqual([date_expires.isoformat()], response["expires_at"])
 
     def test_wrong_refresh_secret_is_rejected(self):
         refresh_token, _ = self._issue_refresh_token()
@@ -236,6 +387,36 @@ class TestHardwareOAuthExchange(TestCaseWithFactory):
 
         self.assertEqual(0, self.authenticator.sign_count)
         self.assertIsNotNone(self.authenticator.date_last_used)
+
+    def test_failed_view_exchange_consumes_challenge(self):
+        refresh_token, refresh_secret = self._issue_refresh_token()
+        options, challenge_id = begin_token_exchange(
+            refresh_token.key, refresh_secret
+        )
+        assertion = self.device.get(options, get_origin())
+        assertion["response"]["signature"] = "invalid"
+        request = LaunchpadTestRequest(
+            form={
+                "oauth_token": refresh_token.key,
+                "oauth_token_secret": refresh_secret,
+                "challenge_id": str(challenge_id),
+                "assertion": json.dumps(assertion),
+            },
+            method="POST",
+        )
+
+        OAuthHardwareAccessTokenView(None, request)()
+
+        self.assertEqual(401, request.response.getStatus())
+        valid_assertion = self.device.get(options, get_origin())
+        self.assertRaises(
+            HardwareAuthenticationError,
+            complete_token_exchange,
+            refresh_token.key,
+            refresh_secret,
+            challenge_id,
+            valid_assertion,
+        )
 
     def test_refresh_revocation_expires_minted_tokens(self):
         refresh_token, refresh_secret = self._issue_refresh_token()
@@ -319,6 +500,34 @@ class TestHardwareOAuthExchange(TestCaseWithFactory):
             result["oauth_token"],
             result["oauth_token_secret"],
         )
+
+    def test_challenge_view_rejects_bad_credentials(self):
+        request = LaunchpadTestRequest(
+            form={"oauth_token": "nope", "oauth_token_secret": "nope"},
+            method="POST",
+        )
+
+        body = OAuthHardwareChallengeView(None, request)()
+
+        self.assertEqual(401, request.response.getStatus())
+        self.assertEqual("Invalid OAuth refresh token.", body)
+
+    def test_access_token_view_rejects_malformed_assertion(self):
+        refresh_token, refresh_secret = self._issue_refresh_token()
+        request = LaunchpadTestRequest(
+            form={
+                "oauth_token": refresh_token.key,
+                "oauth_token_secret": refresh_secret,
+                "challenge_id": "not a number",
+                "assertion": "{}",
+            },
+            method="POST",
+        )
+
+        body = OAuthHardwareAccessTokenView(None, request)()
+
+        self.assertEqual(401, request.response.getStatus())
+        self.assertEqual("Invalid hardware token exchange request.", body)
 
     def test_expired_authenticator_is_rejected_at_issue_time(self):
         self.authenticator.revoke(self.person)
@@ -468,6 +677,60 @@ class TestHardwareOAuthExchange(TestCaseWithFactory):
 
 class TestHardwareOAuthWebService(TestCaseWithFactory):
     layer = DatabaseFunctionalLayer
+
+    def test_browser_can_exchange_refresh_token_without_referer(self):
+        person = self.factory.makePerson()
+        consumer = self.factory.makeOAuthConsumer()
+        request = LaunchpadTestRequest()
+        login_person(person, participation=request)
+        device = DummyAuthenticator()
+        options = begin_registration(person, request=request)
+        authenticator = complete_registration(
+            person,
+            device.create(options, get_origin()),
+            "My key",
+            request=request,
+        )
+        refresh_token, refresh_secret = issue_refresh_token(
+            person,
+            consumer,
+            authenticator,
+            AccessLevel.WRITE_PRIVATE,
+        )
+        browser = self.getUserBrowser()
+
+        browser.open(
+            "http://launchpad.test/+hw-challenge",
+            data=urlencode(
+                {
+                    "oauth_token": refresh_token.key,
+                    "oauth_token_secret": refresh_secret,
+                }
+            ),
+        )
+        challenge = json.loads(browser.contents)
+        challenge_id = challenge.pop("challenge_id")
+        assertion = device.get(challenge, get_origin())
+
+        browser.open(
+            "http://launchpad.test/+hw-access-token",
+            data=urlencode(
+                {
+                    "oauth_token": refresh_token.key,
+                    "oauth_token_secret": refresh_secret,
+                    "challenge_id": challenge_id,
+                    "assertion": json.dumps(assertion),
+                }
+            ),
+        )
+
+        response = parse_qs(browser.contents)
+        [access_token_key] = response["oauth_token"]
+        access_token = consumer.getAccessToken(access_token_key)
+        self.assertEqual(refresh_token, access_token.refresh_token)
+        self.assertTrue(
+            access_token.isSecretValid(response["oauth_token_secret"][0])
+        )
 
     def test_browser_can_issue_refresh_token(self):
         person = self.factory.makePerson()
