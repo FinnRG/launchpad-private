@@ -149,7 +149,10 @@ from lp.services.fields import (
 from lp.services.identity.interfaces.account import AccountStatus, IAccount
 from lp.services.identity.interfaces.emailaddress import IEmailAddress
 from lp.services.webapp.authorization import check_permission
-from lp.services.webapp.interfaces import ILaunchpadApplication
+from lp.services.webapp.interfaces import (
+    ILaunchpadApplication,
+    OAuthPermission,
+)
 from lp.services.webauthn.interfaces import IRegisteredAuthenticator
 from lp.services.webservice.apihelpers import (
     patch_collection_property,
@@ -968,6 +971,10 @@ class IPersonViewRestricted(
     oauth_access_tokens = Attribute(_("Non-expired access tokens"))
 
     oauth_request_tokens = Attribute(_("Non-expired request tokens"))
+
+    oauth_refresh_tokens = Attribute(
+        _("Non-expired hardware-bound OAuth refresh tokens")
+    )
 
     sshkeys = exported(
         CollectionField(
@@ -2266,6 +2273,56 @@ class IPersonSpecialRestricted(Interface):
         :param authenticator_id: The ID of a `RegisteredAuthenticator`
             owned by this person.
         """
+
+    @operation_parameters(
+        consumer_key=TextLine(title=_("Consumer key"), required=True),
+        authenticator_id=Int(title=_("Authenticator ID"), required=True),
+        permission=Choice(
+            title=_("Permission"),
+            vocabulary=OAuthPermission,
+            required=True,
+        ),
+        context=TextLine(
+            title=_("Context"),
+            description=_(
+                "The name of a pillar to restrict this grant to, or "
+                "'distribution/sourcepackagename' for a source package."
+            ),
+            required=False,
+        ),
+        date_expires=Datetime(
+            title=_("Date expires"),
+            description=_(
+                "The expiry of this refresh grant, defaulting to 365 days "
+                "and limited to that maximum. Access-token expiry is chosen "
+                "separately when exchanging the grant."
+            ),
+            required=False,
+        ),
+    )
+    @export_write_operation()
+    @operation_for_version("devel")
+    def issueHardwareBoundOAuthToken(
+        consumer_key,
+        authenticator_id,
+        permission,
+        context=None,
+        date_expires=None,
+    ):
+        """Issue a hardware-bound OAuth refresh token.
+
+        OAuth callers cannot grant broader permissions and must retain
+        their context restriction, if any.
+        The returned secret is only available in this response.
+        """
+
+    @operation_parameters(
+        token_key=TextLine(title=_("Refresh token key"), required=True)
+    )
+    @export_write_operation()
+    @operation_for_version("devel")
+    def revokeHardwareBoundOAuthToken(token_key):
+        """Revoke one of this person's hardware-bound OAuth grants."""
 
     def canDeactivate():
         """Verify we safely deactivate this user account.
