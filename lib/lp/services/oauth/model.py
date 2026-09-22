@@ -2,12 +2,19 @@
 # GNU Affero General Public License version 3 (see the file LICENSE).
 
 __all__ = [
+    "ACCESS_TOKEN_LIFETIME",
+    "MAX_ACCESS_TOKEN_LIFETIME",
     "OAuthAccessToken",
     "OAuthConsumer",
     "OAuthConsumerSet",
+    "OAuthRefreshToken",
     "OAuthRequestToken",
     "OAuthRequestTokenSet",
+    "OAuthTokenExpiryError",
     "OAuthValidationError",
+    "create_token_key_and_secret",
+    "get_token_expiry",
+    "lookup_oauth_context",
 ]
 
 import hashlib
@@ -15,12 +22,14 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from storm.locals import Bool, DateTime, Int, Reference, Unicode
+from zope.component import getUtility
 from zope.interface import implementer
 
-from lp.registry.interfaces.distribution import IDistribution
+from lp.registry.interfaces.distribution import IDistribution, IDistributionSet
 from lp.registry.interfaces.distributionsourcepackage import (
     IDistributionSourcePackage,
 )
+from lp.registry.interfaces.pillar import IPillarNameSet
 from lp.registry.interfaces.product import IProduct
 from lp.registry.interfaces.projectgroup import IProjectGroup
 from lp.services.database.constants import UTC_NOW
@@ -31,6 +40,7 @@ from lp.services.oauth.interfaces import (
     IOAuthAccessToken,
     IOAuthConsumer,
     IOAuthConsumerSet,
+    IOAuthRefreshToken,
     IOAuthRequestToken,
     IOAuthRequestTokenSet,
 )
@@ -40,9 +50,55 @@ from lp.services.webapp.interfaces import AccessLevel, OAuthPermission
 # How many hours should a request token be valid for?
 REQUEST_TOKEN_VALIDITY = 2
 
+ACCESS_TOKEN_LIFETIME = timedelta(hours=12)
+MAX_ACCESS_TOKEN_LIFETIME = timedelta(hours=12)
+
 
 class OAuthValidationError(Exception):
     """Raised when the OAuth token cannot be validated."""
+
+
+class OAuthTokenExpiryError(ValueError):
+    """Raised when a requested token expiry is invalid."""
+
+
+def get_token_expiry(date_expires, default_lifetime, maximum_lifetime):
+    """Validate a requested expiry or select the default."""
+    now = datetime.now(timezone.utc)
+    if date_expires is None:
+        date_expires = now + default_lifetime
+    if (
+        not isinstance(date_expires, datetime)
+        or date_expires.utcoffset() is None
+    ):
+        raise OAuthTokenExpiryError("The expiry date must include a timezone.")
+    if date_expires <= now:
+        raise OAuthTokenExpiryError("The expiry date must be in the future.")
+    if date_expires > now + maximum_lifetime:
+        raise OAuthTokenExpiryError(
+            "A token may not be valid for more than %s." % maximum_lifetime
+        )
+    return date_expires.astimezone(timezone.utc)
+
+
+def lookup_oauth_context(context):
+    """Transform an OAuth context string into a context object.
+
+    :param context: A string to turn into a context object.
+    """
+    if "/" in context:
+        distro, package = context.split("/")
+        distro = getUtility(IDistributionSet).getByName(distro)
+        if distro is None:
+            raise ValueError(distro)
+        context = distro.getSourcePackage(package)
+        if context is None:
+            raise ValueError(package)
+    else:
+        context = getUtility(IPillarNameSet).getByName(context)
+        if context is None:
+            raise ValueError(context)
+    return context
 
 
 class OAuthBase:
@@ -230,6 +286,9 @@ class OAuthAccessToken(OAuthBase, StormBase):
     distribution_id = Int(name="distribution", allow_none=True, default=None)
     distribution = Reference(distribution_id, "Distribution.id")
 
+    refresh_token_id = Int(name="refresh_token", allow_none=True, default=None)
+    refresh_token = Reference(refresh_token_id, "OAuthRefreshToken.id")
+
     def __init__(
         self,
         consumer,
@@ -242,6 +301,7 @@ class OAuthAccessToken(OAuthBase, StormBase):
         projectgroup=None,
         distribution=None,
         sourcepackagename=None,
+        refresh_token=None,
     ):
         super().__init__()
         self.consumer = consumer
@@ -254,6 +314,7 @@ class OAuthAccessToken(OAuthBase, StormBase):
         self.projectgroup = projectgroup
         self.distribution = distribution
         self.sourcepackagename = sourcepackagename
+        self.refresh_token = refresh_token
 
     @property
     def context(self):
@@ -280,6 +341,145 @@ class OAuthAccessToken(OAuthBase, StormBase):
     def isSecretValid(self, secret):
         """See `IOAuthToken`."""
         return sha256_digest(secret) == self._secret
+
+
+@implementer(IOAuthRefreshToken)
+class OAuthRefreshToken(OAuthBase, StormBase):
+    """A long-lived OAuth grant bound to a WebAuthn authenticator."""
+
+    __storm_table__ = "OAuthRefreshToken"
+
+    id = Int(primary=True)
+    consumer_id = Int(name="consumer", allow_none=False)
+    consumer = Reference(consumer_id, "OAuthConsumer.id")
+    person_id = Int(name="person", allow_none=False)
+    person = Reference(person_id, "Person.id")
+    authenticator_id = Int(name="authenticator", allow_none=False)
+    authenticator = Reference(authenticator_id, "RegisteredAuthenticator.id")
+    date_created = DateTime(
+        tzinfo=timezone.utc, allow_none=False, default=UTC_NOW
+    )
+    date_expires = DateTime(tzinfo=timezone.utc, allow_none=False)
+    date_last_used = DateTime(
+        tzinfo=timezone.utc, allow_none=True, default=None
+    )
+    date_revoked = DateTime(tzinfo=timezone.utc, allow_none=True, default=None)
+    revoked_by_id = Int(name="revoked_by", allow_none=True, default=None)
+    revoked_by = Reference(revoked_by_id, "Person.id")
+    key = Unicode(allow_none=False)
+    _secret = Unicode(name="secret", allow_none=False)
+    permission = DBEnum(enum=AccessLevel, allow_none=False)
+
+    product_id = Int(name="product", allow_none=True, default=None)
+    product = Reference(product_id, "Product.id")
+    projectgroup_id = Int(name="project", allow_none=True, default=None)
+    projectgroup = Reference(projectgroup_id, "ProjectGroup.id")
+    sourcepackagename_id = Int(
+        name="sourcepackagename", allow_none=True, default=None
+    )
+    sourcepackagename = Reference(sourcepackagename_id, "SourcePackageName.id")
+    distribution_id = Int(name="distribution", allow_none=True, default=None)
+    distribution = Reference(distribution_id, "Distribution.id")
+
+    def __init__(
+        self,
+        consumer,
+        person,
+        authenticator,
+        permission,
+        key,
+        secret,
+        date_expires,
+        product=None,
+        projectgroup=None,
+        distribution=None,
+        sourcepackagename=None,
+    ):
+        super().__init__()
+        self.consumer = consumer
+        self.person = person
+        self.authenticator = authenticator
+        self.permission = permission
+        self.key = key
+        self._secret = sha256_digest(secret)
+        self.date_expires = date_expires
+        self.product = product
+        self.projectgroup = projectgroup
+        self.distribution = distribution
+        self.sourcepackagename = sourcepackagename
+
+    @property
+    def context(self):
+        """Return the pillar restricting this grant, if any."""
+        if self.product:
+            return self.product
+        elif self.projectgroup:
+            return self.projectgroup
+        elif self.distribution:
+            if self.sourcepackagename:
+                return self.distribution.getSourcePackage(
+                    self.sourcepackagename
+                )
+            return self.distribution
+        return None
+
+    @property
+    def is_expired(self):
+        return self.date_expires <= datetime.now(timezone.utc)
+
+    @property
+    def is_revoked(self):
+        return self.date_revoked is not None
+
+    @property
+    def is_usable(self):
+        return not (
+            self.is_revoked
+            or self.is_expired
+            or self.consumer.disabled
+            or self.authenticator.is_revoked
+        )
+
+    def isSecretValid(self, secret):
+        return sha256_digest(secret) == self._secret
+
+    def mintAccessToken(self, date_expires=None):
+        """Mint an ordinary OAuth access token for this grant."""
+        if not self.is_usable:
+            raise OAuthValidationError("This refresh token is not usable.")
+        date_expires = min(
+            get_token_expiry(
+                date_expires, ACCESS_TOKEN_LIFETIME, MAX_ACCESS_TOKEN_LIFETIME
+            ),
+            self.date_expires,
+        )
+        key, secret = create_token_key_and_secret(table=OAuthAccessToken)
+        access_token = OAuthAccessToken(
+            consumer=self.consumer,
+            person=self.person,
+            key=key,
+            secret=secret,
+            permission=self.permission,
+            date_expires=date_expires,
+            product=self.product,
+            projectgroup=self.projectgroup,
+            distribution=self.distribution,
+            sourcepackagename=self.sourcepackagename,
+            refresh_token=self,
+        )
+        self._getStore().add(access_token)
+        self.date_last_used = UTC_NOW
+        return access_token, secret
+
+    def revoke(self, revoked_by):
+        """See `IOAuthRefreshToken`."""
+        if self.is_revoked:
+            return
+        self.date_revoked = UTC_NOW
+        self.revoked_by = revoked_by
+        self._getStore().find(
+            OAuthAccessToken, OAuthAccessToken.refresh_token == self
+        ).set(date_expires=UTC_NOW)
 
 
 @implementer(IOAuthRequestToken)

@@ -24,6 +24,7 @@ from zope.component import getUtility
 
 from lp.registry.interfaces.person import IPersonSet
 from lp.services.oauth.interfaces import IOAuthConsumerSet
+from lp.services.oauth.model import lookup_oauth_context
 from lp.services.webapp.interaction import ANONYMOUS
 from lp.services.webapp.interfaces import OAuthPermission
 from lp.services.webapp.publisher import canonical_url
@@ -60,9 +61,6 @@ def oauth_access_token_for(consumer_name, person, permission, context=None):
         person = getUtility(IPersonSet).getByName(person)
     if isinstance(context, str):
         # Turn an OAuth context string into the corresponding object.
-        # Avoid an import loop by importing from launchpad.browser here.
-        from lp.services.oauth.browser import lookup_oauth_context
-
         context = lookup_oauth_context(context)
     if isinstance(permission, str):
         # Look up a permission by its token string.
