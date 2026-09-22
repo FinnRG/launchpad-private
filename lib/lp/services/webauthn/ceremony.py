@@ -20,6 +20,8 @@ __all__ = [
     "complete_registration",
     "get_origin",
     "get_rp_id",
+    "get_server",
+    "normalize_webauthn_options",
 ]
 
 import http.client
@@ -73,7 +75,7 @@ def get_origin():
     return allvhosts.configs["mainsite"].rooturl.rstrip("/")
 
 
-def _get_server():
+def get_server():
     rp_id = get_rp_id()
     expected_origin = get_origin()
     return Fido2Server(
@@ -91,14 +93,17 @@ def _get_session(request):
     return ISession(request)[SESSION_PKG_KEY]
 
 
-def _json_safe(value):
+def normalize_webauthn_options(value):
     """Return `value` with fido2's enums reduced to plain strings."""
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, dict):
-        return {key: _json_safe(item) for key, item in value.items()}
+        return {
+            key: normalize_webauthn_options(item)
+            for key, item in value.items()
+        }
     if isinstance(value, (list, tuple)):
-        return [_json_safe(item) for item in value]
+        return [normalize_webauthn_options(item) for item in value]
     return value
 
 
@@ -142,7 +147,7 @@ def begin_registration(person, request=None):
         name=person.name,
         display_name=person.displayname,
     )
-    options, state = _get_server().register_begin(
+    options, state = get_server().register_begin(
         user,
         credentials=existing_credentials,
         user_verification=UserVerificationRequirement.REQUIRED,
@@ -154,7 +159,7 @@ def begin_registration(person, request=None):
         # unpickle timezone-aware datetimes.
         "expires": datetime.utcnow() + CHALLENGE_LIFETIME,
     }
-    return _json_safe(dict(options))
+    return normalize_webauthn_options(dict(options))
 
 
 def complete_registration(person, response, name, request=None):
@@ -200,7 +205,7 @@ def complete_registration(person, response, name, request=None):
         raise WebAuthnError("Attested credential data is missing.")
 
     try:
-        auth_data = _get_server().register_complete(
+        auth_data = get_server().register_complete(
             registration["state"], registration_response
         )
     except (TypeError, ValueError) as e:

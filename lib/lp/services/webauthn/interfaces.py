@@ -165,6 +165,17 @@ class IRegisteredAuthenticator(Interface):
     def updateLastUsed():
         """Update this authenticator's last-used date, if possible."""
 
+    def recordAssertion(sign_count):
+        """Record that this authenticator signed a challenge.
+
+        Bumps the stored signature counter and the last-used date.
+
+        :param sign_count: The signature counter reported in the assertion.
+        :return: False if the authenticator is revoked or its counter did
+            not advance; True otherwise. Authenticators without counter
+            support may continue to report zero.
+        """
+
     def revoke(revoked_by):
         """Revoke this authenticator.
 
