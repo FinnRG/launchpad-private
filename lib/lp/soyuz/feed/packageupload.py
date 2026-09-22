@@ -1,10 +1,9 @@
-from typing import List
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Set, Tuple
 
 from storm.expr import SQL
 from zope.component import getUtility
 from zope.security.proxy import removeSecurityProxy
 
-from lp.app.errors import NotFoundError
 from lp.app.interfaces.launchpad import ILaunchpadCelebrities
 from lp.registry.interfaces.distroseries import IDistroSeries
 from lp.registry.interfaces.person import IPersonSet
@@ -25,6 +24,9 @@ from lp.soyuz.interfaces.queue import (
     IPackageUploadSet,
 )
 from lp.soyuz.mail.packageupload import calculate_subject
+
+if TYPE_CHECKING:
+    from lp.soyuz.interfaces.sourcepackagerelease import ISourcePackageRelease
 
 __all__ = [
     "NewPackageUploadsFeed",
@@ -54,16 +56,11 @@ class NewPackageUploadsFeed(FeedBase):
     def quantity(self) -> int:
         return 100
 
-    def _getSourcePackageRelease(self, upload):
-        if upload.contains_copy:
-            try:
-                publication = (
-                    upload.concrete_package_copy_job.findSourcePublication()
-                )
-                return publication.sourcepackagerelease
-            except NotFoundError:
-                return None
-        return upload.sourcepackagerelease
+    def _getCopySources(
+        self, uploads: Iterable[IPackageUpload]
+    ) -> "Dict[int, Optional[ISourcePackageRelease]]":
+        """Resolve sync sources, and preload objects used during filtering."""
+        return getUtility(IPackageUploadSet).getCopySources(uploads)
 
     def _getItemsWorker(self) -> List[FeedEntry]:
         uploads = list(
@@ -93,6 +90,7 @@ class NewPackageUploadsFeed(FeedBase):
         if not uploads:
             return []
 
+        copy_sources = self._getCopySources(uploads)
         katie_id = getUtility(ILaunchpadCelebrities).katie.id
 
         # XXX shreyamalviya 2026-05-04: This whole filtering logic should
@@ -100,11 +98,17 @@ class NewPackageUploadsFeed(FeedBase):
         # this for now to mimic the existing logic in the mailer that
         # determines which uploads to send notifications for, and in the
         # interest of time.
-        filtered_uploads = []
+        filtered_uploads: List[
+            Tuple[IPackageUpload, Optional["ISourcePackageRelease"]]
+        ] = []
         for upload in uploads:
-            spr = self._getSourcePackageRelease(upload)
+            spr = (
+                copy_sources[upload.id]
+                if upload.contains_copy
+                else upload.sourcepackagerelease
+            )
 
-            changed_by_id = None
+            changed_by_id: Optional[int] = None
             if upload.contains_copy:
                 if spr is None:
                     continue
@@ -157,7 +161,7 @@ class NewPackageUploadsFeed(FeedBase):
             return []
 
         # Collect all person IDs we'll need ahead and load them in one query
-        person_ids = set()
+        person_ids: Set[int] = set()
         for upload, spr in filtered_uploads:
             if spr:
                 if spr.creator_id:
@@ -180,9 +184,9 @@ class NewPackageUploadsFeed(FeedBase):
             for upload, spr in filtered_uploads
         ]
 
-    def itemToFeedEntry(self, upload: IPackageUpload, spr=None) -> FeedEntry:
-        if spr is None:
-            spr = self._getSourcePackageRelease(upload)
+    def itemToFeedEntry(
+        self, upload: IPackageUpload, spr: Optional["ISourcePackageRelease"]
+    ) -> FeedEntry:
         distroseries = upload.distroseries
 
         title = FeedTypedData(

@@ -11,6 +11,7 @@ __all__ = [
     "PackageUploadSource",
 ]
 
+import typing
 from collections import defaultdict
 from datetime import timezone
 from itertools import chain
@@ -24,6 +25,7 @@ from storm.locals import (
     Int,
     Join,
     List,
+    Or,
     Reference,
     ReferenceSet,
     Unicode,
@@ -32,6 +34,7 @@ from storm.properties import DateTime
 from storm.store import EmptyResultSet, Store
 from zope.component import getUtility
 from zope.interface import implementer
+from zope.security.proxy import removeSecurityProxy
 
 from lp.app.errors import NotFoundError
 from lp.archiveuploader.tagfiles import parse_tagfile_content
@@ -89,6 +92,9 @@ from lp.soyuz.model.binarypackagerelease import BinaryPackageRelease
 from lp.soyuz.model.component import Component
 from lp.soyuz.model.distroarchseries import DistroArchSeries
 from lp.soyuz.model.section import Section
+
+if typing.TYPE_CHECKING:
+    from lp.soyuz.interfaces.sourcepackagerelease import ISourcePackageRelease
 
 
 def debug(logger, msg):
@@ -1860,6 +1866,105 @@ class PackageUploadSet:
         return IStore(PackageUpload).find(
             PackageUpload, PackageUpload.package_copy_job_id.is_in(pcj_ids)
         )
+
+    def getCopySources(
+        self, uploads: typing.Iterable[IPackageUpload]
+    ) -> "typing.Dict[int, typing.Optional[ISourcePackageRelease]]":
+        """See `IPackageUploadSet`."""
+        from lp.registry.model.distroseries import DistroSeries
+        from lp.services.job.model.job import Job
+        from lp.soyuz.model.publishing import SourcePackagePublishingHistory
+        from lp.soyuz.model.sourcepackagerelease import SourcePackageRelease
+
+        copies = [
+            removeSecurityProxy(upload)
+            for upload in uploads
+            if upload.contains_copy
+        ]
+        if not copies:
+            return {}
+
+        publications = SourcePackagePublishingHistory
+        conditions: typing.List[And] = []
+        for upload in copies:
+            copy_job = upload.concrete_package_copy_job
+            clauses = [
+                publications.archive_id == copy_job.source_archive.id,
+                SourcePackageName.name == copy_job.package_name,
+                Cast(SourcePackageRelease.version, "text")
+                == copy_job.package_version,
+            ]
+            series_name = copy_job.metadata.get("source_distroseries")
+            if series_name is not None:
+                clauses.extend(
+                    [
+                        DistroSeries.distribution_id
+                        == copy_job.source_archive.distribution.id,
+                        DistroSeries.name == series_name,
+                    ]
+                )
+            if copy_job.source_pocket is not None:
+                clauses.append(publications.pocket == copy_job.source_pocket)
+            conditions.append(And(*clauses))
+
+        matches = list(
+            IStore(publications)
+            .find(
+                (
+                    publications,
+                    SourcePackageRelease,
+                    SourcePackageName,
+                    DistroSeries,
+                ),
+                publications.sourcepackagerelease_id
+                == SourcePackageRelease.id,
+                publications.sourcepackagename_id == SourcePackageName.id,
+                publications.distroseries_id == DistroSeries.id,
+                Or(*conditions),
+            )
+            .order_by(Desc(publications.id))
+        )
+        sources: typing.Dict[int, typing.Optional[ISourcePackageRelease]] = {}
+        for upload in copies:
+            copy_job = upload.concrete_package_copy_job
+            series_name = copy_job.metadata.get("source_distroseries")
+            sources[upload.id] = next(
+                (
+                    spr
+                    for publication, spr, name, series in matches
+                    if publication.archive_id == copy_job.source_archive.id
+                    and name.name == copy_job.package_name
+                    and spr.version == copy_job.package_version
+                    and (
+                        series_name is None
+                        or (
+                            series.name == series_name
+                            and series.distribution_id
+                            == copy_job.source_archive.distribution.id
+                        )
+                    )
+                    and (
+                        copy_job.source_pocket is None
+                        or publication.pocket == copy_job.source_pocket
+                    )
+                ),
+                None,
+            )
+
+        load_related(
+            Section,
+            [spr for spr in sources.values() if spr is not None],
+            ["section_id"],
+        )
+        jobs = load_related(
+            Job, [upload.package_copy_job for upload in copies], ["job_id"]
+        )
+        list(
+            getUtility(IPersonSet).getPrecachedPersonsFromIDs(
+                [job.requester_id for job in jobs], need_preferred_email=True
+            )
+        )
+        return sources
 
 
 def prefill_packageupload_caches(uploads, puses, pubs, pucs, logs):

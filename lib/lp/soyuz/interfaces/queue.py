@@ -24,6 +24,7 @@ __all__ = [
 ]
 
 import http.client
+import typing
 
 from lazr.lifecycle.snapshot import doNotSnapshot
 from lazr.restful.declarations import (
@@ -48,6 +49,9 @@ from lp.registry.interfaces.pocket import PackagePublishingPocket
 from lp.services.webservice.apihelpers import patch_reference_property
 from lp.soyuz.enums import PackageUploadStatus
 from lp.soyuz.interfaces.packagecopyjob import IPackageCopyJob
+
+if typing.TYPE_CHECKING:
+    from lp.soyuz.interfaces.sourcepackagerelease import ISourcePackageRelease
 
 PACKAGE_UPLOAD_STATUS_MAPPING_TO_STR = {
     PackageUploadStatus.NEW: "new",
@@ -951,6 +955,17 @@ class IPackageUploadSet(Interface):
 
         :param pcj_ids: A list of `PackageCopyJob` IDs.
         :return: all the `PackageUpload`s that reference the supplied IDs.
+        """
+
+    def getCopySources(
+        uploads: typing.Iterable[IPackageUpload],
+    ) -> "typing.Dict[int, typing.Optional[ISourcePackageRelease]]":
+        """Resolve copy sources, and preload sections and requester emails.
+
+        :param uploads: List of `IPackageUpload`s
+        :return: A mapping of copy upload IDs to source package releases,
+            or None when no matching source publication exists.
+            Non-copy uploads are omitted.
         """
 
 
