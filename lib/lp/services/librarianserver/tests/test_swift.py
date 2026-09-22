@@ -10,7 +10,9 @@ import time
 from unittest.mock import patch
 
 import transaction
+from fixtures import MonkeyPatch
 from swiftclient import client as swiftclient
+from urllib3.exceptions import ReadTimeoutError
 
 from lp.services.database import write_transaction
 from lp.services.database.interfaces import IStore
@@ -23,6 +25,25 @@ from lp.services.log.logger import BufferLogger
 from lp.testing import TestCase
 from lp.testing.layers import BaseLayer, LaunchpadZopelessLayer, LibrarianLayer
 from lp.testing.swift.fixture import SwiftFixture
+
+
+def nop(*args, **kwargs):
+    pass
+
+
+class FakeSwiftCall:
+    """A callable that raises the given errors before returning a result."""
+
+    def __init__(self, errors, result):
+        self._errors = list(errors)
+        self._result = result
+        self.calls = 0
+
+    def __call__(self, *args, **kwargs):
+        self.calls += 1
+        if self._errors:
+            raise self._errors.pop(0)
+        return self._result
 
 
 class TestFeedSwift(TestCase):
@@ -446,6 +467,56 @@ class TestFeedSwift(TestCase):
             "container",
             "name",
         )
+
+
+class TestRobustSwiftClient(TestCase):
+    layer = BaseLayer
+
+    def setUp(self):
+        super().setUp()
+        # Retry instantly so the tests do not wait for the real delay.
+        self.useFixture(
+            MonkeyPatch("lp.services.librarianserver.swift.time.sleep", nop)
+        )
+
+    def test_returns_result_without_retrying(self):
+        """A call that succeeds first time is made exactly once."""
+        func = FakeSwiftCall([], "done")
+        self.assertEqual("done", swift.robust_swiftclient(func))
+        self.assertEqual(1, func.calls)
+
+    def test_retries_transient_network_error(self):
+        """A transient network failure is retried until the call succeeds."""
+        error = ReadTimeoutError(None, "url", "Read timed out.")
+        func = FakeSwiftCall([error, error], "done")
+        self.assertEqual("done", swift.robust_swiftclient(func))
+        self.assertEqual(3, func.calls)
+
+    def test_retries_server_error(self):
+        """A server-side Swift error (5xx) is retried, as it may be
+        transient."""
+        error = swiftclient.ClientException("boom", http_status=503)
+        func = FakeSwiftCall([error], "done")
+        self.assertEqual("done", swift.robust_swiftclient(func))
+        self.assertEqual(2, func.calls)
+
+    def test_gives_up_after_max_retries(self):
+        """If every attempt fails, the last error is raised after the
+        configured number of attempts."""
+        error = ReadTimeoutError(None, "url", "Read timed out.")
+        func = FakeSwiftCall([error, error, error], "done")
+        self.assertRaises(ReadTimeoutError, swift.robust_swiftclient, func)
+        self.assertEqual(swift.SWIFT_MAX_RETRIES, func.calls)
+
+    def test_does_not_retry_client_error(self):
+        """A client error such as a 404 is raised immediately, without
+        retrying, so callers can handle it."""
+        error = swiftclient.ClientException("missing", http_status=404)
+        func = FakeSwiftCall([error], "done")
+        self.assertRaises(
+            swiftclient.ClientException, swift.robust_swiftclient, func
+        )
+        self.assertEqual(1, func.calls)
 
 
 class TestHashStream(TestCase):

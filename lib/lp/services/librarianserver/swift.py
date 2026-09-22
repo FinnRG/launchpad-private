@@ -10,6 +10,7 @@ __all__ = [
     "filesystem_path",
     "quiet_swiftclient",
     "reconfigure_connection_pools",
+    "robust_swiftclient",
     "swift_location",
     "to_swift",
 ]
@@ -17,11 +18,15 @@ __all__ = [
 import hashlib
 import os.path
 import re
+import socket
 import time
 from contextlib import contextmanager
+from typing import Any, Callable
 from urllib.parse import quote
 
+import requests
 from swiftclient import client as swiftclient
+from urllib3.exceptions import HTTPError as URLLib3HTTPError
 
 from lp.services.config import config
 from lp.services.database.interfaces import IStandbyStore
@@ -31,6 +36,21 @@ SWIFT_CONTAINER_PREFIX = "librarian_"
 MAX_SWIFT_OBJECT_SIZE = 5 * 1024**3  # 5GB Swift limit.
 
 ONE_DAY = 24 * 60 * 60
+
+# Number of attempts (including the first) for a Swift request before
+# giving up, and the delay in seconds between attempts.
+SWIFT_MAX_RETRIES = 3
+SWIFT_RETRY_DELAY = 5
+
+# Network-level failures that are worth retrying. `URLLib3HTTPError` covers
+# read timeouts and incomplete reads (as seen coming from swiftclient),
+# while the others cover connection resets and socket timeouts.
+SWIFT_RETRYABLE_EXCEPTIONS = (
+    URLLib3HTTPError,
+    requests.exceptions.RequestException,
+    socket.timeout,
+    ConnectionError,
+)
 
 
 def quiet_swiftclient(func, *args, **kwargs):
@@ -49,6 +69,35 @@ def quiet_swiftclient(func, *args, **kwargs):
         return func(*args, **kwargs)
     finally:
         swiftclient.logger.disabled = old_disabled
+
+
+def _is_retryable_swift_error(exc: BaseException) -> bool:
+    if isinstance(exc, swiftclient.ClientException):
+        # Only server-side failures are worth retrying; client errors such
+        # as a 404 will not be fixed by trying again.
+        return exc.http_status is None or exc.http_status >= 500
+    return isinstance(exc, SWIFT_RETRYABLE_EXCEPTIONS)
+
+
+def robust_swiftclient(
+    func: Callable[..., Any], *args: Any, **kwargs: Any
+) -> Any:
+    """Call a swiftclient function, retrying transient failures.
+
+    Wraps `quiet_swiftclient` and retries a few times when Swift or the
+    network fails temporarily (read timeouts, connection resets, 5xx
+    responses). Errors that a retry cannot fix, such as a 404, are raised
+    immediately so callers can handle them.
+    """
+    for attempt in range(1, SWIFT_MAX_RETRIES + 1):
+        try:
+            return quiet_swiftclient(func, *args, **kwargs)
+        except Exception as exc:
+            if attempt >= SWIFT_MAX_RETRIES or not _is_retryable_swift_error(
+                exc
+            ):
+                raise
+            time.sleep(SWIFT_RETRY_DELAY)
 
 
 def to_swift(
