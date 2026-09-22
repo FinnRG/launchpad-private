@@ -18,15 +18,13 @@ from zope.security.interfaces import Unauthorized
 
 from lp.app.browser.launchpadform import LaunchpadFormView
 from lp.app.errors import UnexpectedFormData
-from lp.registry.interfaces.distribution import IDistributionSet
-from lp.registry.interfaces.pillar import IPillarNameSet
 from lp.services.oauth.interfaces import (
     OAUTH_CHALLENGE,
     IOAuthConsumerSet,
     IOAuthRequestToken,
     IOAuthRequestTokenSet,
 )
-from lp.services.oauth.model import OAuthValidationError
+from lp.services.oauth.model import OAuthValidationError, lookup_oauth_context
 from lp.services.webapp import LaunchpadView
 from lp.services.webapp.authentication import (
     check_oauth_signature,
@@ -410,26 +408,6 @@ class OAuthAuthorizeTokenView(LaunchpadFormView, JSONTokenMixin):
         callback = self.request.form.get("oauth_callback")
         if callback:
             self.next_url = callback
-
-
-def lookup_oauth_context(context):
-    """Transform an OAuth context string into a context object.
-
-    :param context: A string to turn into a context object.
-    """
-    if "/" in context:
-        distro, package = context.split("/")
-        distro = getUtility(IDistributionSet).getByName(distro)
-        if distro is None:
-            raise ValueError(distro)
-        context = distro.getSourcePackage(package)
-        if context is None:
-            raise ValueError(package)
-    else:
-        context = getUtility(IPillarNameSet).getByName(context)
-        if context is None:
-            raise ValueError(context)
-    return context
 
 
 class OAuthAccessTokenView(LaunchpadView):

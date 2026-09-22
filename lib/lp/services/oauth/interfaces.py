@@ -9,6 +9,7 @@ __all__ = [
     "IOAuthAccessToken",
     "IOAuthConsumer",
     "IOAuthConsumerSet",
+    "IOAuthRefreshToken",
     "IOAuthRequestToken",
     "IOAuthRequestTokenSet",
     "IOAuthSignedRequest",
@@ -203,6 +204,10 @@ class IOAuthAccessToken(IOAuthToken):
         ),
     )
 
+    refresh_token = Attribute(
+        "The hardware-bound refresh token that minted this token, if any."
+    )
+
     date_created = Datetime(
         title=_("Date created"),
         required=True,
@@ -221,6 +226,39 @@ class IOAuthAccessToken(IOAuthToken):
             "by the consumer to access protected resources."
         ),
     )
+
+
+class IOAuthRefreshToken(IOAuthToken):
+    """A long-lived OAuth grant bound to a WebAuthn authenticator."""
+
+    authenticator = Attribute("The registered authenticator for this grant.")
+    date_created = Datetime(
+        title=_("Date created"), required=True, readonly=True
+    )
+    date_expires = Datetime(
+        title=_("Date expires"), required=True, readonly=True
+    )
+    date_last_used = Datetime(
+        title=_("Date last used"), required=False, readonly=True
+    )
+    date_revoked = Datetime(
+        title=_("Date revoked"), required=False, readonly=True
+    )
+    revoked_by = Attribute("The person who revoked this grant, if any.")
+    permission = Choice(
+        title=_("Access level"),
+        required=True,
+        readonly=True,
+        vocabulary=AccessLevel,
+    )
+    is_revoked = Bool(title=_("Revoked?"), required=True, readonly=True)
+    is_usable = Bool(title=_("Usable?"), required=True, readonly=True)
+
+    def revoke(revoked_by):
+        """Revoke this grant and expire the access tokens minted from it.
+
+        :param revoked_by: The `IPerson` revoking this grant.
+        """
 
 
 class IOAuthRequestToken(IOAuthToken):
