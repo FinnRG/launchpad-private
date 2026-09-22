@@ -382,14 +382,48 @@ class IDistroSeriesPublic(
             constraint=email_validator,
         )
     )
-    sourcecount = Attribute("Source Packages Counter")
+    sourcecount = exported(
+        Int(
+            title=_("Source package count"),
+            description=_(
+                "A count of distinct source package names with pending or "
+                "published publications in the release pocket of this series "
+                "in the distribution's primary and partner archives. A job "
+                "scheduled daily updates this count, but publication changes "
+                "may take more than 24 hours to appear."
+            ),
+            required=True,
+            readonly=True,
+            min=0,
+        ),
+        exported_as="source_package_count",
+        readonly=True,
+        as_of="devel",
+    )
     defer_translation_imports = Bool(
         title=_("Defer translation imports"),
         description=_("Suspends any translation imports for this series"),
         default=True,
         required=True,
     )
-    binarycount = Attribute("Binary Packages Counter")
+    binarycount = exported(
+        Int(
+            title=_("Binary package count"),
+            description=_(
+                "A count of distinct binary package names with pending or "
+                "published publications in the release pocket of this series "
+                "in the distribution's primary and partner archives. A job "
+                "scheduled daily updates this count, but publication changes "
+                "may take more than 24 hours to appear."
+            ),
+            required=True,
+            readonly=True,
+            min=0,
+        ),
+        exported_as="binary_package_count",
+        readonly=True,
+        as_of="devel",
+    )
 
     architecturecount = Attribute(
         "The number of architectures in this " "series."
