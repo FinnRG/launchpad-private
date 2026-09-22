@@ -644,6 +644,22 @@ class TestSensitiveRequestVariables(testtools.TestCase):
         )
         self.assertTrue(_is_sensitive(request, "oauth_signature"))
 
+    def test_hardware_token_credentials_are_hidden(self):
+        request = TestRequest(
+            form={
+                "oauth_token_secret": "refresh-secret",
+                "assertion": "signed-assertion",
+                "challenge_id": "1",
+            },
+        )
+        report = {"req_vars": {}}
+
+        attach_http_request(report, {"http_request": request})
+
+        self.assertEqual("<hidden>", report["req_vars"]["oauth_token_secret"])
+        self.assertEqual("<hidden>", report["req_vars"]["assertion"])
+        self.assertEqual("1", report["req_vars"]["challenge_id"])
+
 
 class TestRequestWithUnauthenticatedPrincipal(TestRequest):
     principal = UnauthenticatedPrincipal(

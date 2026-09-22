@@ -154,6 +154,65 @@ class TestRegisteredAuthenticator(TestCaseWithFactory):
             self.assertIsNotNone(authenticator.date_last_used)
             self.assertNotEqual(now, authenticator.date_last_used)
 
+    def test_recordAssertion_advances_counter(self):
+        authenticator = self.factory.makeRegisteredAuthenticator(sign_count=3)
+        transaction.commit()
+
+        self.assertTrue(removeSecurityProxy(authenticator).recordAssertion(4))
+
+        self.assertEqual(4, authenticator.sign_count)
+        now = get_transaction_timestamp(Store.of(authenticator))
+        self.assertEqual(now, authenticator.date_last_used)
+
+    def test_recordAssertion_rejects_stale_counter(self):
+        authenticator = self.factory.makeRegisteredAuthenticator(sign_count=3)
+        transaction.commit()
+
+        self.assertFalse(removeSecurityProxy(authenticator).recordAssertion(3))
+
+        self.assertEqual(3, authenticator.sign_count)
+        self.assertIsNone(authenticator.date_last_used)
+
+    def test_recordAssertion_rejected_when_revoked(self):
+        authenticator = self.factory.makeRegisteredAuthenticator(sign_count=3)
+        authenticator.revoke(self.factory.makePerson())
+        transaction.commit()
+
+        self.assertFalse(removeSecurityProxy(authenticator).recordAssertion(4))
+
+        self.assertEqual(3, authenticator.sign_count)
+
+    def test_recordAssertion_rejects_zero_after_nonzero_counter(self):
+        authenticator = self.factory.makeRegisteredAuthenticator(sign_count=3)
+        transaction.commit()
+
+        self.assertFalse(removeSecurityProxy(authenticator).recordAssertion(0))
+
+        self.assertEqual(3, authenticator.sign_count)
+        self.assertIsNone(authenticator.date_last_used)
+
+    def test_recordAssertion_without_counter_rejected_when_revoked(self):
+        authenticator = self.factory.makeRegisteredAuthenticator(sign_count=0)
+        authenticator.revoke(self.factory.makePerson())
+        transaction.commit()
+
+        self.assertFalse(removeSecurityProxy(authenticator).recordAssertion(0))
+
+        self.assertEqual(0, authenticator.sign_count)
+        self.assertIsNone(authenticator.date_last_used)
+
+    def test_recordAssertion_without_counter_support(self):
+        # Authenticators that report a permanently zero counter are still
+        # accepted; only the last-used date moves.
+        authenticator = self.factory.makeRegisteredAuthenticator(sign_count=0)
+        transaction.commit()
+
+        self.assertTrue(removeSecurityProxy(authenticator).recordAssertion(0))
+
+        self.assertEqual(0, authenticator.sign_count)
+        now = get_transaction_timestamp(Store.of(authenticator))
+        self.assertEqual(now, authenticator.date_last_used)
+
     def test_revoke(self):
         authenticator = self.factory.makeRegisteredAuthenticator()
         revoker = self.factory.makePerson()
