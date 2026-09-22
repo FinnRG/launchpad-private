@@ -279,7 +279,7 @@ class ModerateBinaryPackageBuild(ViewBinaryPackageBuild):
             self.obj.archive
         ).checkAuthenticated(user)
 
-    def checkUnauthenticated(self, user):
+    def checkUnauthenticated(self):
         return False
 
 
@@ -590,12 +590,12 @@ class ViewBinaryPackageReleaseDownloadCount(
 class ViewSourcePackageRelease(AuthorizationBase):
     """Restrict viewing of source packages.
 
-    Packages that are only published in private archives are subject to the
-    same viewing rules as the archive (see class ViewArchive).
+    Packages that are only published in private or disabled archives are
+    subject to the same viewing rules as the archive (see class ViewArchive).
 
-    If the package is published in any non-private archive, then it is
-    automatically viewable even if the package is also published in
-    a private archive.
+    If the package is published in any non-private, enabled archive, then it
+    is automatically viewable even if the package is also published in
+    a private or disabled archive.
     """
 
     permission = "launchpad.View"
@@ -613,10 +613,10 @@ class ViewSourcePackageRelease(AuthorizationBase):
         """Check unauthenticated users.
 
         Unauthenticated users can see the package as long as it's published
-        in a non-private archive.
+        in a non-private, enabled archive.
         """
         for archive in self.obj.published_archives:
-            if not archive.private:
+            if not archive.private and archive.enabled:
                 return True
         return False
 

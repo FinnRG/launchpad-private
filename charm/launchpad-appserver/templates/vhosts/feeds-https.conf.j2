@@ -18,11 +18,25 @@
     CustomLog /var/log/apache2/feeds.{{ domain }}-access.log combined
     ErrorLog /var/log/apache2/feeds.{{ domain }}-error.log
     LogLevel warn
-  
-    # XXX cjwatson 2023-08-24: Consider providing feeds over HTTPS as well
-    # rather than redirecting to HTTP.  We might even want to invert this
-    # and redirect from HTTP to HTTPS, assuming that RSS readers will handle
-    # that gracefully.
-    Redirect permanent / http://feeds.{{ domain }}/
+
+    DocumentRoot {{ base_dir }}/www
+
+    <Directory {{ base_dir }}/www/>
+        Require all granted
+    </Directory>
+
+    ProxyRequests off
+    <Proxy *>
+        Require all granted
+        ErrorDocument 500 /offline.html
+        ErrorDocument 502 /offline.html
+        ErrorDocument 503 /offline.html
+    </Proxy>
+
+    ProxyPass /robots.txt !
+    ProxyPass /offline.html !
+    ProxyPass / balancer://cached-launchpad-appserver-main/
+    ProxyPassReverse / balancer://cached-launchpad-appserver-main/
+    ProxyPreserveHost on
 </VirtualHost>
 

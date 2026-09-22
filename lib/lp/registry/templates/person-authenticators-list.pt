@@ -1,0 +1,48 @@
+<tal:authenticators
+  xmlns:tal="http://xml.zope.org/namespaces/tal"
+  omit-tag="">
+
+  <p tal:condition="not: view/authenticators"
+     class="informational message">
+    No hardware authenticators registered.  Add one below to enhance your
+    account security.
+  </p>
+
+  <table tal:condition="view/authenticators"
+         id="authenticators-table" class="listing">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Registration date</th>
+        <th>Last used</th>
+        <th>Status</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr tal:repeat="authenticator view/authenticators">
+        <td tal:content="authenticator/name">YubiKey 5C</td>
+        <td tal:content="authenticator/date_created/fmt:datetime" />
+        <td>
+          <tal:used condition="authenticator/date_last_used"
+                    replace="authenticator/date_last_used/fmt:datetime" />
+          <tal:never condition="not: authenticator/date_last_used"
+                     replace="string:Never" />
+        </td>
+        <td>
+          <tal:active condition="not: authenticator/date_revoked">Active</tal:active>
+          <tal:revoked condition="authenticator/date_revoked">Revoked</tal:revoked>
+        </td>
+        <td>
+          <button tal:condition="not: authenticator/date_revoked"
+                  type="button" class="revoke-button"
+                  tal:attributes="data-auth-id authenticator/id;
+                                  data-auth-name authenticator/name">
+            Revoke
+          </button>
+          <tal:revoked condition="authenticator/date_revoked">&mdash;</tal:revoked>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</tal:authenticators>

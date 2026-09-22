@@ -1,5 +1,11 @@
 <VirtualHost *:80>
     ServerName {{ domain_derived_archive }}
+{%- if frontend_proxy_protocol_enabled %}
+    # Log the real client IP from the upstream LB's PROXY protocol header.
+    <IfModule mod_remoteip.c>
+        RemoteIPProxyProtocol On
+    </IfModule>
+{%- endif %}
 
     CustomLog /var/log/apache2/{{ domain_derived_archive }}-access.log combined
     ErrorLog /var/log/apache2/{{ domain_derived_archive }}-error.log

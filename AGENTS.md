@@ -127,8 +127,8 @@ filename order on top of the `launchpad-2211-00-0.sql` baseline.
     UPDATE, DELETE` (lowercased) in the default section, plus entries under any
     per-service `[section]` that reads or writes it; `security.py` applies
     these grants.
-  - `database/schema/comments.sql` — add the `COMMENT ON TABLE`/`COLUMN`
-    statements, kept alphabetical by table.
+  - Add `COMMENT ON TABLE`/`COLUMN` statements directly inside the SQL patch
+    file itself (do not append them to `database/schema/comments.sql`).
   - A Storm model under `lib/lp/<app>/model/` inheriting `StormBase`.
 - **Large/production tables**: add CHECK and FK constraints as `NOT VALID` to
   avoid long locks, and put anything that must run `CONCURRENTLY` in production

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<!--
+Copyright 2026 Canonical Ltd. This software is licensed under the
+GNU Affero General Public License version 3 (see the file LICENSE).
+-->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Test hardware authenticator registration</title>
+
+    <script type="text/javascript">
+      var LP = {cache: {}, links: {}};
+    </script>
+
+    <script type="text/javascript"
+            src="../../../../../build/js/yui/yui/yui.js"></script>
+
+    <link rel="stylesheet"
+          href="../../../../../build/js/yui/console/assets/console-core.css" />
+    <link rel="stylesheet"
+          href="../../../../../build/js/yui/test-console/assets/skins/sam/test-console.css" />
+    <link rel="stylesheet"
+          href="../../../app/javascript/testing/test.css" />
+
+    <script type="text/javascript"
+            src="../../../../../build/js/lp/app/testing/testrunner.js"></script>
+
+    <script type="text/javascript"
+            src="../../../../../build/js/lp/app/effects/effects.js"></script>
+    <script type="text/javascript"
+            src="../../../../../build/js/lp/app/expander.js"></script>
+    <script type="text/javascript"
+            src="../../../../../build/js/lp/app/lp.js"></script>
+    <script type="text/javascript"
+            src="../../../../../build/js/lp/app/client.js"></script>
+
+    <script type="text/javascript"
+            src="../../../../../build/js/lp/app/overlay/overlay.js"></script>
+    <script type="text/javascript"
+            src="../../../../../build/js/lp/app/formoverlay/formoverlay.js"></script>
+    <script type="text/javascript"
+            src="../../../../../build/js/lp/app/confirmationoverlay/confirmationoverlay.js"></script>
+
+    <!-- Mock the transport while retaining the real Launchpad client. -->
+    <script type="text/javascript"
+            src="../../../../../build/js/lp/app/testing/mockio.js"></script>
+
+    <!-- Module under test and its test suite. -->
+    <script type="text/javascript"
+            src="../person_register_authenticator.js"></script>
+    <script type="text/javascript"
+            src="test_person_register_authenticator.js"></script>
+  </head>
+
+  <body class="yui3-skin-sam">
+    <ul id="suites">
+      <li>lp.registry.person_register_authenticator.test</li>
+    </ul>
+
+    <div id="test-fixture"></div>
+  </body>
+</html>

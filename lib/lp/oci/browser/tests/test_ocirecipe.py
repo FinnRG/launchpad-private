@@ -2205,7 +2205,7 @@ class TestOCIRecipeRequestBuildsView(BaseTestOCIRecipeView):
             [build.distro_arch_series.architecturetag for build in builds],
         )
         self.assertContentEqual(
-            [2510], {build.buildqueue_record.lastscore for build in builds}
+            [4010], {build.buildqueue_record.lastscore for build in builds}
         )
 
     def test_request_builds_no_architectures(self):

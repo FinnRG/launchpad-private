@@ -35,6 +35,9 @@ dist
 bin
 .installed.cfg
 parts
+.coverage
+.coverage.*
+/htmlcov
 
 # specific software or tools
 .tox/

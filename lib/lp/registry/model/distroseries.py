@@ -65,13 +65,16 @@ from lp.bugs.model.bugtarget import BugTargetBase
 from lp.bugs.model.structuralsubscription import (
     StructuralSubscriptionTargetMixin,
 )
+from lp.buildmaster.enums import BuildStatus
 from lp.buildmaster.model.processor import Processor
 from lp.registry.errors import (
+    InvalidDateRange,
     InvalidTranslationCoverageOrder,
     NoSuchDistroSeries,
 )
 from lp.registry.interfaces.distroseries import (
     DerivationError,
+    DistroSeriesBuildRecordsCounts,
     DistroSeriesTranslationTemplateStatistics,
     IDistroSeries,
     IDistroSeriesSet,
@@ -1474,6 +1477,47 @@ class DistroSeries(
         return getUtility(IBinaryPackageBuildSet).getBuildsForDistro(
             self, build_state, name, pocket, arch_tag
         )
+
+    def getBuildRecordsCounts(
+        self,
+        finished_since=None,
+        finished_before=None,
+        source_name=None,
+        build_status=None,
+        pocket=None,
+    ) -> DistroSeriesBuildRecordsCounts:
+        """See `IDistroSeriesPublic`."""
+        if (
+            finished_since is not None
+            and finished_before is not None
+            and finished_since > finished_before
+        ):
+            raise InvalidDateRange(
+                "finished_since must not be later than finished_before."
+            )
+        counts = getUtility(IBinaryPackageBuildSet).getBuildCountsForDistro(
+            self,
+            status=build_status,
+            name=source_name,
+            pocket=pocket,
+            date_finished_since=finished_since,
+            date_finished_before=finished_before,
+        )
+        by_build_state = {status.name: 0 for status in BuildStatus.items}
+        by_pocket = {
+            build_pocket.name: 0
+            for build_pocket in PackagePublishingPocket.items
+        }
+        total = 0
+        for (status, build_pocket), count in counts.items():
+            by_build_state[status.name] += count
+            by_pocket[build_pocket.name] += count
+            total += count
+        return {
+            "total": total,
+            "by_build_state": by_build_state,
+            "by_pocket": by_pocket,
+        }
 
     def createUploadedSourcePackageRelease(
         self,

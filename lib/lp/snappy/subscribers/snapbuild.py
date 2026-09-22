@@ -14,7 +14,9 @@ from lp.snappy.interfaces.snapbuild import ISnapBuild
 from lp.snappy.interfaces.snapbuildjob import ISnapStoreUploadJobSource
 
 
-def _trigger_snap_build_webhook(snapbuild, action):
+def _trigger_snap_build_webhook(
+    snapbuild, action, event_type="snap:build:0.1"
+):
     payload = {
         "snap_build": canonical_url(snapbuild, force_local_path=True),
         "action": action,
@@ -26,7 +28,7 @@ def _trigger_snap_build_webhook(snapbuild, action):
             ["snap", "build_request", "status", "store_upload_status"],
         )
     )
-    getUtility(IWebhookSet).trigger(snapbuild.snap, "snap:build:0.1", payload)
+    getUtility(IWebhookSet).trigger(snapbuild.snap, event_type, payload)
 
 
 def snap_build_created(snapbuild, event):
@@ -36,7 +38,18 @@ def snap_build_created(snapbuild, event):
 
 def snap_build_status_changed(snapbuild, event):
     """Trigger events when snap package build statuses change."""
-    _trigger_snap_build_webhook(snapbuild, "status-changed")
+    # Deliver a sub-scoped event for builds that finish successfully, so
+    # that consumers who only care about that outcome (e.g. SBOM
+    # generation) can subscribe to "snap:build:0.1::fullybuilt" instead of
+    # receiving and filtering out every intermediate status change
+    # themselves. IWebhookSet.trigger() always delivers using the parent
+    # event type, so this is fully backwards compatible with consumers
+    # still subscribed to the plain "snap:build:0.1" scope.
+    if snapbuild.status == BuildStatus.FULLYBUILT:
+        event_type = "snap:build:0.1::fullybuilt"
+    else:
+        event_type = "snap:build:0.1"
+    _trigger_snap_build_webhook(snapbuild, "status-changed", event_type)
 
     if snapbuild.status == BuildStatus.FULLYBUILT:
         if snapbuild.snap.can_upload_to_store and snapbuild.snap.store_upload:

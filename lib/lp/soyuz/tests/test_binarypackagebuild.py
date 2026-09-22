@@ -27,6 +27,7 @@ from lp.services.macaroons.interfaces import (
     IMacaroonIssuer,
 )
 from lp.services.macaroons.testing import MacaroonTestMixin
+from lp.services.webapp.authorization import check_permission
 from lp.services.webapp.interaction import ANONYMOUS
 from lp.services.webapp.interfaces import OAuthPermission
 from lp.soyuz.enums import ArchivePurpose, PackagePublishingStatus
@@ -247,6 +248,20 @@ class TestBinaryPackageBuild(TestCaseWithFactory):
             archive=archive,
         )
         self.assertEqual(spph, build.getLatestSourcePublication())
+
+
+class TestBinaryPackageBuildSecurity(TestCaseWithFactory):
+    # This needs a functional layer so that the real security policy is
+    # in force; LaunchpadZopelessLayer installs a permissive one.
+    layer = DatabaseFunctionalLayer
+
+    def test_moderate_unauthenticated(self):
+        # Anonymous users cannot moderate a build.
+        build = self.factory.makeBinaryPackageBuild(
+            archive=self.factory.makeArchive(purpose=ArchivePurpose.PRIMARY)
+        )
+        with anonymous_logged_in():
+            self.assertFalse(check_permission("launchpad.Moderate", build))
 
 
 class TestBuildUpdateDependencies(TestCaseWithFactory):

@@ -5,6 +5,7 @@
 <configure
     xmlns="http://namespaces.zope.org/zope"
     xmlns:lp="http://namespaces.canonical.com/lp"
+    xmlns:webservice="http://namespaces.canonical.com/webservice"
     i18n_domain="launchpad">
 
     <lp:authorizations module=".security" />
@@ -27,5 +28,13 @@
         <allow
             interface="lp.services.webauthn.interfaces.IRegisteredAuthenticatorSet"/>
     </lp:securedutility>
+
+    <lp:url
+        for="lp.services.webauthn.interfaces.IRegisteredAuthenticator"
+        path_expression="string:+authenticator/${id}"
+        attribute_to_parent="owner"
+        rootsite="api" />
+
+    <webservice:register module="lp.services.webauthn.webservice" />
 
 </configure>

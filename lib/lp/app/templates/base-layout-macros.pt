@@ -263,6 +263,7 @@
 
 <metal:footer define-macro="footer">
   <div id="footer" class="footer">
+  <a class="crawler" href="/?crawler-bait=true" hidden inert>Home</a>
     <div class="lp-arcana" tal:condition="not:view/is_root_page|nothing">
         <div class="lp-branding">
           <a tal:attributes="href string:${rooturl}"><img src="/@@/launchpad-footer-logo.svg" alt="Launchpad" width="65" height="18"/></a>

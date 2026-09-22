@@ -22,6 +22,9 @@
         <p tal:condition="not: view/count">There are no live filesystems for <tal:owner replace="context/display_name"/></p>
       </div>
 
+      <tal:navigation
+          condition="view/livefses_navigator/has_multiple_pages"
+          replace="structure view/livefses_navigator/@@+navigation-links-upper" />
       <table class="listing" id="livefses_list" tal:condition="view/count">
         <tbody>
           <tr class="head">
@@ -30,7 +33,7 @@
             <th>Date created</th>
           </tr>
 
-          <tr tal:repeat="filesystem view/livefses">
+          <tr tal:repeat="filesystem view/livefses_navigator/currentBatch">
             <td>
               <a tal:content="filesystem/name"
                  tal:attributes="href filesystem/fmt:url" />

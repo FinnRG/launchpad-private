@@ -569,12 +569,14 @@ class InitializeDistroSeries:
         if self.first_derivation:
             return False
 
-        target_archive_empty = target_archive.getPublishedSources().is_empty()
+        target_archive_empty = target_archive.getPublishedSources(
+            ordered=False
+        ).is_empty()
         case_1a = target_archive != archive and target_archive_empty
         case_1b = target_archive == archive and (
             target_archive_empty
             or target_archive.getPublishedSources(
-                distroseries=self.distroseries
+                distroseries=self.distroseries, ordered=False
             ).is_empty()
         )
         return case_1a or case_1b

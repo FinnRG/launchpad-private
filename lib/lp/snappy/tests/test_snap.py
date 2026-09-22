@@ -78,6 +78,7 @@ from lp.services.timeout import default_timeout
 from lp.services.webapp.interfaces import OAuthPermission
 from lp.services.webapp.publisher import canonical_url
 from lp.services.webapp.snapshot import notify_modified
+from lp.services.webhooks.interfaces import IWebhookSet
 from lp.services.webhooks.testing import LogsScheduledWebhooks
 from lp.snappy.interfaces.snap import (
     BadSnapSearchContext,
@@ -1962,6 +1963,211 @@ class TestSnap(TestCaseWithFactory):
             self.assertEqual(
                 snap.fetch_service_policy, FetchServicePolicy.PERMISSIVE
             )
+
+    def test_fullybuilt_webhook_subscope_is_valid(self):
+        # "snap:build:0.1::fullybuilt" is a selectable webhook event
+        # type for snaps, not just something the automatic SBOM webhook
+        # management can use internally.
+        person = self.factory.makePerson()
+        with person_logged_in(person):
+            snap = self.factory.makeSnap(registrant=person, owner=person)
+            self.assertIn(
+                "snap:build:0.1::fullybuilt", snap.valid_webhook_event_types
+            )
+
+
+class TestSnapSBOMWebhook(TestCaseWithFactory):
+    """Tests for the automatically-managed SBOM generation webhook."""
+
+    layer = LaunchpadFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        self.pushConfig(
+            "snappy",
+            sbom_webhook_url="https://sbom.example.com/webhook",
+            sbom_webhook_secret="sbom-secret",
+        )
+
+    def _getSBOMWebhooks(self, snap):
+        hooks = getUtility(IWebhookSet).findByTarget(removeSecurityProxy(snap))
+        return [
+            removeSecurityProxy(hook)
+            for hook in hooks
+            if removeSecurityProxy(hook).delivery_url
+            == "https://sbom.example.com/webhook"
+        ]
+
+    def test_enabling_fetch_service_creates_webhook(self):
+        # Enabling use_fetch_service on a snap automatically creates an
+        # active webhook delivering to the configured SBOM generation
+        # service, scoped to fullybuilt snap builds only.
+        snap = self.factory.makeSnap()
+        naked_snap = removeSecurityProxy(snap)
+        self.assertEqual([], self._getSBOMWebhooks(snap))
+
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = True
+
+        [hook] = self._getSBOMWebhooks(snap)
+        self.assertTrue(hook.active)
+        self.assertEqual(["snap:build:0.1::fullybuilt"], hook.event_types)
+        self.assertEqual("sbom-secret", hook.secret)
+
+    def test_reenabling_fetch_service_refreshes_rotated_secret(self):
+        # If sbom_webhook_secret is rotated while a snap's automatic
+        # webhook is inactive, re-enabling use_fetch_service adopts the
+        # new secret rather than keeping the stale one.
+        snap = self.factory.makeSnap()
+        naked_snap = removeSecurityProxy(snap)
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = True
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = False
+        self.pushConfig(
+            "snappy",
+            sbom_webhook_url="https://sbom.example.com/webhook",
+            sbom_webhook_secret="rotated-secret",
+        )
+
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = True
+
+        [hook] = self._getSBOMWebhooks(snap)
+        self.assertEqual("rotated-secret", hook.secret)
+
+    def test_disabling_fetch_service_deactivates_webhook(self):
+        # Disabling use_fetch_service deactivates (but does not delete)
+        # the automatically-managed webhook.
+        snap = self.factory.makeSnap()
+        naked_snap = removeSecurityProxy(snap)
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = True
+        [hook] = self._getSBOMWebhooks(snap)
+        self.assertTrue(hook.active)
+
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = False
+
+        [hook] = self._getSBOMWebhooks(snap)
+        self.assertFalse(hook.active)
+
+    def test_reenabling_fetch_service_reactivates_same_webhook(self):
+        # Re-enabling use_fetch_service after it was disabled reuses the
+        # existing webhook rather than creating a duplicate.
+        snap = self.factory.makeSnap()
+        naked_snap = removeSecurityProxy(snap)
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = True
+        [original_hook] = self._getSBOMWebhooks(snap)
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = False
+
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = True
+
+        hooks = self._getSBOMWebhooks(snap)
+        self.assertEqual(1, len(hooks))
+        self.assertEqual(original_hook.id, hooks[0].id)
+        self.assertTrue(hooks[0].active)
+
+    def test_unrelated_field_change_does_not_affect_webhook(self):
+        # Modifying an unrelated field doesn't create or touch the SBOM
+        # webhook.
+        snap = self.factory.makeSnap()
+        naked_snap = removeSecurityProxy(snap)
+        with notify_modified(naked_snap, ["name"]):
+            pass
+        self.assertEqual([], self._getSBOMWebhooks(snap))
+
+    def test_not_configured_does_nothing(self):
+        # If the SBOM webhook URL/secret aren't configured, enabling
+        # use_fetch_service does not create any webhook.
+        self.pushConfig(
+            "snappy", sbom_webhook_url=None, sbom_webhook_secret=None
+        )
+        snap = self.factory.makeSnap()
+        naked_snap = removeSecurityProxy(snap)
+
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = True
+
+        self.assertEqual([], self._getSBOMWebhooks(snap))
+
+    def test_only_url_configured_does_nothing(self):
+        # Both sbom_webhook_url and sbom_webhook_secret must be set;
+        # having only one configured is treated as unconfigured.
+        self.pushConfig(
+            "snappy",
+            sbom_webhook_url="https://sbom.example.com/webhook",
+            sbom_webhook_secret=None,
+        )
+        snap = self.factory.makeSnap()
+        naked_snap = removeSecurityProxy(snap)
+
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = True
+
+        self.assertEqual([], self._getSBOMWebhooks(snap))
+
+    def test_only_secret_configured_does_nothing(self):
+        self.pushConfig(
+            "snappy",
+            sbom_webhook_url=None,
+            sbom_webhook_secret="sbom-secret",
+        )
+        snap = self.factory.makeSnap()
+        naked_snap = removeSecurityProxy(snap)
+
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = True
+
+        self.assertEqual([], self._getSBOMWebhooks(snap))
+
+    def test_ignores_unrelated_webhook_with_same_delivery_url(self):
+        # A webhook created independently by the snap's owner (not by
+        # the automation) is left untouched even if it happens to share
+        # the same delivery_url, because it isn't registered by the
+        # janitor.
+        snap = self.factory.makeSnap()
+        naked_snap = removeSecurityProxy(snap)
+        owner_hook = getUtility(IWebhookSet).new(
+            naked_snap,
+            snap.owner,
+            "https://sbom.example.com/webhook",
+            ["snap:build:0.1"],
+            True,
+            "owners-own-secret",
+        )
+
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = True
+
+        hooks = self._getSBOMWebhooks(snap)
+        self.assertEqual(2, len(hooks))
+        unrelated = removeSecurityProxy(owner_hook)
+        self.assertEqual("owners-own-secret", unrelated.secret)
+        self.assertEqual(["snap:build:0.1"], unrelated.event_types)
+        managed = [hook for hook in hooks if hook.id != unrelated.id][0]
+        self.assertEqual("sbom-secret", managed.secret)
+        self.assertEqual(["snap:build:0.1::fullybuilt"], managed.event_types)
+
+    def test_failure_does_not_propagate(self):
+        # A failure while managing the SBOM webhook is logged as an OOPS
+        # but does not prevent the use_fetch_service change itself from
+        # succeeding.
+        snap = self.factory.makeSnap()
+        naked_snap = removeSecurityProxy(snap)
+
+        with MockPatch(
+            "lp.snappy.subscribers.snap._sync_sbom_webhook",
+            side_effect=Exception("boom"),
+        ):
+            with notify_modified(naked_snap, ["use_fetch_service"]):
+                naked_snap.use_fetch_service = True
+
+        self.assertTrue(naked_snap.use_fetch_service)
+        self.assertEqual(1, len(self.oopses))
 
 
 class TestSnapDeleteWithBuilds(TestCaseWithFactory):

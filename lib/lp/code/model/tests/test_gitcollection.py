@@ -836,6 +836,82 @@ class TestBranchMergeProposalsForReviewer(TestCaseWithFactory):
         ).getMergeProposalsForReviewer(reviewer)
         self.assertEqual([proposal], list(proposals))
 
+    def test_getProposalsForReviewer_for_project_group(self):
+        # A collection scoped through a filter that joins in an extra
+        # table (inProjectGroup joins Product) must still work: the extra
+        # joined table needs to be visible to the correlated visibility
+        # subqueries used by getMergeProposalsForReviewer.
+        reviewer = self.factory.makePerson()
+        projectgroup = self.factory.makeProject()
+        product = self.factory.makeProduct(projectgroup=projectgroup)
+        proposal = self.factory.makeBranchMergeProposalForGit(target=product)
+        proposal.nominateReviewer(reviewer, reviewer)
+        other_proposal = self.factory.makeBranchMergeProposalForGit()
+        other_proposal.nominateReviewer(reviewer, reviewer)
+        proposals = self.all_repositories.inProjectGroup(
+            projectgroup
+        ).getMergeProposalsForReviewer(reviewer)
+        self.assertEqual([proposal], list(proposals))
+
+    def test_getProposalsForReviewer_for_project_group_visible_by_user(self):
+        # The same as test_getProposalsForReviewer_for_project_group, but
+        # additionally scoped by visibleByUser(<real person>), so both the
+        # shared team/policy CTE (team_ids/policy_ids != None) and the
+        # extra `_filterBy` table (Product, from inProjectGroup) are
+        # combined in the same query.
+        reviewer = self.factory.makePerson()
+        viewer = self.factory.makePerson()
+        projectgroup = self.factory.makeProject()
+        product = self.factory.makeProduct(projectgroup=projectgroup)
+        proposal = self.factory.makeBranchMergeProposalForGit(target=product)
+        proposal.nominateReviewer(reviewer, reviewer)
+        other_proposal = self.factory.makeBranchMergeProposalForGit()
+        other_proposal.nominateReviewer(reviewer, reviewer)
+        proposals = (
+            self.all_repositories.visibleByUser(viewer)
+            .inProjectGroup(projectgroup)
+            .getMergeProposalsForReviewer(reviewer)
+        )
+        self.assertEqual([proposal], list(proposals))
+
+    def test_getProposalsForReviewer_team_with_multiple_policy_grants(self):
+        # Visibility through the shared team_ids/policy_ids computation
+        # must still work correctly when a team has been granted access
+        # via more than one AccessPolicyGrant: a team member sees the
+        # proposal, and someone outside the team does not.
+        reviewer = self.factory.makePerson()
+        viewer = self.factory.makePerson()
+        team = self.factory.makeTeam(members=[viewer])
+        product = self.factory.makeProduct()
+        for info_type in (
+            InformationType.USERDATA,
+            InformationType.PROPRIETARY,
+        ):
+            policy = self.factory.makeAccessPolicy(
+                pillar=product, type=info_type, check_existing=True
+            )
+            self.factory.makeAccessPolicyGrant(
+                policy=policy, grantee=team, grantor=product.owner
+            )
+        [source_ref] = self.factory.makeGitRefs(
+            target=product, information_type=InformationType.USERDATA
+        )
+        [target_ref] = self.factory.makeGitRefs(target=product)
+        proposal = self.factory.makeBranchMergeProposalForGit(
+            source_ref=source_ref, target_ref=target_ref
+        )
+        proposal.nominateReviewer(reviewer, reviewer)
+        proposals = self.all_repositories.visibleByUser(
+            viewer
+        ).getMergeProposalsForReviewer(reviewer)
+        self.assertEqual([proposal], list(proposals))
+
+        outsider = self.factory.makePerson()
+        no_proposals = self.all_repositories.visibleByUser(
+            outsider
+        ).getMergeProposalsForReviewer(reviewer)
+        self.assertEqual([], list(no_proposals))
+
 
 class TestGenericGitCollectionVisibleFilter(TestCaseWithFactory):
     layer = DatabaseFunctionalLayer

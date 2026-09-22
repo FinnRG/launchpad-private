@@ -1048,6 +1048,8 @@ class BinaryPackageBuildSet(SpecificBuildFarmJobSourceMixin):
         name=None,
         pocket=None,
         arch_tag=None,
+        date_finished_since=None,
+        date_finished_before=None,
     ):
         """Construct query clauses needed/shared by all getBuild..() methods.
 
@@ -1065,6 +1067,10 @@ class BinaryPackageBuildSet(SpecificBuildFarmJobSourceMixin):
             query clause if present.
         :param arch_tag: optional architecture tag for which to add a
             query clause if present.
+        :param date_finished_since: optional inclusive lower bound for the
+            build finish time.
+        :param date_finished_before: optional exclusive upper bound for the
+            build finish time.
         """
         # Circular. :(
         from lp.soyuz.model.distroarchseries import DistroArchSeries
@@ -1104,6 +1110,15 @@ class BinaryPackageBuildSet(SpecificBuildFarmJobSourceMixin):
                 clauses.append(SourcePackageName.name.contains_string(name))
             else:
                 clauses.append(SourcePackageName.name.is_in(name))
+
+        if date_finished_since is not None:
+            clauses.append(
+                BinaryPackageBuild.date_finished >= date_finished_since
+            )
+        if date_finished_before is not None:
+            clauses.append(
+                BinaryPackageBuild.date_finished < date_finished_before
+            )
 
     def getBuildsForBuilder(
         self,
@@ -1171,34 +1186,7 @@ class BinaryPackageBuildSet(SpecificBuildFarmJobSourceMixin):
         self, context, status=None, name=None, pocket=None, arch_tag=None
     ):
         """See `IBinaryPackageBuildSet`."""
-        if IDistribution.providedBy(context):
-            col = BinaryPackageBuild.distribution_id
-        elif IDistroSeries.providedBy(context):
-            col = BinaryPackageBuild.distro_series_id
-        elif IDistroArchSeries.providedBy(context):
-            col = BinaryPackageBuild.distro_arch_series_id
-        else:
-            raise AssertionError("Unsupported context: %r" % context)
-        condition_clauses = [
-            col == context.id,
-            BinaryPackageBuild.is_distro_archive,
-        ]
-
-        # XXX cprov 2006-09-25: It would be nice if we could encapsulate
-        # the chunk of code below (which deals with the optional parameters)
-        # and share it with ISourcePackage.getBuildRecords()
-
-        # exclude gina-generated and security (dak-made) builds
-        # status == FULLYBUILT && datebuilt == null
-        if status == BuildStatus.FULLYBUILT:
-            condition_clauses.append(BinaryPackageBuild.date_finished != None)
-        else:
-            condition_clauses.append(
-                Or(
-                    BinaryPackageBuild.status != BuildStatus.FULLYBUILT,
-                    BinaryPackageBuild.date_finished != None,
-                )
-            )
+        condition_clauses = self._getBuildsForDistroClauses(context)
 
         # Ordering according status
         # * NEEDSBUILD, BUILDING, GATHERING & UPLOADING by -lastscore
@@ -1250,9 +1238,8 @@ class BinaryPackageBuildSet(SpecificBuildFarmJobSourceMixin):
             DecoratedResultSet(result_set, result_decorator=itemgetter(0))
         )
 
-    def _getCountsForDistroClauses(self, context):
-        """
-        Construct query clauses shared by all getCountsForDistro() methods.
+    def _getBuildsForDistroClauses(self, context):
+        """Construct distro build membership query clauses.
 
         :param context: An `IDistribution`, `IDistroSeries`, or
             `IDistroArchSeries`.
@@ -1266,30 +1253,73 @@ class BinaryPackageBuildSet(SpecificBuildFarmJobSourceMixin):
             col = BinaryPackageBuild.distro_arch_series_id
         else:
             raise AssertionError("Unsupported context: %r" % context)
-        clauses = [
+        return [
             col == context.id,
             BinaryPackageBuild.is_distro_archive,
-            # Exclude gina-generated builds.
             Or(
                 BinaryPackageBuild.status != BuildStatus.FULLYBUILT,
                 BinaryPackageBuild.date_finished != None,
             ),
         ]
 
-        return clauses
+    def getBuildCountsForDistro(
+        self,
+        context,
+        status=None,
+        name=None,
+        pocket=None,
+        date_finished_since=None,
+        date_finished_before=None,
+    ):
+        """See `IBinaryPackageBuildSet`."""
+        clauses = self._getBuildsForDistroClauses(context)
+        origin = []
+        self.handleOptionalParamsForBuildQueries(
+            clauses,
+            origin,
+            status=status,
+            name=name,
+            pocket=pocket,
+            date_finished_since=date_finished_since,
+            date_finished_before=date_finished_before,
+        )
+        rows = (
+            IStore(BinaryPackageBuild)
+            .using(*origin)
+            .find(
+                (
+                    BinaryPackageBuild.status,
+                    BinaryPackageBuild.pocket,
+                    Count(),
+                ),
+                *clauses,
+            )
+            .group_by(
+                BinaryPackageBuild.status,
+                BinaryPackageBuild.pocket,
+            )
+        )
+        return {(status, pocket): count for status, pocket, count in rows}
 
     def getCountsForDistro(
-        self, context, date_finished_since=None
+        self,
+        context,
+        date_finished_since=None,
+        date_finished_before=None,
     ) -> Dict[BuildStatus, int]:
         """See `IBinaryPackageBuildSet`."""
-        clauses = self._getCountsForDistroClauses(context)
-        if date_finished_since is not None:
-            clauses.append(
-                BinaryPackageBuild.date_finished >= date_finished_since
-            )
+        clauses = self._getBuildsForDistroClauses(context)
+        origin = []
+        self.handleOptionalParamsForBuildQueries(
+            clauses,
+            origin,
+            date_finished_since=date_finished_since,
+            date_finished_before=date_finished_before,
+        )
 
         rows = (
             IStore(BinaryPackageBuild)
+            .using(*origin)
             .find(
                 (BinaryPackageBuild.status, Count()),
                 *clauses,
@@ -1302,16 +1332,28 @@ class BinaryPackageBuildSet(SpecificBuildFarmJobSourceMixin):
         return counts
 
     def getPocketCountsForDistro(
-        self, context, statuses=None
+        self,
+        context,
+        statuses=None,
+        date_finished_since=None,
+        date_finished_before=None,
     ) -> Dict[PackagePublishingPocket, int]:
         """See `IBinaryPackageBuildSet`."""
-        clauses = self._getCountsForDistroClauses(context)
+        clauses = self._getBuildsForDistroClauses(context)
+        origin = []
+        self.handleOptionalParamsForBuildQueries(
+            clauses,
+            origin,
+            date_finished_since=date_finished_since,
+            date_finished_before=date_finished_before,
+        )
 
         if statuses is not None:
             clauses.append(BinaryPackageBuild.status.is_in(statuses))
 
         rows = (
             IStore(BinaryPackageBuild)
+            .using(*origin)
             .find(
                 (BinaryPackageBuild.pocket, Count()),
                 *clauses,

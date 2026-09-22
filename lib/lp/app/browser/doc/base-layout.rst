@@ -153,6 +153,7 @@ Page Footers
     >>> for tag in footer.find_all("a"):  # doctest: +ELLIPSIS
     ...     print(tag.string, tag["href"])
     ...
+    Home /?crawler-bait=true
     None http://launchpad.test/
     Take the tour http://launchpad.test/+tour
     Read the guide https://documentation.ubuntu.com/launchpad/

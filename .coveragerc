@@ -1,0 +1,8 @@
+[run]
+branch = True
+parallel = True
+sigterm = True
+source = lib/lp
+
+[report]
+skip_empty = True

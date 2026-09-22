@@ -3,6 +3,7 @@
 
 from datetime import datetime, timedelta, timezone
 
+from testtools.matchers import Equals
 from zope.component import getUtility
 from zope.security.proxy import removeSecurityProxy
 
@@ -27,9 +28,14 @@ from lp.soyuz.tests.test_publishing import (
     SoyuzTestPublisher,
     TestNativePublishingBase,
 )
-from lp.testing import TestCaseWithFactory, person_logged_in
+from lp.testing import (
+    StormStatementRecorder,
+    TestCaseWithFactory,
+    person_logged_in,
+)
 from lp.testing.dbuser import lp_dbuser, switch_dbuser
 from lp.testing.layers import LaunchpadFunctionalLayer, ZopelessDatabaseLayer
+from lp.testing.matchers import HasQueryCount
 from lp.testing.sampledata import ADMIN_EMAIL
 
 
@@ -94,6 +100,151 @@ class TestBuildSet(TestCaseWithFactory):
                         b.updateStatus(BuildStatus.FULLYBUILT)
                     b.buildqueue_record.destroySelf()
             self.builds += builds
+
+    def makeCountedBuild(
+        self,
+        status,
+        pocket=PackagePublishingPocket.RELEASE,
+        name=None,
+        date_finished=None,
+        archive=None,
+    ):
+        sourcepackagename = (
+            self.factory.makeSourcePackageName(name=name) if name else None
+        )
+        build = self.factory.makeBinaryPackageBuild(
+            distroarchseries=self.das_one,
+            archive=archive or self.archive,
+            status=status,
+            pocket=pocket,
+            sourcepackagename=sourcepackagename,
+        )
+        if date_finished is not None:
+            removeSecurityProxy(build).date_finished = date_finished
+        return build
+
+    def test_getBuildCountsForDistro_filters_and_groups(self):
+        cutoff = datetime(2026, 9, 2, 14, 30, tzinfo=timezone.utc)
+        self.makeCountedBuild(
+            BuildStatus.FULLYBUILT,
+            name="match-one",
+            date_finished=cutoff,
+        )
+        self.makeCountedBuild(
+            BuildStatus.FAILEDTOBUILD,
+            pocket=PackagePublishingPocket.UPDATES,
+            name="match-two",
+            date_finished=cutoff + timedelta(minutes=1),
+        )
+        self.makeCountedBuild(
+            BuildStatus.FAILEDTOUPLOAD,
+            pocket=PackagePublishingPocket.PROPOSED,
+            name="other",
+            date_finished=cutoff + timedelta(minutes=1),
+        )
+        self.makeCountedBuild(
+            BuildStatus.FAILEDTOBUILD,
+            pocket=PackagePublishingPocket.SECURITY,
+            name="match-old",
+            date_finished=cutoff - timedelta(minutes=1),
+        )
+        self.makeCountedBuild(
+            BuildStatus.NEEDSBUILD,
+            name="unfinished",
+        )
+        self.makeCountedBuild(
+            BuildStatus.FULLYBUILT,
+            pocket=PackagePublishingPocket.BACKPORTS,
+            name="match-imported",
+        )
+        ppa = self.factory.makeArchive(
+            distribution=self.distribution,
+            purpose=ArchivePurpose.PPA,
+        )
+        self.makeCountedBuild(
+            BuildStatus.FAILEDTOBUILD,
+            name="match-private",
+            date_finished=cutoff,
+            archive=ppa,
+        )
+
+        build_set = getUtility(IBinaryPackageBuildSet)
+        counts = build_set.getBuildCountsForDistro(self.distroseries)
+        self.assertEqual(5, sum(counts.values()))
+        self.assertEqual(
+            1,
+            counts[
+                (
+                    BuildStatus.FULLYBUILT,
+                    PackagePublishingPocket.RELEASE,
+                )
+            ],
+        )
+        self.assertEqual(
+            1,
+            counts[
+                (
+                    BuildStatus.FAILEDTOUPLOAD,
+                    PackagePublishingPocket.PROPOSED,
+                )
+            ],
+        )
+
+        counts = build_set.getBuildCountsForDistro(
+            self.distroseries,
+            date_finished_since=cutoff,
+        )
+        self.assertEqual(3, sum(counts.values()))
+        self.assertNotIn(
+            (
+                BuildStatus.FAILEDTOBUILD,
+                PackagePublishingPocket.SECURITY,
+            ),
+            counts,
+        )
+        counts = build_set.getBuildCountsForDistro(
+            self.distroseries,
+            date_finished_before=cutoff,
+        )
+        self.assertEqual(1, sum(counts.values()))
+        counts = build_set.getBuildCountsForDistro(
+            self.distroseries,
+            date_finished_since=cutoff,
+            date_finished_before=cutoff,
+        )
+        self.assertEqual({}, counts)
+        counts = build_set.getBuildCountsForDistro(
+            self.distroseries,
+            status=BuildStatus.FAILEDTOBUILD,
+            name="match",
+            pocket=PackagePublishingPocket.UPDATES,
+            date_finished_since=cutoff,
+        )
+        self.assertEqual(
+            {
+                (
+                    BuildStatus.FAILEDTOBUILD,
+                    PackagePublishingPocket.UPDATES,
+                ): 1
+            },
+            counts,
+        )
+
+    def test_getBuildCountsForDistro_uses_one_query(self):
+        build_set = getUtility(IBinaryPackageBuildSet)
+        with StormStatementRecorder() as empty_recorder:
+            self.assertEqual(
+                {},
+                build_set.getBuildCountsForDistro(self.distroseries),
+            )
+        self.assertThat(empty_recorder, HasQueryCount(Equals(1)))
+
+        for _ in range(10):
+            self.makeCountedBuild(BuildStatus.NEEDSBUILD)
+        with StormStatementRecorder() as populated_recorder:
+            counts = build_set.getBuildCountsForDistro(self.distroseries)
+        self.assertEqual(10, sum(counts.values()))
+        self.assertThat(populated_recorder, HasQueryCount(Equals(1)))
 
     def test_new_virtualization(self):
         # Builds are virtualized unless Processor.support_nonvirtualized
@@ -218,9 +369,8 @@ class TestBuildSet(TestCaseWithFactory):
         self.assertEqual(4, counts.get(BuildStatus.FULLYBUILT, 0))
         self.assertEqual(1, counts.get(BuildStatus.FAILEDTOBUILD, 0))
 
-    def test_getCountsForDistro_date_filter(self):
-        # When date_finished_since is given, only builds finished on or
-        # after that timestamp are counted.
+    def test_getCountsForDistro_date_filters(self):
+        # Finish-date bounds form a half-open interval.
         self.setUpBuilds()
         # All builds were finished just now, so a future cutoff returns
         # zero for every status.
@@ -237,6 +387,16 @@ class TestBuildSet(TestCaseWithFactory):
         )
         self.assertEqual(8, counts.get(BuildStatus.FULLYBUILT, 0))
         self.assertEqual(2, counts.get(BuildStatus.FAILEDTOBUILD, 0))
+
+        counts = getUtility(IBinaryPackageBuildSet).getCountsForDistro(
+            self.distribution, date_finished_before=future
+        )
+        self.assertEqual(8, counts.get(BuildStatus.FULLYBUILT, 0))
+        self.assertEqual(2, counts.get(BuildStatus.FAILEDTOBUILD, 0))
+        counts = getUtility(IBinaryPackageBuildSet).getCountsForDistro(
+            self.distribution, date_finished_before=past
+        )
+        self.assertEqual({status: 0 for status in BuildStatus.items}, counts)
 
     def test_getCountsForDistro_empty(self):
         # An empty distroseries returns zero for every status.
@@ -334,6 +494,37 @@ class TestBuildSet(TestCaseWithFactory):
         self.assertEqual(
             {pocket: 0 for pocket in PackagePublishingPocket.items}, counts
         )
+
+    def test_getPocketCountsForDistro_date_finished_since(self):
+        cutoff = datetime(2026, 9, 2, 14, 30, tzinfo=timezone.utc)
+        self.makeCountedBuild(
+            BuildStatus.FULLYBUILT,
+            date_finished=cutoff,
+        )
+        self.makeCountedBuild(
+            BuildStatus.FAILEDTOBUILD,
+            pocket=PackagePublishingPocket.UPDATES,
+            date_finished=cutoff - timedelta(seconds=1),
+        )
+
+        counts = getUtility(IBinaryPackageBuildSet).getPocketCountsForDistro(
+            self.distroseries,
+            date_finished_since=cutoff,
+        )
+
+        self.assertEqual(1, counts[PackagePublishingPocket.RELEASE])
+        self.assertEqual(0, counts[PackagePublishingPocket.UPDATES])
+        self.assertEqual(
+            {pocket for pocket in PackagePublishingPocket.items},
+            set(counts),
+        )
+
+        counts = getUtility(IBinaryPackageBuildSet).getPocketCountsForDistro(
+            self.distroseries,
+            date_finished_before=cutoff,
+        )
+        self.assertEqual(0, counts[PackagePublishingPocket.RELEASE])
+        self.assertEqual(1, counts[PackagePublishingPocket.UPDATES])
 
     def test_getPocketCountsForDistro_empty(self):
         # An empty distroseries returns zero for every pocket.

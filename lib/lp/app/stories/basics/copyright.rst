@@ -15,5 +15,6 @@ The main template.
 
     >>> browser.open("http://launchpad.test")
     >>> print(extract_text(find_tag_by_id(browser.contents, "footer")))
+    Home
     © 2004 Canonical Ltd.
     ...

@@ -1342,9 +1342,6 @@ class FeedsPublication(LaunchpadBrowserPublication):
 class FeedsBrowserRequest(LaunchpadBrowserRequest):
     """Request type for a launchpad feed."""
 
-    # Feeds is not served over SSL, so don't force SSL.
-    strict_transport_security = False
-
 
 # ---- testopenid
 

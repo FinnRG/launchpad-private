@@ -2088,6 +2088,19 @@ class TestPersonLiveFSView(BrowserTestCase):
                         soupmatchers.Tag(
                             "next element",
                             "a",
+                            attrs={"id": "upper-batch-nav-batchnav-next"},
+                        ),
+                        soupmatchers.Tag("next link", "strong", text="Next"),
+                    )
+                ),
+            )
+            self.assertThat(
+                view.render(),
+                soupmatchers.HTMLContains(
+                    soupmatchers.Within(
+                        soupmatchers.Tag(
+                            "next element",
+                            "a",
                             attrs={"id": "lower-batch-nav-batchnav-next"},
                         ),
                         soupmatchers.Tag("next link", "strong", text="Next"),
@@ -2124,6 +2137,16 @@ class TestPersonLiveFSView(BrowserTestCase):
                     )
                 )
                 self.assertThat(view.render(), link_match)
+
+            view = create_initialized_view(
+                self.person,
+                "+livefs",
+                principal=self.person,
+                query_string="batch=5&memo=5&start=5",
+            )
+            for lfs in items[batch_size:]:
+                self.assertIn(lfs.name, view.render())
+            self.assertNotIn(items[0].name, view.render())
 
     def test_displays_livefs_only_for_owner(self):
         livefs = self.factory.makeLiveFS(

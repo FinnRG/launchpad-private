@@ -5,6 +5,7 @@
 
 __all__ = [
     "DerivationError",
+    "DistroSeriesBuildRecordsCounts",
     "DistroSeriesNameField",
     "DistroSeriesTranslationTemplateStatistics",
     "IDistroSeries",
@@ -65,6 +66,7 @@ from lp.bugs.interfaces.bugtarget import (
 from lp.bugs.interfaces.structuralsubscription import (
     IStructuralSubscriptionTarget,
 )
+from lp.buildmaster.enums import BuildStatus
 from lp.registry.enums import (
     DistroSeriesDifferenceStatus,
     DistroSeriesDifferenceType,
@@ -181,6 +183,19 @@ class DistroSeriesVersionField(UniqueField):
             Version(version)
         except VersionError as error:
             raise LaunchpadValidationError("'%s': %s" % (version, error))
+
+
+BuildCount = int
+BuildStateName = str
+PackagePublishingPocketName = str
+
+
+class DistroSeriesBuildRecordsCounts(typing.TypedDict):
+    """Grouped binary package build record counts."""
+
+    total: BuildCount
+    by_build_state: typing.Dict[BuildStateName, BuildCount]
+    by_pocket: typing.Dict[PackagePublishingPocketName, BuildCount]
 
 
 class DistroSeriesTranslationTemplateStatistics(typing.TypedDict):
@@ -367,14 +382,48 @@ class IDistroSeriesPublic(
             constraint=email_validator,
         )
     )
-    sourcecount = Attribute("Source Packages Counter")
+    sourcecount = exported(
+        Int(
+            title=_("Source package count"),
+            description=_(
+                "A count of distinct source package names with pending or "
+                "published publications in the release pocket of this series "
+                "in the distribution's primary and partner archives. A job "
+                "scheduled daily updates this count, but publication changes "
+                "may take more than 24 hours to appear."
+            ),
+            required=True,
+            readonly=True,
+            min=0,
+        ),
+        exported_as="source_package_count",
+        readonly=True,
+        as_of="devel",
+    )
     defer_translation_imports = Bool(
         title=_("Defer translation imports"),
         description=_("Suspends any translation imports for this series"),
         default=True,
         required=True,
     )
-    binarycount = Attribute("Binary Packages Counter")
+    binarycount = exported(
+        Int(
+            title=_("Binary package count"),
+            description=_(
+                "A count of distinct binary package names with pending or "
+                "published publications in the release pocket of this series "
+                "in the distribution's primary and partner archives. A job "
+                "scheduled daily updates this count, but publication changes "
+                "may take more than 24 hours to appear."
+            ),
+            required=True,
+            readonly=True,
+            min=0,
+        ),
+        exported_as="binary_package_count",
+        readonly=True,
+        as_of="devel",
+    )
 
     architecturecount = Attribute(
         "The number of architectures in this " "series."
@@ -833,6 +882,70 @@ class IDistroSeriesPublic(
     def updatePackageCount():
         """Update the binary and source package counts for this distro
         series."""
+
+    @operation_parameters(
+        finished_since=Datetime(
+            title=_("Finished since"),
+            required=False,
+            description=_(
+                "Count only builds finished at or after this UTC timestamp."
+            ),
+        ),
+        finished_before=Datetime(
+            title=_("Finished before"),
+            required=False,
+            description=_(
+                "Count only builds finished before this UTC timestamp."
+            ),
+        ),
+        source_name=TextLine(
+            title=_("Source package name"),
+            required=False,
+            description=_(
+                "Count only builds whose source package name contains this "
+                "value."
+            ),
+        ),
+        build_status=Choice(
+            title=_("Build status"),
+            required=False,
+            description=_("Count only builds with this status."),
+            vocabulary=BuildStatus,
+        ),
+        pocket=Choice(
+            title=_("Pocket"),
+            required=False,
+            readonly=True,
+            description=_("Count only builds for this pocket."),
+            vocabulary=PackagePublishingPocket,
+        ),
+    )
+    @export_read_operation()
+    @operation_for_version("devel")
+    def getBuildRecordsCounts(
+        finished_since=None,
+        finished_before=None,
+        source_name=None,
+        build_status=None,
+        pocket=None,
+    ) -> DistroSeriesBuildRecordsCounts:
+        """Return grouped binary package build counts for this series.
+
+        All filters are optional; omitted filters impose no restriction.
+        Filters are applied before counting.  Finish times use the half-open
+        interval ``[finished_since, finished_before)``.  The lower bound must
+        not exceed the upper bound.  Successful build records without a
+        finish time are excluded.
+
+        The response always contains ``total``, ``by_build_state``, and
+        ``by_pocket``.  Both mappings contain every value from their enum,
+        keyed by stable enum name and zero-filled when necessary.  For an
+        empty result all counts are zero; otherwise each mapping sums to
+        ``total``.
+
+        :raises InvalidDateRange: If ``finished_since`` is later than
+            ``finished_before``.
+        """
 
     @operation_parameters(
         name=TextLine(title=_("The name of the source package"), required=True)
