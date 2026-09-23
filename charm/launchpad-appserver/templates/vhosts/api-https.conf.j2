@@ -35,12 +35,8 @@
     ProxyPreserveHost on
 
     RewriteEngine on
-
-{%- if blocked_user_agents %}
-    # Block certain user agents
-    RewriteCond %{HTTP_USER_AGENT} ^.*({{ blocked_user_agents }}).*$ [NC]
-    RewriteRule .* - [F,L]
-{%- endif %}
+{% import "vhosts/abuse-rules.conf.j2" as abuse with context %}
+{{- abuse.abuse_rules() }}
 
     RewriteRule ^/offline\.html$ - [PT]
     RewriteRule ^/robots\.txt$ - [PT]

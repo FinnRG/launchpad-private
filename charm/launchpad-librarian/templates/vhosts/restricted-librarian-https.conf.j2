@@ -38,6 +38,11 @@
         Require all granted
     </Proxy>
 
+{%- if restricted_librarian_abuse_mitigation %}
+{% import "vhosts/abuse-rules.conf.j2" as abuse with context %}
+{{- abuse.abuse_rules(rewrite_engine=true) }}
+{%- endif %}
+
     ProxyPreserveHost on
     # nocanon per https://portal.admin.canonical.com/C42560 to avoid
     # problems with Launchpad's handling of e.g. %2B.
