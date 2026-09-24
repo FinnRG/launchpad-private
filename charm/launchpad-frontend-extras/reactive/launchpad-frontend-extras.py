@@ -107,9 +107,7 @@ def configure_apache_website():
         vhost_names.append("librarian")
 
     site_configs = []
-    # We can afford a somewhat higher keepalive timeout than the default of
-    # 5 seconds.
-    site_configs.append("KeepAliveTimeout 60")
+    site_configs.append(f"KeepAliveTimeout {config['keepalive_timeout']}")
     for vhost_name in vhost_names:
         for scheme in ("http", "https"):
             site_configs.append(
