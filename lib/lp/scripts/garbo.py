@@ -111,6 +111,7 @@ from lp.services.mail.sendmail import (
     set_immediate_mail_delivery,
     simple_sendmail,
 )
+from lp.services.oauth.model import OAuthAuthenticationChallenge
 from lp.services.openid.model.openidconsumer import OpenIDConsumerNonce
 from lp.services.propertycache import cachedproperty
 from lp.services.scripts.base import (
@@ -307,6 +308,16 @@ class LoginTokenPruner(BulkPruner):
     ids_to_prune_query = """
         SELECT id FROM LoginToken WHERE
         created < CURRENT_TIMESTAMP - CAST('1 year' AS interval)
+        """
+
+
+class OAuthAuthenticationChallengePruner(BulkPruner):
+    """Remove consumed and expired hardware-token challenges."""
+
+    target_table_class = OAuthAuthenticationChallenge
+    ids_to_prune_query = """
+        SELECT id FROM OAuthAuthenticationChallenge
+        WHERE consumed OR date_expires <= CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
         """
 
 
@@ -2701,6 +2712,7 @@ class FrequentDatabaseGarbageCollector(BaseDatabaseGarbageCollector):
         BugWatchScheduler,
         OpenIDConsumerAssociationPruner,
         OpenIDConsumerNoncePruner,
+        OAuthAuthenticationChallengePruner,
         PopulateCveSequence,
         PopulateDistributionSourcePackageCache,
         PopulateLatestPersonSourcePackageReleaseCache,
