@@ -62,9 +62,19 @@ options:
       If set, serve a /google{...} URL that can be used to verify domain
       ownership.
     default: ""
-  haproxy_server_options:
+  haproxy_server_options_main:
     type: string
-    description: Options to add to HAProxy "server" lines.
+    description: Options to add to HAProxy "server" lines for the main port.
+    default: check inter 5000 rise 2 fall 5 maxconn 16
+  haproxy_server_options_main_cached:
+    type: string
+    description: >
+      Options to add to HAProxy "server" lines for the copy of the main port
+      that is served via Squid.
+    default: check inter 5000 rise 2 fall 5 maxconn 16
+  haproxy_server_options_xmlrpc:
+    type: string
+    description: Options to add to HAProxy "server" lines for the XML-RPC port.
     default: check inter 5000 rise 2 fall 5 maxconn 16
   haproxy_service_options_main:
     type: string
