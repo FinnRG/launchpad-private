@@ -325,6 +325,18 @@ def deconfigure_loadbalancer():
     remove_state("launchpad.loadbalancer.configured")
 
 
+@when_any(
+    "config.changed.haproxy_server_options",
+    "config.changed.haproxy_service_options_main",
+    "config.changed.haproxy_service_options_xmlrpc",
+    "config.changed.port_main",
+    "config.changed.port_main_cached",
+    "config.changed.port_xmlrpc",
+)
+def reconfigure_loadbalancer():
+    remove_state("launchpad.loadbalancer.configured")
+
+
 @when("vhost-config.available", "service.configured")
 @when_not("launchpad.vhost.configured")
 def configure_vhost():
