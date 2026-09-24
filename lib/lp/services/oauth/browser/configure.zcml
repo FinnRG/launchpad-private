@@ -26,5 +26,17 @@
         name="+access-token"
         class="lp.services.oauth.browser.OAuthAccessTokenView"
         permission="zope.Public" />
+
+      <browser:page
+        for="lp.services.webapp.interfaces.ILaunchpadApplication"
+        name="+hw-challenge"
+        class="lp.services.oauth.browser.OAuthHardwareChallengeView"
+        permission="zope.Public" />
+
+      <browser:page
+        for="lp.services.webapp.interfaces.ILaunchpadApplication"
+        name="+hw-access-token"
+        class="lp.services.oauth.browser.OAuthHardwareAccessTokenView"
+        permission="zope.Public" />
   </lp:facet>
 </configure>

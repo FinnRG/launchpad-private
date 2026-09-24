@@ -4156,7 +4156,7 @@ class PersonOwnedTeamsView(PersonRelatedSoftwareView):
 
 
 class PersonOAuthTokensView(LaunchpadView):
-    """Where users can see/revoke their non-expired access tokens."""
+    """Where users can see/revoke their non-expired OAuth authorizations."""
 
     label = "Authorized applications"
 
@@ -4178,24 +4178,45 @@ class PersonOAuthTokensView(LaunchpadView):
             key=lambda token: token.consumer.key,
         )
 
+    @property
+    def refresh_tokens(self):
+        return sorted(
+            self.context.oauth_refresh_tokens,
+            key=lambda token: token.consumer.key,
+        )
+
     def expireToken(self):
         """Expire the token with the key contained in the request's form."""
         form = self.request.form
-        consumer = getUtility(IOAuthConsumerSet).getByKey(
-            form.get("consumer_key")
-        )
+        consumer_key = form.get("consumer_key")
         token_key = form.get("token_key")
         token_type = form.get("token_type")
-        if token_type == "access_token":
-            token = consumer.getAccessToken(token_key)
-        elif token_type == "request_token":
-            token = consumer.getRequestToken(token_key)
+        if token_type == "refresh_token":
+            token = next(
+                (
+                    candidate
+                    for candidate in self.context.oauth_refresh_tokens
+                    if candidate.key == token_key
+                ),
+                None,
+            )
+            if token is not None:
+                token.revoke(self.user)
+        elif token_type in ("access_token", "request_token"):
+            consumer = getUtility(IOAuthConsumerSet).getByKey(consumer_key)
+            if consumer is None:
+                raise UnexpectedFormData("Invalid OAuth consumer.")
+            if token_type == "access_token":
+                token = consumer.getAccessToken(token_key)
+            else:
+                token = consumer.getRequestToken(token_key)
+            if token is not None:
+                token.date_expires = datetime.now(timezone.utc)
         else:
             raise UnexpectedFormData(
                 "Invalid form value for token_type: %r" % token_type
             )
         if token is not None:
-            token.date_expires = datetime.now(timezone.utc)
             self.request.response.addInfoNotification(
                 "Authorization revoked successfully."
             )
@@ -4203,7 +4224,7 @@ class PersonOAuthTokensView(LaunchpadView):
         else:
             self.request.response.addInfoNotification(
                 "Couldn't find authorization given to %s. Maybe it has been "
-                "revoked already?" % consumer.key
+                "revoked already?" % consumer_key
             )
         self.request.response.redirect(
             canonical_url(self.context, view_name="+oauth-tokens")
