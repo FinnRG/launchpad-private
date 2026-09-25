@@ -10,6 +10,8 @@ __all__ = [
     "DeathRowProcessor",
 ]
 
+import time
+
 from zope.component import getUtility
 
 from lp.archivepublisher.deathrow import getDeathRow
@@ -84,7 +86,9 @@ class DeathRowProcessor(PublisherScript):
             enable_timeout=False,
         )
         try:
+            reap_start = time.monotonic()
             death_row.reap(self.options.dry_run)
+            reaped = time.monotonic()
         except Exception:
             self.logger.exception(
                 "Unexpected exception while doing death-row unpublish"
@@ -96,6 +100,11 @@ class DeathRowProcessor(PublisherScript):
                 self.txn.abort()
             else:
                 self.logger.debug("Committing")
+                commit_start = time.monotonic()
                 self.txn.commit()
+                self.logger.debug(
+                    "Timing: reap=%.3fs commit=%.3fs"
+                    % (reaped - reap_start, time.monotonic() - commit_start)
+                )
         finally:
             clear_request_started()
