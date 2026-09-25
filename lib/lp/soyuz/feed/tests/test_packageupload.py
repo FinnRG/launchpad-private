@@ -1,3 +1,4 @@
+import typing
 import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from unittest.mock import MagicMock
@@ -23,6 +24,12 @@ from lp.testing import (
 from lp.testing.layers import LaunchpadFunctionalLayer
 from lp.testing.matchers import HasQueryCount
 from lp.testing.sampledata import USER_EMAIL
+
+if typing.TYPE_CHECKING:
+    from lp.registry.interfaces.distroseries import IDistroSeries
+    from lp.registry.interfaces.person import IPerson
+    from lp.soyuz.interfaces.queue import IPackageUpload
+    from lp.soyuz.interfaces.sourcepackagerelease import ISourcePackageRelease
 
 
 def _recover_html_source(feed_typed_data):
@@ -181,7 +188,7 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
 
         self.assertEqual(3, len(feed._getItemsWorker()))
 
-    def test_itemToFeedEntry_returns_expected_feedentry(self):
+    def test_itemToFeedEntry_returns_expected_feedentry(self) -> None:
         distroseries = self.factory.makeDistroSeries()
         creator = self.factory.makePerson()
         signer = self.factory.makePerson()
@@ -194,7 +201,7 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         transaction.commit()
 
         feed = self._make_feed(distroseries)
-        entry = feed.itemToFeedEntry(upload)
+        entry = feed.itemToFeedEntry(upload, spr=upload.sourcepackagerelease)
 
         self.assertIsInstance(entry, FeedEntry)
         captured_action = (
@@ -211,7 +218,7 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         self.assertIn("some changes", entry.content.content)
         self.assertIn("Changed-By:", entry.content.content)
 
-    def test_entry_content_includes_changelog(self):
+    def test_entry_content_includes_changelog(self) -> None:
         distroseries = self.factory.makeDistroSeries()
         upload = self._make_signed_upload(
             distroseries, changelog_entry="* Fixed everything\n* Best app ever"
@@ -219,12 +226,14 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         transaction.commit()
 
         feed = self._make_feed(distroseries)
-        entry = feed.itemToFeedEntry(upload)
+        entry = feed.itemToFeedEntry(upload, spr=upload.sourcepackagerelease)
 
         self.assertIn("Fixed everything", entry.content.content)
         self.assertIn("Best app ever", entry.content.content)
 
-    def test_entry_content_xml_escaping_changelog_renders_correctly(self):
+    def test_entry_content_xml_escaping_changelog_renders_correctly(
+        self,
+    ) -> None:
         """Checks that special chars are properly escaped in the feed.
 
         The content is HTML (wrapped in <pre>) embedded in an XML document,
@@ -250,7 +259,7 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         transaction.commit()
 
         feed = self._make_feed(distroseries)
-        entry = feed.itemToFeedEntry(upload)
+        entry = feed.itemToFeedEntry(upload, spr=upload.sourcepackagerelease)
 
         self.assertEqual("html", entry.content.content_type)
 
@@ -275,7 +284,7 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         _assert_tags_equal(self, parser, expected_tags=["pre", "a"])
         self.assertIn(changelog_text, "".join(parser.text_chunks))
 
-    def test_entry_content_preserves_linebreaks_and_indentation(self):
+    def test_entry_content_preserves_linebreaks_and_indentation(self) -> None:
         """Changelog line breaks and leading indentation survive.
 
         <pre> preserves whitespace verbatim once an HTML renderer decodes
@@ -294,7 +303,7 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         transaction.commit()
 
         feed = self._make_feed(distroseries)
-        entry = feed.itemToFeedEntry(upload)
+        entry = feed.itemToFeedEntry(upload, spr=upload.sourcepackagerelease)
 
         html_source = _recover_html_source(entry.content)
         self.assertTrue(html_source.startswith('<pre class="wrap">'))
@@ -308,7 +317,7 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         self.assertIn("  - sub point two", rendered_text)
         self.assertIn("* Fixed everything\n  - sub point one", rendered_text)
 
-    def test_entry_content_does_not_linkify_bug_references(self):
+    def test_entry_content_does_not_linkify_bug_references(self) -> None:
         """LP: #XXXXX and bug numbers stay as plain text.
 
         Linkifying them would need a root URL to build an absolute link,
@@ -323,7 +332,7 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         transaction.commit()
 
         feed = self._make_feed(distroseries)
-        entry = feed.itemToFeedEntry(upload)
+        entry = feed.itemToFeedEntry(upload, spr=upload.sourcepackagerelease)
 
         html_source = _recover_html_source(entry.content)
         parser = _TagCollectingParser()
@@ -334,18 +343,18 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         _assert_tags_equal(self, parser, expected_tags=["pre", "a"])
         self.assertIn(changelog_text, "".join(parser.text_chunks))
 
-    def test_entry_content_includes_changesfile_link(self):
+    def test_entry_content_includes_changesfile_link(self) -> None:
         distroseries = self.factory.makeDistroSeries()
         upload = self._make_signed_upload(distroseries)
         transaction.commit()
 
         feed = self._make_feed(distroseries)
-        entry = feed.itemToFeedEntry(upload)
+        entry = feed.itemToFeedEntry(upload, spr=upload.sourcepackagerelease)
 
         self.assertIn("Changes file:", entry.content.content)
         self.assertIn(upload.changes_file_url, entry.content.content)
 
-    def test_entry_content_omits_changesfile_link_when_missing(self):
+    def test_entry_content_omits_changesfile_link_when_missing(self) -> None:
         """itemToFeedEntry does not crash when changesfile is absent."""
         distroseries = self.factory.makeDistroSeries()
         upload = self._make_signed_upload(distroseries)
@@ -353,12 +362,12 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         transaction.commit()
 
         feed = self._make_feed(distroseries)
-        entry = feed.itemToFeedEntry(upload)
+        entry = feed.itemToFeedEntry(upload, spr=upload.sourcepackagerelease)
 
         self.assertIsInstance(entry, FeedEntry)
         self.assertNotIn("Changes file:", entry.content.content)
 
-    def test_entry_content_includes_email_addresses(self):
+    def test_entry_content_includes_email_addresses(self) -> None:
         distroseries = self.factory.makeDistroSeries()
         creator = self.factory.makePerson()
         upload = self._make_signed_upload(
@@ -367,7 +376,7 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         transaction.commit()
 
         feed = self._make_feed(distroseries)
-        entry = feed.itemToFeedEntry(upload)
+        entry = feed.itemToFeedEntry(upload, spr=upload.sourcepackagerelease)
         expected = "Changed-By: %s &amp;lt;%s&amp;gt;" % (
             creator.displayname,
             creator.preferredemail.email,
@@ -375,7 +384,9 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
 
         self.assertIn(expected, entry.content.content)
 
-    def test_entry_content_signed_by_shown_when_different_from_creator(self):
+    def test_entry_content_signed_by_shown_when_different_from_creator(
+        self,
+    ) -> None:
         """Signed-By line appears when signing_key_owner != spr.creator"""
         distroseries = self.factory.makeDistroSeries()
         creator = self.factory.makePerson()
@@ -386,12 +397,14 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         transaction.commit()
 
         feed = self._make_feed(distroseries)
-        entry = feed.itemToFeedEntry(upload)
+        entry = feed.itemToFeedEntry(upload, spr=upload.sourcepackagerelease)
 
         self.assertIn("Signed-By:", entry.content.content)
         self.assertIn(signer.displayname, entry.content.content)
 
-    def test_entry_content_signed_by_omitted_when_same_as_creator(self):
+    def test_entry_content_signed_by_omitted_when_same_as_creator(
+        self,
+    ) -> None:
         """Signed-By line is omitted when signing_key_owner == spr.creator"""
         distroseries = self.factory.makeDistroSeries()
         creator = self.factory.makePerson()
@@ -401,11 +414,11 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         transaction.commit()
 
         feed = self._make_feed(distroseries)
-        entry = feed.itemToFeedEntry(upload)
+        entry = feed.itemToFeedEntry(upload, spr=upload.sourcepackagerelease)
 
         self.assertNotIn("Signed-By:", entry.content.content)
 
-    def test_spr_none_does_not_crash(self):
+    def test_spr_none_does_not_crash(self) -> None:
         # A custom-only upload (spr=None) that passes the filters produces a
         # valid feed entry without crashing.
         distroseries = self.factory.makeDistroSeries()
@@ -422,7 +435,7 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         transaction.commit()
 
         feed = self._make_feed(distroseries)
-        entry = feed.itemToFeedEntry(upload)
+        entry = feed.itemToFeedEntry(upload, spr=None)
 
         self.assertIsInstance(entry, FeedEntry)
         # Falls back to distroseries URL when spr is None.
@@ -619,6 +632,180 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         self.assertEqual(1, len(items))
         self.assertIn(manual_upload.displayname, items[0].link_alternate)
 
+    def _make_debian_sync(
+        self,
+        distroseries: "IDistroSeries",
+        requester: "typing.Optional[IPerson]" = None,
+        completed: bool = True,
+    ) -> "typing.Tuple[IPackageUpload, ISourcePackageRelease]":
+        debian = self.factory.makeDistribution()
+        unstable = self.factory.makeDistroSeries(
+            distribution=debian, name="unstable"
+        )
+        publication = self.factory.makeSourcePackagePublishingHistory(
+            distroseries=unstable,
+            archive=debian.main_archive,
+            pocket=PackagePublishingPocket.RELEASE,
+        )
+        spr = publication.sourcepackagerelease
+        removeSecurityProxy(spr).changelog_entry = "* Changes from Debian"
+        with admin_logged_in():
+            job = self.factory.makePlainPackageCopyJob(
+                package_name=spr.name,
+                package_version=spr.version,
+                source_archive=debian.main_archive,
+                target_archive=distroseries.main_archive,
+                target_distroseries=distroseries,
+                target_pocket=PackagePublishingPocket.RELEASE,
+                requester=requester,
+            )
+            upload = self.factory.makePackageUpload(
+                distroseries=distroseries,
+                archive=distroseries.main_archive,
+                status=(
+                    PackageUploadStatus.DONE
+                    if completed
+                    else PackageUploadStatus.ACCEPTED
+                ),
+                package_copy_job=removeSecurityProxy(job).context,
+            )
+        if completed:
+            self.factory.makeSourcePackagePublishingHistory(
+                sourcepackagerelease=spr,
+                distroseries=distroseries,
+                archive=distroseries.main_archive,
+                pocket=PackagePublishingPocket.RELEASE,
+                packageupload=upload,
+            )
+        return upload, spr
+
+    def test_debian_sync_is_included(self) -> None:
+        distroseries = self.factory.makeDistroSeries()
+        upload, spr = self._make_debian_sync(distroseries)
+        removeSecurityProxy(spr).creator = getUtility(
+            ILaunchpadCelebrities
+        ).katie
+        transaction.commit()
+
+        items = self._make_feed(distroseries)._getItemsWorker()
+
+        self.assertEqual(1, len(items))
+        self.assertIn(spr.name, items[0].title.content)
+        self.assertIn("Accepted", items[0].title.content)
+        self.assertIn(spr.version, items[0].link_alternate)
+        self.assertIn("Changes from Debian", items[0].content.content)
+
+    def test_debian_sync_entry_uses_supplied_source(self) -> None:
+        distroseries = self.factory.makeDistroSeries()
+        upload, spr = self._make_debian_sync(distroseries)
+        transaction.commit()
+
+        entry = self._make_feed(distroseries).itemToFeedEntry(upload, spr=spr)
+
+        self.assertIn(spr.name, entry.title.content)
+        self.assertIn(spr.version, entry.link_alternate)
+        self.assertIn("Changes from Debian", entry.content.content)
+
+    def test_copy_sources_uses_target_publication(self) -> None:
+        distroseries = self.factory.makeDistroSeries()
+        upload, spr = self._make_debian_sync(distroseries)
+        source_archive = upload.package_copy_job.source_archive
+        source_series = source_archive.distribution["unstable"]
+        latest_spr = self.factory.makeSourcePackageRelease(
+            sourcepackagename=spr.sourcepackagename,
+            version=spr.version,
+            distroseries=source_series,
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            sourcepackagerelease=latest_spr,
+            distroseries=source_series,
+            archive=source_archive,
+        )
+        transaction.commit()
+
+        feed = self._make_feed(distroseries)
+        self.assertEqual(spr, feed._getCopySources([upload])[upload.id])
+
+    def test_copy_sources_ignores_unrelated_target_publication(self) -> None:
+        distroseries = self.factory.makeDistroSeries()
+        upload, spr = self._make_debian_sync(distroseries, completed=False)
+        other_upload = self.factory.makePackageUpload(
+            distroseries=distroseries,
+            archive=distroseries.main_archive,
+        )
+        self.factory.makeSourcePackagePublishingHistory(
+            sourcepackagerelease=spr,
+            distroseries=distroseries,
+            archive=distroseries.main_archive,
+            pocket=PackagePublishingPocket.RELEASE,
+            packageupload=other_upload,
+        )
+        transaction.commit()
+
+        feed = self._make_feed(distroseries)
+        self.assertIsNone(feed._getCopySources([upload])[upload.id])
+
+    def test_debian_sync_without_target_publication_is_excluded(self) -> None:
+        distroseries = self.factory.makeDistroSeries()
+        upload, spr = self._make_debian_sync(distroseries, completed=False)
+        transaction.commit()
+
+        self.assertEqual([], self._make_feed(distroseries)._getItemsWorker())
+
+        self.factory.makeSourcePackagePublishingHistory(
+            sourcepackagerelease=spr,
+            distroseries=distroseries,
+            archive=distroseries.main_archive,
+            pocket=PackagePublishingPocket.RELEASE,
+            packageupload=upload,
+        )
+        transaction.commit()
+
+        items = self._make_feed(distroseries)._getItemsWorker()
+        self.assertEqual(1, len(items))
+        self.assertIn(spr.name, items[0].title.content)
+
+    def test_debian_auto_sync_is_excluded(self) -> None:
+        distroseries = self.factory.makeDistroSeries()
+        self._make_debian_sync(
+            distroseries, requester=getUtility(ILaunchpadCelebrities).katie
+        )
+        transaction.commit()
+
+        self.assertEqual([], self._make_feed(distroseries)._getItemsWorker())
+
+    def test_debian_sync_with_stale_source_metadata_is_included(self) -> None:
+        distroseries = self.factory.makeDistroSeries()
+        upload, spr = self._make_debian_sync(distroseries)
+        removeSecurityProxy(upload.package_copy_job).package_name = (
+            "missing-source"
+        )
+        transaction.commit()
+
+        items = self._make_feed(distroseries)._getItemsWorker()
+
+        self.assertEqual(1, len(items))
+        self.assertIn(spr.name, items[0].title.content)
+
+    def test_unpublished_private_source_sync_is_excluded(self) -> None:
+        distroseries = self.factory.makeDistroSeries()
+        upload, spr = self._make_debian_sync(distroseries, completed=False)
+        with admin_logged_in():
+            private_archive = self.factory.makeArchive(private=True)
+            self.factory.makeSourcePackagePublishingHistory(
+                sourcepackagerelease=spr,
+                archive=private_archive,
+                distroseries=self.factory.makeDistroSeries(
+                    distribution=private_archive.distribution
+                ),
+            )
+            removeSecurityProxy(upload.package_copy_job).source_archive = (
+                private_archive
+            )
+        transaction.commit()
+
+        self.assertEqual([], self._make_feed(distroseries)._getItemsWorker())
+
     def test_signed_source_upload_is_included(self):
         # A regular signed source upload passes all filters and appears.
         distroseries = self.factory.makeDistroSeries()
@@ -651,6 +838,29 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         )
 
         self.assertThat(recorder2, HasQueryCount.byEquality(recorder1))
+
+    def test_feed_query_count_is_constant_with_syncs(self) -> None:
+        distroseries = self.factory.makeDistroSeries()
+        feed = self._make_feed(distroseries)
+
+        def make_sync() -> None:
+            self._make_debian_sync(
+                distroseries, requester=self.factory.makePerson()
+            )
+
+        def render_feed() -> typing.List[FeedEntry]:
+            transaction.commit()
+            return feed._getItemsWorker()
+
+        recorder1, recorder2 = record_two_runs(
+            tested_method=render_feed,
+            item_creator=make_sync,
+            first_round_number=1,
+            second_round_number=5,
+        )
+
+        self.assertThat(recorder2, HasQueryCount.byEquality(recorder1))
+        self.assertEqual(6, len(render_feed()))
 
 
 class TestNewPackageUploadsFeedSecurity(TestCaseWithFactory):
@@ -738,7 +948,7 @@ class TestNewPackageUploadsFeedSecurity(TestCaseWithFactory):
         parser.feed(html_source)
         return parser
 
-    def test_changelog_script_tag_is_not_parsed_as_markup(self):
+    def test_changelog_script_tag_is_not_parsed_as_markup(self) -> None:
         distroseries = self.factory.makeDistroSeries()
         payload = "<script>alert(document.cookie)</script>"
         upload = self._make_signed_upload(
@@ -747,7 +957,7 @@ class TestNewPackageUploadsFeedSecurity(TestCaseWithFactory):
         transaction.commit()
 
         feed = self._make_feed(distroseries)
-        entry = feed.itemToFeedEntry(upload)
+        entry = feed.itemToFeedEntry(upload, spr=upload.sourcepackagerelease)
         parser = self._parse_content_as_a_reader_would(entry)
 
         _assert_tags_equal(self, parser, expected_tags=["pre", "a"])
@@ -762,7 +972,9 @@ class TestNewPackageUploadsFeedSecurity(TestCaseWithFactory):
         html_page_parser.feed(entry.content.html_page_content)
         _assert_tags_equal(self, html_page_parser, expected_tags=["pre", "a"])
 
-    def test_changelog_event_handler_attribute_is_not_parsed_as_markup(self):
+    def test_changelog_event_handler_attribute_is_not_parsed_as_markup(
+        self,
+    ) -> None:
         distroseries = self.factory.makeDistroSeries()
         payload = '<img src=x onerror="alert(1)">'
         upload = self._make_signed_upload(
@@ -771,7 +983,7 @@ class TestNewPackageUploadsFeedSecurity(TestCaseWithFactory):
         transaction.commit()
 
         feed = self._make_feed(distroseries)
-        entry = feed.itemToFeedEntry(upload)
+        entry = feed.itemToFeedEntry(upload, spr=upload.sourcepackagerelease)
         parser = self._parse_content_as_a_reader_would(entry)
 
         _assert_tags_equal(self, parser, expected_tags=["pre", "a"])
@@ -781,7 +993,7 @@ class TestNewPackageUploadsFeedSecurity(TestCaseWithFactory):
         html_page_parser.feed(entry.content.html_page_content)
         _assert_tags_equal(self, html_page_parser, expected_tags=["pre", "a"])
 
-    def test_changed_by_display_name_with_markup_is_not_parsed(self):
+    def test_changed_by_display_name_with_markup_is_not_parsed(self) -> None:
         # Changed-By is built from Person.displayname, which is
         # user-settable free text and carries the same injection risk as
         # the changelog body. It must be equally inert.
@@ -793,7 +1005,7 @@ class TestNewPackageUploadsFeedSecurity(TestCaseWithFactory):
         transaction.commit()
 
         feed = self._make_feed(distroseries)
-        entry = feed.itemToFeedEntry(upload)
+        entry = feed.itemToFeedEntry(upload, spr=upload.sourcepackagerelease)
         parser = self._parse_content_as_a_reader_would(entry)
 
         _assert_tags_equal(self, parser, expected_tags=["pre", "a"])
@@ -802,7 +1014,7 @@ class TestNewPackageUploadsFeedSecurity(TestCaseWithFactory):
         html_page_parser.feed(entry.content.html_page_content)
         _assert_tags_equal(self, html_page_parser, expected_tags=["pre", "a"])
 
-    def test_maintainer_display_name_with_markup_is_not_parsed(self):
+    def test_maintainer_display_name_with_markup_is_not_parsed(self) -> None:
         distroseries = self.factory.makeDistroSeries()
         maintainer = self.factory.makePerson(
             displayname="<img src=x onerror=alert(1)>"
@@ -811,7 +1023,7 @@ class TestNewPackageUploadsFeedSecurity(TestCaseWithFactory):
         transaction.commit()
 
         feed = self._make_feed(distroseries)
-        entry = feed.itemToFeedEntry(upload)
+        entry = feed.itemToFeedEntry(upload, spr=upload.sourcepackagerelease)
         parser = self._parse_content_as_a_reader_would(entry)
 
         _assert_tags_equal(self, parser, expected_tags=["pre", "a"])
@@ -820,7 +1032,9 @@ class TestNewPackageUploadsFeedSecurity(TestCaseWithFactory):
         html_page_parser.feed(entry.content.html_page_content)
         _assert_tags_equal(self, html_page_parser, expected_tags=["pre", "a"])
 
-    def test_entry_content_does_not_escape_html_twice_incorrectly(self):
+    def test_entry_content_does_not_escape_html_twice_incorrectly(
+        self,
+    ) -> None:
         # Guard against a regression where content is escaped a
         # different number of times than intended: exactly two escape
         # passes (HTML layer, then XML layer) should be applied, so a
@@ -836,7 +1050,7 @@ class TestNewPackageUploadsFeedSecurity(TestCaseWithFactory):
         transaction.commit()
 
         feed = self._make_feed(distroseries)
-        entry = feed.itemToFeedEntry(upload)
+        entry = feed.itemToFeedEntry(upload, spr=upload.sourcepackagerelease)
 
         self.assertIn("a &amp;lt; b", entry.content.content)
         self.assertNotIn("a < b", entry.content.content)

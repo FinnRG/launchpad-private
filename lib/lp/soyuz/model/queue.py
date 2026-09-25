@@ -11,6 +11,7 @@ __all__ = [
     "PackageUploadSource",
 ]
 
+import typing
 from collections import defaultdict
 from datetime import timezone
 from itertools import chain
@@ -32,6 +33,7 @@ from storm.properties import DateTime
 from storm.store import EmptyResultSet, Store
 from zope.component import getUtility
 from zope.interface import implementer
+from zope.security.proxy import removeSecurityProxy
 
 from lp.app.errors import NotFoundError
 from lp.archiveuploader.tagfiles import parse_tagfile_content
@@ -89,6 +91,9 @@ from lp.soyuz.model.binarypackagerelease import BinaryPackageRelease
 from lp.soyuz.model.component import Component
 from lp.soyuz.model.distroarchseries import DistroArchSeries
 from lp.soyuz.model.section import Section
+
+if typing.TYPE_CHECKING:
+    from lp.soyuz.interfaces.sourcepackagerelease import ISourcePackageRelease
 
 
 def debug(logger, msg):
@@ -1860,6 +1865,47 @@ class PackageUploadSet:
         return IStore(PackageUpload).find(
             PackageUpload, PackageUpload.package_copy_job_id.is_in(pcj_ids)
         )
+
+    def getCopySources(
+        self, uploads: typing.Iterable[IPackageUpload]
+    ) -> "typing.Dict[int, typing.Optional[ISourcePackageRelease]]":
+        """See `IPackageUploadSet`."""
+        from lp.services.job.model.job import Job
+        from lp.soyuz.model.publishing import SourcePackagePublishingHistory
+        from lp.soyuz.model.sourcepackagerelease import SourcePackageRelease
+
+        copies = [
+            removeSecurityProxy(upload)
+            for upload in uploads
+            if upload.contains_copy
+        ]
+        if not copies:
+            return {}
+
+        publications = load_referencing(
+            SourcePackagePublishingHistory, copies, ["packageupload_id"]
+        )
+        releases = load_related(
+            SourcePackageRelease, publications, ["sourcepackagerelease_id"]
+        )
+        load_related(SourcePackageName, releases, ["sourcepackagename_id"])
+        load_related(Section, releases, ["section_id"])
+        sources: typing.Dict[int, typing.Optional[ISourcePackageRelease]] = {
+            upload.id: None for upload in copies
+        }
+        for publication in publications:
+            sources[publication.packageupload_id] = (
+                publication.sourcepackagerelease
+            )
+        jobs = load_related(
+            Job, [upload.package_copy_job for upload in copies], ["job_id"]
+        )
+        list(
+            getUtility(IPersonSet).getPrecachedPersonsFromIDs(
+                [job.requester_id for job in jobs], need_preferred_email=True
+            )
+        )
+        return sources
 
 
 def prefill_packageupload_caches(uploads, puses, pubs, pucs, logs):
