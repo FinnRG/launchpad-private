@@ -636,6 +636,7 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         self,
         distroseries: "IDistroSeries",
         requester: "typing.Optional[IPerson]" = None,
+        completed: bool = True,
     ) -> "typing.Tuple[IPackageUpload, ISourcePackageRelease]":
         debian = self.factory.makeDistribution()
         unstable = self.factory.makeDistroSeries(
@@ -661,8 +662,20 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
             upload = self.factory.makePackageUpload(
                 distroseries=distroseries,
                 archive=distroseries.main_archive,
-                status=PackageUploadStatus.DONE,
+                status=(
+                    PackageUploadStatus.DONE
+                    if completed
+                    else PackageUploadStatus.ACCEPTED
+                ),
                 package_copy_job=removeSecurityProxy(job).context,
+            )
+        if completed:
+            self.factory.makeSourcePackagePublishingHistory(
+                sourcepackagerelease=spr,
+                distroseries=distroseries,
+                archive=distroseries.main_archive,
+                pocket=PackagePublishingPocket.RELEASE,
+                packageupload=upload,
             )
         return upload, spr
 
@@ -693,7 +706,7 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         self.assertIn(spr.version, entry.link_alternate)
         self.assertIn("Changes from Debian", entry.content.content)
 
-    def test_copy_sources_uses_latest_publication(self) -> None:
+    def test_copy_sources_uses_target_publication(self) -> None:
         distroseries = self.factory.makeDistroSeries()
         upload, spr = self._make_debian_sync(distroseries)
         source_archive = upload.package_copy_job.source_archive
@@ -711,64 +724,46 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
         transaction.commit()
 
         feed = self._make_feed(distroseries)
-        self.assertEqual(latest_spr, feed._getCopySources([upload])[upload.id])
-
-    def test_copy_sources_respects_source_series_and_pocket(self) -> None:
-        distroseries = self.factory.makeDistroSeries()
-        upload, spr = self._make_debian_sync(distroseries)
-        copy_job = removeSecurityProxy(upload.package_copy_job)
-        source_archive = copy_job.source_archive
-        source_series = source_archive.distribution["unstable"]
-        copy_job.metadata = dict(
-            copy_job.metadata,
-            source_distroseries=source_series.name,
-            source_pocket=PackagePublishingPocket.RELEASE.value,
-        )
-        other_series = self.factory.makeDistroSeries(
-            distribution=source_archive.distribution
-        )
-        for series, pocket in (
-            (other_series, PackagePublishingPocket.RELEASE),
-            (source_series, PackagePublishingPocket.SECURITY),
-        ):
-            other_spr = self.factory.makeSourcePackageRelease(
-                sourcepackagename=spr.sourcepackagename,
-                version=spr.version,
-                distroseries=series,
-            )
-            self.factory.makeSourcePackagePublishingHistory(
-                sourcepackagerelease=other_spr,
-                distroseries=series,
-                archive=source_archive,
-                pocket=pocket,
-            )
-        transaction.commit()
-
-        feed = self._make_feed(distroseries)
         self.assertEqual(spr, feed._getCopySources([upload])[upload.id])
 
-    def test_copy_sources_matches_exact_version(self) -> None:
+    def test_copy_sources_ignores_unrelated_target_publication(self) -> None:
         distroseries = self.factory.makeDistroSeries()
-        upload, spr = self._make_debian_sync(distroseries)
-        copy_job = removeSecurityProxy(upload.package_copy_job)
-        source_archive = copy_job.source_archive
-        source_series = source_archive.distribution["unstable"]
-        removeSecurityProxy(spr).version = "1.0"
-        copy_job.metadata = dict(copy_job.metadata, package_version="1.0")
-        other_spr = self.factory.makeSourcePackageRelease(
-            sourcepackagename=spr.sourcepackagename,
-            version="1.0-0",
-            distroseries=source_series,
+        upload, spr = self._make_debian_sync(distroseries, completed=False)
+        other_upload = self.factory.makePackageUpload(
+            distroseries=distroseries,
+            archive=distroseries.main_archive,
         )
         self.factory.makeSourcePackagePublishingHistory(
-            sourcepackagerelease=other_spr,
-            distroseries=source_series,
-            archive=source_archive,
+            sourcepackagerelease=spr,
+            distroseries=distroseries,
+            archive=distroseries.main_archive,
+            pocket=PackagePublishingPocket.RELEASE,
+            packageupload=other_upload,
         )
         transaction.commit()
 
         feed = self._make_feed(distroseries)
-        self.assertEqual(spr, feed._getCopySources([upload])[upload.id])
+        self.assertIsNone(feed._getCopySources([upload])[upload.id])
+
+    def test_debian_sync_without_target_publication_is_excluded(self) -> None:
+        distroseries = self.factory.makeDistroSeries()
+        upload, spr = self._make_debian_sync(distroseries, completed=False)
+        transaction.commit()
+
+        self.assertEqual([], self._make_feed(distroseries)._getItemsWorker())
+
+        self.factory.makeSourcePackagePublishingHistory(
+            sourcepackagerelease=spr,
+            distroseries=distroseries,
+            archive=distroseries.main_archive,
+            pocket=PackagePublishingPocket.RELEASE,
+            packageupload=upload,
+        )
+        transaction.commit()
+
+        items = self._make_feed(distroseries)._getItemsWorker()
+        self.assertEqual(1, len(items))
+        self.assertIn(spr.name, items[0].title.content)
 
     def test_debian_auto_sync_is_excluded(self) -> None:
         distroseries = self.factory.makeDistroSeries()
@@ -779,12 +774,34 @@ class TestNewPackageUploadsFeed(TestCaseWithFactory):
 
         self.assertEqual([], self._make_feed(distroseries)._getItemsWorker())
 
-    def test_debian_sync_with_missing_source_is_excluded(self) -> None:
+    def test_debian_sync_with_stale_source_metadata_is_included(self) -> None:
         distroseries = self.factory.makeDistroSeries()
         upload, spr = self._make_debian_sync(distroseries)
         removeSecurityProxy(upload.package_copy_job).package_name = (
             "missing-source"
         )
+        transaction.commit()
+
+        items = self._make_feed(distroseries)._getItemsWorker()
+
+        self.assertEqual(1, len(items))
+        self.assertIn(spr.name, items[0].title.content)
+
+    def test_unpublished_private_source_sync_is_excluded(self) -> None:
+        distroseries = self.factory.makeDistroSeries()
+        upload, spr = self._make_debian_sync(distroseries, completed=False)
+        with admin_logged_in():
+            private_archive = self.factory.makeArchive(private=True)
+            self.factory.makeSourcePackagePublishingHistory(
+                sourcepackagerelease=spr,
+                archive=private_archive,
+                distroseries=self.factory.makeDistroSeries(
+                    distribution=private_archive.distribution
+                ),
+            )
+            removeSecurityProxy(upload.package_copy_job).source_archive = (
+                private_archive
+            )
         transaction.commit()
 
         self.assertEqual([], self._make_feed(distroseries)._getItemsWorker())

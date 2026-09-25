@@ -25,7 +25,6 @@ from storm.locals import (
     Int,
     Join,
     List,
-    Or,
     Reference,
     ReferenceSet,
     Unicode,
@@ -1871,7 +1870,6 @@ class PackageUploadSet:
         self, uploads: typing.Iterable[IPackageUpload]
     ) -> "typing.Dict[int, typing.Optional[ISourcePackageRelease]]":
         """See `IPackageUploadSet`."""
-        from lp.registry.model.distroseries import DistroSeries
         from lp.services.job.model.job import Job
         from lp.soyuz.model.publishing import SourcePackagePublishingHistory
         from lp.soyuz.model.sourcepackagerelease import SourcePackageRelease
@@ -1884,78 +1882,21 @@ class PackageUploadSet:
         if not copies:
             return {}
 
-        publications = SourcePackagePublishingHistory
-        conditions: typing.List[And] = []
-        for upload in copies:
-            copy_job = upload.concrete_package_copy_job
-            clauses = [
-                publications.archive_id == copy_job.source_archive.id,
-                SourcePackageName.name == copy_job.package_name,
-                Cast(SourcePackageRelease.version, "text")
-                == copy_job.package_version,
-            ]
-            series_name = copy_job.metadata.get("source_distroseries")
-            if series_name is not None:
-                clauses.extend(
-                    [
-                        DistroSeries.distribution_id
-                        == copy_job.source_archive.distribution.id,
-                        DistroSeries.name == series_name,
-                    ]
-                )
-            if copy_job.source_pocket is not None:
-                clauses.append(publications.pocket == copy_job.source_pocket)
-            conditions.append(And(*clauses))
-
-        matches = list(
-            IStore(publications)
-            .find(
-                (
-                    publications,
-                    SourcePackageRelease,
-                    SourcePackageName,
-                    DistroSeries,
-                ),
-                publications.sourcepackagerelease_id
-                == SourcePackageRelease.id,
-                publications.sourcepackagename_id == SourcePackageName.id,
-                publications.distroseries_id == DistroSeries.id,
-                Or(*conditions),
-            )
-            .order_by(Desc(publications.id))
+        publications = load_referencing(
+            SourcePackagePublishingHistory, copies, ["packageupload_id"]
         )
-        sources: typing.Dict[int, typing.Optional[ISourcePackageRelease]] = {}
-        for upload in copies:
-            copy_job = upload.concrete_package_copy_job
-            series_name = copy_job.metadata.get("source_distroseries")
-            sources[upload.id] = next(
-                (
-                    spr
-                    for publication, spr, name, series in matches
-                    if publication.archive_id == copy_job.source_archive.id
-                    and name.name == copy_job.package_name
-                    and spr.version == copy_job.package_version
-                    and (
-                        series_name is None
-                        or (
-                            series.name == series_name
-                            and series.distribution_id
-                            == copy_job.source_archive.distribution.id
-                        )
-                    )
-                    and (
-                        copy_job.source_pocket is None
-                        or publication.pocket == copy_job.source_pocket
-                    )
-                ),
-                None,
-            )
-
-        load_related(
-            Section,
-            [spr for spr in sources.values() if spr is not None],
-            ["section_id"],
+        releases = load_related(
+            SourcePackageRelease, publications, ["sourcepackagerelease_id"]
         )
+        load_related(SourcePackageName, releases, ["sourcepackagename_id"])
+        load_related(Section, releases, ["section_id"])
+        sources: typing.Dict[int, typing.Optional[ISourcePackageRelease]] = {
+            upload.id: None for upload in copies
+        }
+        for publication in publications:
+            sources[publication.packageupload_id] = (
+                publication.sourcepackagerelease
+            )
         jobs = load_related(
             Job, [upload.package_copy_job for upload in copies], ["job_id"]
         )

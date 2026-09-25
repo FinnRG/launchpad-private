@@ -960,11 +960,13 @@ class IPackageUploadSet(Interface):
     def getCopySources(
         uploads: typing.Iterable[IPackageUpload],
     ) -> "typing.Dict[int, typing.Optional[ISourcePackageRelease]]":
-        """Resolve copy sources, and preload sections and requester emails.
+        """Resolve copied releases from target publications in bulk.
+
+        Preload release names, sections and requester emails.
 
         :param uploads: List of `IPackageUpload`s
         :return: A mapping of copy upload IDs to source package releases,
-            or None when no matching source publication exists.
+            or None when no target publication exists yet.
             Non-copy uploads are omitted.
         """
 
