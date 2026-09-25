@@ -29,7 +29,6 @@ The no-operation use case, reflects the sampledata status.
     INFO Removing 0 files marked for reaping
     INFO Total bytes freed: 0
     DEBUG Marking 0 condemned packages as removed.
-    DEBUG Timing: ...
 
 
 Removal unreferenced packages
@@ -284,7 +283,6 @@ Run DeathRow against the current 'removable' context.
     DEBUG Removing deleted-ignored/deleted-bin_666_i386.deb from main
     INFO Total bytes freed: 7
     DEBUG Marking 7 condemned packages as removed.
-    DEBUG Timing: ...
 
 A few details to pay attention to in the log output:
 
@@ -371,7 +369,6 @@ Now DeathRow considers 'stuck-bin' publications.
     >>> death_row.reap()
     DEBUG 0 Sources
     DEBUG 2 Binaries
-    ...
     DEBUG Checking stuck-bin_666_i386.deb
     (bbeebd879e1dff6918546dc0c179fdde505f2a21591c9a9c96e36b054ec5af83)
     DEBUG Cannot remove.
@@ -381,7 +378,6 @@ Now DeathRow considers 'stuck-bin' publications.
     INFO Removing 0 files marked for reaping
     INFO Total bytes freed: 0
     DEBUG Marking 0 condemned packages as removed.
-    DEBUG Timing: ...
 
 After being considered for removal, DeathRow realized that this binary
 could not be removed because there is still a publishing record
@@ -401,7 +397,6 @@ single pass.
     >>> death_row.reap()
     DEBUG 0 Sources
     DEBUG 3 Binaries
-    ...
     DEBUG Checking stuck-bin_666_i386.deb
     (bbeebd879e1dff6918546dc0c179fdde505f2a21591c9a9c96e36b054ec5af83)
     DEBUG Checking stuck-bin_666_i386.deb
@@ -414,7 +409,6 @@ single pass.
     DEBUG Removing removed-ignored/stuck-bin_666_i386.deb from main
     INFO Total bytes freed: 1
     DEBUG Marking 3 condemned packages as removed.
-    DEBUG Timing: ...
 
 The file was removed from the repository.
 

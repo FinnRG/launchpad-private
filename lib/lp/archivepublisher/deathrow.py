@@ -5,20 +5,16 @@
 Processes removals of packages that are scheduled for deletion.
 """
 
-import time
-from collections import defaultdict
 from datetime import datetime, timezone
 
-from storm.expr import And, Exists, Or
-from storm.locals import ClassAlias, Not, Select
+from storm.expr import Exists
+from storm.locals import And, ClassAlias, Not, Select
 
 from lp.archivepublisher.config import getPubConfig
-from lp.registry.model.sourcepackagename import SourcePackageName
-from lp.services.database import bulk
 from lp.services.database.constants import UTC_NOW
 from lp.services.database.interfaces import IStore
 from lp.services.librarian.model import LibraryFileAlias, LibraryFileContent
-from lp.soyuz.enums import ArchivePurpose, ArchiveRepositoryFormat
+from lp.soyuz.enums import ArchivePurpose
 from lp.soyuz.interfaces.publishing import (
     IBinaryPackagePublishingHistory,
     ISourcePackagePublishingHistory,
@@ -26,49 +22,11 @@ from lp.soyuz.interfaces.publishing import (
     NotInPool,
     inactive_publishing_status,
 )
-from lp.soyuz.model.binarypackagebuild import BinaryPackageBuild
-from lp.soyuz.model.binarypackagename import BinaryPackageName
-from lp.soyuz.model.binarypackagerelease import BinaryPackageRelease
 from lp.soyuz.model.files import BinaryPackageFile, SourcePackageReleaseFile
 from lp.soyuz.model.publishing import (
     BinaryPackagePublishingHistory,
     SourcePackagePublishingHistory,
 )
-from lp.soyuz.model.sourcepackagerelease import SourcePackageRelease
-
-# Cap the number of (filename, sha256) pairs checked by a single
-# `_findRemovableFiles` query, both to keep the number of query
-# parameters bounded and to avoid one enormous query hogging the database
-# when tens of thousands of files are condemned at once (e.g. distro
-# series end-of-life).
-REMOVABLE_FILES_BATCH_SIZE = 2000
-
-# Cap bulk helper `IN` clauses and bulk UPDATE `IN` clauses for the same
-# reason as REMOVABLE_FILES_BATCH_SIZE.
-RELATED_OBJECTS_BATCH_SIZE = 2000
-MARK_REMOVED_BATCH_SIZE = 2000
-
-
-def _batches(items, batch_size):
-    items = list(items)
-    for start in range(0, len(items), batch_size):
-        yield items[start : start + batch_size]
-
-
-def _loadRelatedInBatches(object_type, owning_objects, foreign_keys):
-    result = []
-    for batch in _batches(owning_objects, RELATED_OBJECTS_BATCH_SIZE):
-        result.extend(bulk.load_related(object_type, batch, foreign_keys))
-    return result
-
-
-def _loadReferencingInBatches(object_type, owning_objects, reference_keys):
-    result = []
-    for batch in _batches(owning_objects, RELATED_OBJECTS_BATCH_SIZE):
-        result.extend(
-            bulk.load_referencing(object_type, batch, reference_keys)
-        )
-    return result
 
 
 def getDeathRow(archive, log, pool_root_override):
@@ -138,22 +96,9 @@ class DeathRow:
 
             self._removeFile = _mockRemoveFile
 
-        start = time.monotonic()
         source_files, binary_files = self._collectCondemned()
-        collected = time.monotonic()
         records = self._tryRemovingFromDisk(source_files, binary_files)
-        removed = time.monotonic()
         self._markPublicationRemoved(records)
-        marked = time.monotonic()
-        self.logger.debug(
-            "Timing: collect=%.3fs remove=%.3fs mark=%.3fs total=%.3fs"
-            % (
-                collected - start,
-                removed - collected,
-                marked - removed,
-                marked - start,
-            )
-        )
 
     def _collectCondemned(self):
         """Return the condemned source and binary publications as a tuple.
@@ -215,21 +160,14 @@ class DeathRow:
 
         return (sources, binaries)
 
-    def _findRemovableFiles(self, publication_class, file_keys):
-        """Check which (filename, sha256) keys are eligible for removal.
-
-        Checking each condemned file's eligibility with a separate query
-        does not scale: with tens of thousands of condemned files, the
-        per-file round trip to the database dominates the run time. This
-        does the equivalent check for every key in `file_keys` with one
-        query per batch of `REMOVABLE_FILES_BATCH_SIZE` keys, instead of
-        one query per file.
+    def canRemove(self, publication_class, filename, file_sha256):
+        """Check if given (filename, MD5) can be removed from the pool.
 
         Check the archive reference-counter implemented in:
         `SourcePackagePublishingHistory` or
         `BinaryPackagePublishingHistory`.
 
-        :return: the subset of `file_keys` that can be removed.
+        Only allow removal of unnecessary files.
         """
         clauses = []
 
@@ -257,145 +195,31 @@ class DeathRow:
         else:
             raise AssertionError("%r is not supported." % publication_class)
 
-        clauses.append(LibraryFileAlias.content == LibraryFileContent.id)
+        clauses.extend(
+            [
+                LibraryFileAlias.content == LibraryFileContent.id,
+                LibraryFileAlias.filename == filename,
+                LibraryFileContent.sha256 == file_sha256,
+            ]
+        )
+
+        all_publications = IStore(publication_class).find(
+            publication_class, *clauses
+        )
 
         right_now = datetime.now(timezone.utc)
-        file_keys = list(file_keys)
-        removable = set()
-        for start in range(0, len(file_keys), REMOVABLE_FILES_BATCH_SIZE):
-            batch_start = time.monotonic()
-            batch = file_keys[start : start + REMOVABLE_FILES_BATCH_SIZE]
-            # Match exact (filename, sha256) pairs rather than filtering
-            # on each column separately, which would also match a file
-            # with the same content but a different name, or vice versa.
-            pair_clause = Or(
-                *(
-                    And(
-                        LibraryFileAlias.filename == filename,
-                        LibraryFileContent.sha256 == file_sha256,
-                    )
-                    for filename, file_sha256 in batch
-                )
-            )
-            rows = IStore(publication_class).find(
-                (
-                    publication_class,
-                    LibraryFileAlias.filename,
-                    LibraryFileContent.sha256,
-                ),
-                *clauses,
-                pair_clause,
-            )
+        for pub in all_publications:
+            # Deny removal if any reference is still active.
+            if pub.status not in inactive_publishing_status:
+                return False
+            # Deny removal if any reference wasn't dominated yet.
+            if pub.scheduleddeletiondate is None:
+                return False
+            # Deny removal if any reference is still in 'quarantine'.
+            if pub.scheduleddeletiondate > right_now:
+                return False
 
-            # Start optimistic: a key with no matching publications at
-            # all is removable, exactly as the old per-file check fell
-            # through to `return True` when there were no other
-            # publications to weigh.
-            batch_removable = set(batch)
-            for pub, filename, file_sha256 in rows:
-                key = (filename, file_sha256)
-                if key not in batch_removable:
-                    continue
-                # Deny removal if any reference is still active, wasn't
-                # dominated yet, or is still in 'quarantine'.
-                if (
-                    pub.status not in inactive_publishing_status
-                    or pub.scheduleddeletiondate is None
-                    or pub.scheduleddeletiondate > right_now
-                ):
-                    batch_removable.discard(key)
-            removable.update(batch_removable)
-            self.logger.debug(
-                "Timing: eligibility batch of %d files=%.3fs"
-                % (len(batch), time.monotonic() - batch_start)
-            )
-
-        return removable
-
-    def _prefetchFiles(self, condemned_source_files, condemned_binary_files):
-        """Bulk-fetch the files of the given publications.
-
-        `SourcePackagePublishingHistory.files` and
-        `BinaryPackagePublishingHistory.files` each do their own query
-        (or two) per publication, which does not scale to tens of
-        thousands of condemned publications. Build the same file lists
-        from a handful of bulk queries instead.
-
-        This also primes the caches used by `component_name`,
-        `pool_name` and `pool_version`, which are read for every
-        condemned file further down, and which otherwise each walk a
-        chain of references back to a `SourcePackageName`.
-
-        :return: a dict mapping each publication to its list of files.
-        """
-        pub_files = {}
-
-        if condemned_source_files:
-            # Source packages in Conda repositories never have files
-            # attached; see SourcePackagePublishingHistory.files.
-            if self.archive.repository_format == ArchiveRepositoryFormat.CONDA:
-                for pub_record in condemned_source_files:
-                    pub_files[pub_record] = []
-            else:
-                sprs = _loadRelatedInBatches(
-                    SourcePackageRelease,
-                    condemned_source_files,
-                    ["sourcepackagerelease_id"],
-                )
-                _loadRelatedInBatches(
-                    SourcePackageName, sprs, ["sourcepackagename_id"]
-                )
-                sprfs = _loadReferencingInBatches(
-                    SourcePackageReleaseFile,
-                    sprs,
-                    ["sourcepackagerelease_id"],
-                )
-                lfas = _loadRelatedInBatches(
-                    LibraryFileAlias, sprfs, ["libraryfile_id"]
-                )
-                _loadRelatedInBatches(LibraryFileContent, lfas, ["content_id"])
-                files_by_release = defaultdict(list)
-                for sprf in sprfs:
-                    files_by_release[sprf.sourcepackagerelease_id].append(sprf)
-                for pub_record in condemned_source_files:
-                    pub_files[pub_record] = files_by_release[
-                        pub_record.sourcepackagerelease_id
-                    ]
-
-        if condemned_binary_files:
-            bprs = _loadRelatedInBatches(
-                BinaryPackageRelease,
-                condemned_binary_files,
-                ["binarypackagerelease_id"],
-            )
-            _loadRelatedInBatches(
-                BinaryPackageName, bprs, ["binarypackagename_id"]
-            )
-            bpbs = _loadRelatedInBatches(
-                BinaryPackageBuild, bprs, ["build_id"]
-            )
-            sprs = _loadRelatedInBatches(
-                SourcePackageRelease, bpbs, ["source_package_release_id"]
-            )
-            _loadRelatedInBatches(
-                SourcePackageName, sprs, ["sourcepackagename_id"]
-            )
-            bpfs = _loadReferencingInBatches(
-                BinaryPackageFile, bprs, ["binarypackagerelease_id"]
-            )
-            lfas = _loadRelatedInBatches(
-                LibraryFileAlias, bpfs, ["libraryfile_id"]
-            )
-            _loadRelatedInBatches(LibraryFileContent, lfas, ["content_id"])
-            files_by_release = defaultdict(list)
-            for bpf in bpfs:
-                files_by_release[bpf.binarypackagerelease_id].append(bpf)
-            for pub_record in condemned_binary_files:
-                pub_files[pub_record] = files_by_release[
-                    pub_record.binarypackagerelease_id
-                ]
-
-        return pub_files
+        return True
 
     def _tryRemovingFromDisk(
         self, condemned_source_files, condemned_binary_files
@@ -412,51 +236,15 @@ class DeathRow:
         considered_files = set()
         details = {}
 
-        # Fetch the files for every condemned publication in bulk, and use
-        # them to work out which (filename, sha256) keys are removable
-        # with one batched query per publication class, rather than one
-        # query per file (see `_findRemovableFiles`).
-        pub_files = self._prefetchFiles(
-            condemned_source_files, condemned_binary_files
-        )
-        file_keys = {
-            SourcePackagePublishingHistory: set(),
-            BinaryPackagePublishingHistory: set(),
-        }
-        for pub_record in condemned_source_files:
-            for pub_file in pub_files[pub_record]:
-                file_keys[SourcePackagePublishingHistory].add(
-                    (
-                        pub_file.libraryfile.filename,
-                        pub_file.libraryfile.content.sha256,
-                    )
-                )
-        for pub_record in condemned_binary_files:
-            for pub_file in pub_files[pub_record]:
-                file_keys[BinaryPackagePublishingHistory].add(
-                    (
-                        pub_file.libraryfile.filename,
-                        pub_file.libraryfile.content.sha256,
-                    )
-                )
-
-        removable = {
-            publication_class: self._findRemovableFiles(
-                publication_class, keys
-            )
-            for publication_class, keys in file_keys.items()
-            if keys
-        }
-
         def checkPubRecord(pub_record, publication_class):
             """Check if the publishing record can be removed.
 
             It can only be removed if all files in its context are not
             referred to any other 'published' publishing records.
 
-            See `_findRemovableFiles` for more information.
+            See `canRemove` for more information.
             """
-            files = pub_files[pub_record]
+            files = pub_record.files
             for pub_file in files:
                 filename = pub_file.libraryfile.filename
                 file_sha256 = pub_file.libraryfile.content.sha256
@@ -484,8 +272,8 @@ class DeathRow:
                 considered_files.add((filename, file_sha256))
 
                 # Check if the removal is allowed, if not continue.
-                if (filename, file_sha256) not in removable.get(
-                    publication_class, ()
+                if not self.canRemove(
+                    publication_class, filename, file_sha256
                 ):
                     self.logger.debug("Cannot remove.")
                     continue
@@ -542,14 +330,5 @@ class DeathRow:
             "Marking %s condemned packages as removed."
             % len(condemned_records)
         )
-        # Bulk-update per publication class instead of one UPDATE per
-        # record, which is the dominant cost when reaping tens of
-        # thousands of publications.
-        ids_by_class = {}
         for record in condemned_records:
-            ids_by_class.setdefault(record.__class__, []).append(record.id)
-        for publication_class, ids in ids_by_class.items():
-            for batch in _batches(ids, MARK_REMOVED_BATCH_SIZE):
-                IStore(publication_class).find(
-                    publication_class, publication_class.id.is_in(batch)
-                ).set(dateremoved=UTC_NOW)
+            record.dateremoved = UTC_NOW
