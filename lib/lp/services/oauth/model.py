@@ -5,6 +5,7 @@ __all__ = [
     "ACCESS_TOKEN_LIFETIME",
     "MAX_ACCESS_TOKEN_LIFETIME",
     "OAuthAccessToken",
+    "OAuthAuthenticationChallenge",
     "OAuthConsumer",
     "OAuthConsumerSet",
     "OAuthRefreshToken",
@@ -21,7 +22,7 @@ import hashlib
 import re
 from datetime import datetime, timedelta, timezone
 
-from storm.locals import Bool, DateTime, Int, Reference, Unicode
+from storm.locals import Bool, Bytes, DateTime, Int, Reference, Unicode
 from zope.component import getUtility
 from zope.interface import implementer
 
@@ -480,6 +481,28 @@ class OAuthRefreshToken(OAuthBase, StormBase):
         self._getStore().find(
             OAuthAccessToken, OAuthAccessToken.refresh_token == self
         ).set(date_expires=UTC_NOW)
+
+
+class OAuthAuthenticationChallenge(OAuthBase, StormBase):
+    """A short-lived, single-use WebAuthn authentication challenge."""
+
+    __storm_table__ = "OAuthAuthenticationChallenge"
+
+    id = Int(primary=True)
+    refresh_token_id = Int(name="refresh_token", allow_none=False)
+    refresh_token = Reference(refresh_token_id, "OAuthRefreshToken.id")
+    challenge = Bytes(allow_none=False)
+    date_created = DateTime(
+        tzinfo=timezone.utc, allow_none=False, default=UTC_NOW
+    )
+    date_expires = DateTime(tzinfo=timezone.utc, allow_none=False)
+    consumed = Bool(allow_none=False, default=False)
+
+    def __init__(self, refresh_token, challenge, date_expires):
+        super().__init__()
+        self.refresh_token = refresh_token
+        self.challenge = challenge
+        self.date_expires = date_expires
 
 
 @implementer(IOAuthRequestToken)

@@ -24,6 +24,7 @@ from charms.reactive import (
     remove_state,
     set_state,
     when,
+    when_any,
     when_not,
     when_not_all,
 )
@@ -344,4 +345,15 @@ def deconfigure_vhost():
 
 @when("config.changed.frontend_proxy_protocol_enabled")
 def reconfigure_proxy_protocol():
+    remove_state("launchpad.vhost.configured")
+
+
+@when_any(
+    "config.changed.blocked_user_agents",
+    "config.changed.blocked_referers",
+    "config.changed.throttled_user_agents",
+    "config.changed.throttled_user_agent_platforms",
+    "config.changed.restricted_librarian_abuse_mitigation",
+)
+def reconfigure_abuse_rules():
     remove_state("launchpad.vhost.configured")

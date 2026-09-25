@@ -12,10 +12,33 @@ options:
     description: >
       Cognitive Services subscription key for the Bing Custom Search API.
     default:
+  blocked_referers:
+    type: string
+    description: >
+      '|' separated list of referrers that should be blocked. Any matching
+      requests receive a 403 response.
+    default:
   blocked_user_agents:
     type: string
     description: >
-      User agents that should be blocked from Launchpad, separated by '|'.
+      '|' separated list of user agents that should be blocked from Launchpad.
+      Matching requests receive a 403 response.
+    default:
+  throttled_user_agents:
+    type: string
+    description: >
+      '|' separated list of user agents that should be throttled. Matching
+      requests receive a 429 response with a Retry-After header.
+    default:
+  throttled_user_agent_platforms:
+    type: string
+    description: >
+      '|' separated list of platforms that should be throttled. The platforms
+      are specified within parentheses in the user agent string. This is
+      combined with throttled_user_agents. When empty, throttling matches
+      only on the user agent pattern. Matching requests receive a 429 response
+      with a Retry-After header. This option has no effect unless
+      throttled_user_agents is also set.
     default:
   csrf_secret:
     type: string

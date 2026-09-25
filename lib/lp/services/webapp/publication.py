@@ -70,6 +70,8 @@ OFFSITE_POST_WHITELIST = (
     "/+storeblob",
     "/+request-token",
     "/+access-token",
+    "/+hw-challenge",
+    "/+hw-access-token",
     "/+openid",
     "/+candid-callback",
 )

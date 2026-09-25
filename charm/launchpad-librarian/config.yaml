@@ -3,6 +3,41 @@ options:
     type: boolean
     default: true
     description: If true, enable jobs that may change the database.
+  blocked_referers:
+    type: string
+    description: >
+      '|' separated list of referrers that should be blocked. Matching
+      requests receive a 403 response.
+    default:
+  blocked_user_agents:
+    type: string
+    description: >
+      '|' separated list of user agents that should be blocked. Matching 
+      requests receive a 403 response.
+    default:
+  throttled_user_agents:
+    type: string
+    description: >
+      '|' separated list of user agents that should be throttled. Matching
+      requests receive a 429 response with a Retry-After header.
+    default:
+  throttled_user_agent_platforms:
+    type: string
+    description: >
+      '|' separated list of platforms that should be throttled. The platforms
+      are specified within parentheses in the user agent string. This is
+      combined with throttled_user_agents. When empty, throttling matches
+      only on the user agent pattern. Matching requests receive a 429 response
+      with a Retry-After header. This option has no effect unless
+      throttled_user_agents is also set.
+    default:
+  restricted_librarian_abuse_mitigation:
+    type: boolean
+    description: >
+      Whether to apply the abuse-mitigation rules (blocked_user_agents,
+      blocked_referers, throttled_user_agents) to the restricted librarian
+      vhost as well.
+    default: false
   domain_librarian:
     type: string
     description: Domain name for this instance's librarian service.

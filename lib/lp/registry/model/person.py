@@ -243,7 +243,14 @@ from lp.services.mail.helpers import (
     get_email_template,
 )
 from lp.services.mail.sendmail import simple_sendmail
-from lp.services.oauth.model import OAuthAccessToken, OAuthRequestToken
+from lp.services.oauth.hardware import HardwareTokenError, issue_refresh_token
+from lp.services.oauth.interfaces import IOAuthConsumerSet, IOAuthSignedRequest
+from lp.services.oauth.model import (
+    OAuthAccessToken,
+    OAuthRefreshToken,
+    OAuthRequestToken,
+    lookup_oauth_context,
+)
 from lp.services.openid.adapters.openid import CurrentOpenIDEndPoint
 from lp.services.openid.model.openididentifier import OpenIdIdentifier
 from lp.services.propertycache import cachedproperty, get_property_cache
@@ -252,7 +259,11 @@ from lp.services.statistics.interfaces.statistic import ILaunchpadStatisticSet
 from lp.services.verification.interfaces.authtoken import LoginTokenType
 from lp.services.verification.interfaces.logintoken import ILoginTokenSet
 from lp.services.verification.model.logintoken import LoginToken
-from lp.services.webapp.interfaces import ILaunchBag
+from lp.services.webapp.interfaces import (
+    AccessLevel,
+    ILaunchBag,
+    OAuthPermission,
+)
 from lp.services.webapp.publisher import canonical_url
 from lp.services.webauthn.ceremony import (
     WebAuthnError,
@@ -835,6 +846,16 @@ class Person(
                 OAuthRequestToken.date_expires == None,
                 OAuthRequestToken.date_expires > UTC_NOW,
             ),
+        )
+
+    @property
+    def oauth_refresh_tokens(self):
+        """Return this person's non-expired hardware-bound OAuth grants."""
+        return Store.of(self).find(
+            OAuthRefreshToken,
+            OAuthRefreshToken.person == self,
+            OAuthRefreshToken.date_revoked == None,
+            OAuthRefreshToken.date_expires > UTC_NOW,
         )
 
     @property
@@ -1703,6 +1724,90 @@ class Person(
         if bare_authenticator.owner != self:
             raise WebAuthnError("No such registered authenticator.")
         bare_authenticator.revoke(self)
+
+    def issueHardwareBoundOAuthToken(
+        self,
+        consumer_key,
+        authenticator_id,
+        permission,
+        context=None,
+        date_expires=None,
+    ):
+        """See `IPerson`."""
+        request = get_current_browser_request()
+        authenticator = getUtility(IRegisteredAuthenticatorSet).getByID(
+            authenticator_id
+        )
+        if authenticator is None:
+            raise WebAuthnError("No such registered authenticator.")
+        bare_authenticator = removeSecurityProxy(authenticator)
+        if bare_authenticator.owner != self:
+            raise WebAuthnError("No such registered authenticator.")
+        if permission == OAuthPermission.UNAUTHORIZED:
+            raise HardwareTokenError(
+                "Cannot issue an unauthorized OAuth refresh token."
+            )
+        if context is not None:
+            try:
+                context = lookup_oauth_context(context)
+            except ValueError:
+                raise HardwareTokenError("No such OAuth context: %s" % context)
+        if request is not None and IOAuthSignedRequest.providedBy(request):
+            principal = request.principal
+            if principal.access_level not in (
+                AccessLevel.WRITE_PRIVATE,
+                AccessLevel.DESKTOP_INTEGRATION,
+            ) and not (
+                principal.access_level == AccessLevel.WRITE_PUBLIC
+                and permission
+                in (
+                    OAuthPermission.READ_PUBLIC,
+                    OAuthPermission.WRITE_PUBLIC,
+                )
+            ):
+                raise Unauthorized(
+                    "The grant cannot exceed the caller's OAuth permission."
+                )
+            if principal.scope_url is not None and (
+                context is None
+                or canonical_url(context, force_local_path=True)
+                != principal.scope_url
+            ):
+                raise Unauthorized(
+                    "The grant must retain the caller's OAuth context."
+                )
+        consumer_set = getUtility(IOAuthConsumerSet)
+        consumer = consumer_set.getByKey(consumer_key)
+        if consumer is None:
+            consumer = consumer_set.new(consumer_key)
+        access_level = AccessLevel.items[permission.name]
+        refresh_token, secret = issue_refresh_token(
+            self,
+            consumer,
+            bare_authenticator,
+            access_level,
+            context=context,
+            date_expires=date_expires,
+        )
+        return {
+            "oauth_token": refresh_token.key,
+            "oauth_token_secret": secret,
+        }
+
+    def revokeHardwareBoundOAuthToken(self, token_key):
+        """See `IPerson`."""
+        token = (
+            Store.of(self)
+            .find(
+                OAuthRefreshToken,
+                OAuthRefreshToken.person == self,
+                OAuthRefreshToken.key == token_key,
+            )
+            .one()
+        )
+        if token is None:
+            raise HardwareTokenError("No such hardware-bound OAuth token.")
+        removeSecurityProxy(token).revoke(self)
 
     def getRegisteredAuthenticators(self):
         """See `IPerson`."""

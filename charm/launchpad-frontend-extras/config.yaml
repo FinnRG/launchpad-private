@@ -11,6 +11,17 @@ options:
     type: boolean
     description: Whether to enable the "media" domain.
     default: false
+  keepalive_timeout:
+    type: int
+    description: >
+      Seconds that apache holds an idle connection open waiting for another
+      request.  Under mpm_worker each such connection occupies a worker
+      thread for the whole timeout, so a high value can exhaust
+      MaxRequestWorkers while most of those threads are doing nothing.  The
+      charm sends this over the apache-website relation provided by
+      frontend-main.  It is written outside any <VirtualHost> block and so
+      overrides the global KeepAliveTimeout in apache2.conf.
+    default: 60
   librarian_log_hosts_allow:
     type: string
     description: >
