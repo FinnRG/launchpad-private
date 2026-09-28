@@ -27,6 +27,7 @@ __all__ = [
     "IBugTrackerSet",
     "IBugWatch",
     "ICve",
+    "ICveReference",
     "ICveSet",
     "IHasBugs",
     "IMaloneApplication",
@@ -77,6 +78,7 @@ from lp.bugs.interfaces.bugtracker import (
 )
 from lp.bugs.interfaces.bugwatch import IBugWatch
 from lp.bugs.interfaces.cve import ICve, ICveSet
+from lp.bugs.interfaces.cvereference import ICveReference
 from lp.bugs.interfaces.malone import IMaloneApplication
 from lp.bugs.interfaces.structuralsubscription import (
     IStructuralSubscription,
