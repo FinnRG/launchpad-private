@@ -5508,14 +5508,35 @@ INSERT INTO public.oauthconsumer (id, date_created, disabled, key, secret) VALUE
 ALTER TABLE public.oauthconsumer ENABLE TRIGGER ALL;
 
 
+ALTER TABLE public.registeredauthenticator DISABLE TRIGGER ALL;
+
+
+
+ALTER TABLE public.registeredauthenticator ENABLE TRIGGER ALL;
+
+
+ALTER TABLE public.oauthrefreshtoken DISABLE TRIGGER ALL;
+
+
+
+ALTER TABLE public.oauthrefreshtoken ENABLE TRIGGER ALL;
+
+
 ALTER TABLE public.oauthaccesstoken DISABLE TRIGGER ALL;
 
-INSERT INTO public.oauthaccesstoken (id, consumer, person, permission, date_created, date_expires, key, secret, product, project, distribution, sourcepackagename) VALUES (1, 1, 29, 20, '2008-03-18 20:57:44.710251', NULL, 'salgado-read-nonprivate', '2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b', NULL, NULL, NULL, NULL);
-INSERT INTO public.oauthaccesstoken (id, consumer, person, permission, date_created, date_expires, key, secret, product, project, distribution, sourcepackagename) VALUES (2, 2, 29, 50, '2008-03-18 20:57:44.710251', NULL, 'salgado-change-anything', '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08', NULL, NULL, NULL, NULL);
-INSERT INTO public.oauthaccesstoken (id, consumer, person, permission, date_created, date_expires, key, secret, product, project, distribution, sourcepackagename) VALUES (3, 2, 52, 20, '2008-05-19 21:36:47.994029', NULL, 'nopriv-read-nonprivate', '4f0d9e5f2d159c8bd63247f9470d09f15e1ff431cb88d5a101df49c4c01882e6', NULL, NULL, NULL, NULL);
+INSERT INTO public.oauthaccesstoken (id, consumer, person, permission, date_created, date_expires, key, secret, product, project, distribution, sourcepackagename, refresh_token) VALUES (1, 1, 29, 20, '2008-03-18 20:57:44.710251', NULL, 'salgado-read-nonprivate', '2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b', NULL, NULL, NULL, NULL, NULL);
+INSERT INTO public.oauthaccesstoken (id, consumer, person, permission, date_created, date_expires, key, secret, product, project, distribution, sourcepackagename, refresh_token) VALUES (2, 2, 29, 50, '2008-03-18 20:57:44.710251', NULL, 'salgado-change-anything', '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08', NULL, NULL, NULL, NULL, NULL);
+INSERT INTO public.oauthaccesstoken (id, consumer, person, permission, date_created, date_expires, key, secret, product, project, distribution, sourcepackagename, refresh_token) VALUES (3, 2, 52, 20, '2008-05-19 21:36:47.994029', NULL, 'nopriv-read-nonprivate', '4f0d9e5f2d159c8bd63247f9470d09f15e1ff431cb88d5a101df49c4c01882e6', NULL, NULL, NULL, NULL, NULL);
 
 
 ALTER TABLE public.oauthaccesstoken ENABLE TRIGGER ALL;
+
+
+ALTER TABLE public.oauthauthenticationchallenge DISABLE TRIGGER ALL;
+
+
+
+ALTER TABLE public.oauthauthenticationchallenge ENABLE TRIGGER ALL;
 
 
 ALTER TABLE public.oauthrequesttoken DISABLE TRIGGER ALL;
