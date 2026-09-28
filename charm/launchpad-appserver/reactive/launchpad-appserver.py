@@ -368,6 +368,7 @@ def deconfigure_vhost():
     "config.changed.blocked_referers",
     "config.changed.throttled_user_agents",
     "config.changed.throttled_user_agent_platforms",
+    "config.changed.throttled_retry_after",
 )
 def reconfigure_blocked_user_agents():
     remove_state("launchpad.vhost.configured")
