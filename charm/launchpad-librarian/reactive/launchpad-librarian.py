@@ -353,6 +353,7 @@ def reconfigure_proxy_protocol():
     "config.changed.blocked_referers",
     "config.changed.throttled_user_agents",
     "config.changed.throttled_user_agent_platforms",
+    "config.changed.throttled_retry_after",
     "config.changed.restricted_librarian_abuse_mitigation",
 )
 def reconfigure_abuse_rules():

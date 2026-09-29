@@ -23,6 +23,6 @@
     RewriteCond %{HTTP_USER_AGENT} "\([^)]*({{ throttled_user_agent_platforms }})[^)]*\)" [NC]
 {%- endif %}
     RewriteRule .* - [E=throttled:1,R=429,L]
-    Header always set Retry-After "60" env=throttled
+    Header always set Retry-After "{{ throttled_retry_after }}" env=throttled
 {%- endif %}
 {%- endmacro -%}
