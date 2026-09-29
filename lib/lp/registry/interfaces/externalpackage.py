@@ -8,7 +8,6 @@ __all__ = [
     "ExternalPackageType",
 ]
 
-from lazr.enum import DBEnumeratedType, DBItem
 from lazr.restful.declarations import exported, exported_as_webservice_entry
 from lazr.restful.fields import Reference
 from zope.interface import Attribute
@@ -17,6 +16,7 @@ from zope.schema import TextLine
 from lp import _
 from lp.app.interfaces.launchpad import IHeadingContext
 from lp.bugs.interfaces.bugtarget import IBugTarget, IHasOfficialBugTags
+from lp.registry.enums import ExternalPackageType
 from lp.registry.interfaces.distribution import IDistribution
 from lp.registry.interfaces.role import IHasDrivers
 
@@ -76,91 +76,3 @@ class IExternalPackage(
 
     Create IExternalPackage by invoking `IDistribution.getExternalPackage()`.
     """
-
-
-class ExternalPackageType(DBEnumeratedType):
-    """ExternalPackageType
-
-    The various possible types for an ExternalPackage.
-    """
-
-    UNKNOWN = DBItem(
-        0,
-        """
-        Unknown
-
-        Unknown external package
-        """,
-    )
-
-    GENERIC = DBItem(
-        1,
-        """
-        Generic
-
-        Generic external package
-        """,
-    )
-
-    SNAP = DBItem(
-        2,
-        """
-        Snap
-
-        Snap external package
-        """,
-    )
-
-    CHARM = DBItem(
-        3,
-        """
-        Charm
-
-        Charm external package
-        """,
-    )
-
-    ROCK = DBItem(
-        4,
-        """
-        Rock
-
-        Rock external package
-        """,
-    )
-
-    PYTHON = DBItem(
-        5,
-        """
-        Python
-
-        Python external package
-        """,
-    )
-
-    CONDA = DBItem(
-        6,
-        """
-        Conda
-
-        Conda external package
-        """,
-    )
-
-    CARGO = DBItem(
-        7,
-        """
-        Cargo
-
-        Cargo external package
-        """,
-    )
-
-    MAVEN = DBItem(
-        8,
-        """
-        Maven
-
-        Maven external package
-        """,
-    )

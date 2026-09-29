@@ -18,7 +18,7 @@ from zope.security.proxy import removeSecurityProxy
 from lp.app.enums import InformationType
 from lp.bugs.browser.bugtask import get_comments_for_bugtask
 from lp.bugs.interfaces.bug import IBug
-from lp.registry.enums import BugSharingPolicy
+from lp.registry.enums import BugSharingPolicy, ExternalPackageType
 from lp.registry.interfaces.product import License
 from lp.services.beautifulsoup import BeautifulSoup
 from lp.services.webapp import snapshot
@@ -351,7 +351,7 @@ class TestPostBugWithLargeCollections(TestCaseWithFactory):
             response = webservice.named_post(
                 bug_url, "subscribe", person="/~name12"
             )
-            self.assertEqual(200, response.status)
+            self.assertEqual(200, response.status, response.body)
         finally:
             snapshot.HARD_LIMIT_FOR_SNAPSHOT = real_hard_limit_for_snapshot
 
@@ -515,3 +515,43 @@ class TestBugDateLastUpdated(TestCaseWithFactory):
         self.assertEqual(209, response.status)
         with person_logged_in(owner):
             self.assertNotEqual(date_last_updated, bug.date_last_updated)
+
+
+class TestBugTaskExternalPackageAttributes(TestCaseWithFactory):
+    layer = DatabaseFunctionalLayer
+
+    def test_package_type_channel_and_metadata(self):
+        externalpackage = self.factory.makeExternalPackage(
+            packagetype=ExternalPackageType.SNAP,
+            channel=("12.1", "stable", None),
+        )
+        bug = self.factory.makeBug(target=externalpackage)
+        task = bug.default_bugtask
+        removeSecurityProxy(task).metadata = {"key": "value"}
+        user = self.factory.makePerson()
+        task_url = api_url(task)
+        logout()
+        webservice = webservice_for_person(
+            user, permission=OAuthPermission.READ_PUBLIC
+        )
+        response = webservice.get(task_url, api_version="devel")
+        self.assertEqual(200, response.status)
+        representation = response.jsonBody()
+        self.assertEqual("Snap", representation["package_type"])
+        self.assertEqual(["12.1", "stable", None], representation["channel"])
+        self.assertEqual({"key": "value"}, representation["metadata"])
+
+    def test_unset_values(self):
+        task = self.factory.makeBug().default_bugtask
+        user = self.factory.makePerson()
+        task_url = api_url(task)
+        logout()
+        webservice = webservice_for_person(
+            user, permission=OAuthPermission.READ_PUBLIC
+        )
+        representation = webservice.get(
+            task_url, api_version="devel"
+        ).jsonBody()
+        self.assertIsNone(representation["package_type"])
+        self.assertIsNone(representation["channel"])
+        self.assertIsNone(representation["metadata"])
