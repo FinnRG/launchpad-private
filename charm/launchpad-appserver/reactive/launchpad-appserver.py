@@ -263,7 +263,9 @@ def configure_loadbalancer():
             "blocked", "Bad haproxy_service_options_xmlrpc YAML configuration"
         )
         return
-    server_options = config["haproxy_server_options"]
+    server_options_main = config["haproxy_server_options_main"]
+    server_options_main_cached = config["haproxy_server_options_main_cached"]
+    server_options_xmlrpc = config["haproxy_server_options_xmlrpc"]
 
     unit_name = hookenv.local_unit().replace("/", "-")
     unit_ip = hookenv.unit_private_ip()
@@ -281,7 +283,7 @@ def configure_loadbalancer():
                 f"main_{unit_name}",
                 unit_ip,
                 config["port_main"],
-                server_options,
+                server_options_main,
             ]
         ],
     }
@@ -293,9 +295,20 @@ def configure_loadbalancer():
     # balancer://cached-launchpad-appserver-main/ (renamed in
     # squid-reverseproxy configuration in order that the apache2 charm can
     # distinguish between haproxy and Squid) goes via Squid to haproxy.
-    main_cached_service = main_service.copy()
-    main_cached_service["service_name"] = "to-cache-launchpad-appserver-main"
-    main_cached_service["service_port"] = config["port_main_cached"]
+    main_cached_service = {
+        "service_name": "to-cache-launchpad-appserver-main",
+        "service_port": config["port_main_cached"],
+        "service_host": "0.0.0.0",
+        "service_options": list(main_service["service_options"]),
+        "servers": [
+            [
+                f"main_{unit_name}",
+                unit_ip,
+                config["port_main"],
+                server_options_main_cached,
+            ]
+        ],
+    }
     xmlrpc_service = {
         "service_name": "launchpad-appserver-xmlrpc",
         "service_port": config["port_xmlrpc"],
@@ -306,7 +319,7 @@ def configure_loadbalancer():
                 f"xmlrpc_{unit_name}",
                 unit_ip,
                 config["port_xmlrpc"],
-                server_options,
+                server_options_xmlrpc,
             ]
         ],
     }
@@ -322,6 +335,20 @@ def configure_loadbalancer():
 @when("launchpad.loadbalancer.configured")
 @when_not_all("loadbalancer.available", "service.configured")
 def deconfigure_loadbalancer():
+    remove_state("launchpad.loadbalancer.configured")
+
+
+@when_any(
+    "config.changed.haproxy_server_options_main",
+    "config.changed.haproxy_server_options_main_cached",
+    "config.changed.haproxy_server_options_xmlrpc",
+    "config.changed.haproxy_service_options_main",
+    "config.changed.haproxy_service_options_xmlrpc",
+    "config.changed.port_main",
+    "config.changed.port_main_cached",
+    "config.changed.port_xmlrpc",
+)
+def reconfigure_loadbalancer():
     remove_state("launchpad.loadbalancer.configured")
 
 
