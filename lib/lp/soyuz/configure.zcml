@@ -482,7 +482,8 @@
 
     <class
         class="lp.soyuz.model.archivepermission.ArchivePermission">
-        <allow
+        <require
+            permission="launchpad.View"
             interface="lp.soyuz.interfaces.archivepermission.IArchivePermission"/>
     </class>
 

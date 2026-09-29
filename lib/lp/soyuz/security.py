@@ -26,7 +26,10 @@ from lp.services.database.interfaces import IStore
 from lp.soyuz.interfaces.archive import IArchive, IArchiveSet
 from lp.soyuz.interfaces.archiveauthtoken import IArchiveAuthToken
 from lp.soyuz.interfaces.archivedependency import IArchiveDependency
-from lp.soyuz.interfaces.archivepermission import IArchivePermissionSet
+from lp.soyuz.interfaces.archivepermission import (
+    IArchivePermission,
+    IArchivePermissionSet,
+)
 from lp.soyuz.interfaces.archivesubscriber import (
     IArchiveSubscriber,
     IArchiveSubscriberSet,
@@ -448,6 +451,16 @@ class EditArchiveDependency(DelegatedAuthorization):
 
     def __init__(self, obj):
         super().__init__(obj, obj.parent)
+
+
+class ViewArchivePermission(DelegatedAuthorization):
+    """Permission records are visible to viewers of their archive."""
+
+    permission = "launchpad.View"
+    usedfor = IArchivePermission
+
+    def __init__(self, obj):
+        super().__init__(obj, obj.archive)
 
 
 class ViewArchiveAuthToken(AuthorizationBase):
