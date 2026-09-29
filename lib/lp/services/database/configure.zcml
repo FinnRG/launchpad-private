@@ -12,6 +12,12 @@
         <allow attributes="add remove clear" />
     </class>
 
+    <class class="types.MappingProxyType">
+        <allow
+            attributes="__contains__ __getitem__ __iter__ __len__ copy get
+                        items keys values" />
+    </class>
+
     <class class="lp.services.database.decoratedresultset.DecoratedResultSet">
         <allow interface="storm.zope.interfaces.IResultSet" />
         <allow attributes="__getslice__ __len__ get_plain_result_set" />
