@@ -555,3 +555,64 @@ class TestBugTaskExternalPackageAttributes(TestCaseWithFactory):
         self.assertIsNone(representation["package_type"])
         self.assertIsNone(representation["channel"])
         self.assertIsNone(representation["metadata"])
+
+
+class TestBugAttachmentVulnerabilityPatches(TestCaseWithFactory):
+    layer = DatabaseFunctionalLayer
+
+    def _add_attachment(
+        self, bug, owner, url=None, vulnerability_patches=None
+    ):
+        # Add the data inline so no librarian file is needed.
+        with person_logged_in(owner):
+            return bug.addAttachment(
+                owner=owner,
+                data=None,
+                comment=None,
+                filename=None,
+                url=url,
+                is_patch=vulnerability_patches is not None,
+                description="test-package",
+                vulnerability_patches=vulnerability_patches,
+            )
+
+    def test_vulnerability_patches_exported(self):
+        # The stored list of patch mappings round-trips unchanged over the API
+        patches = [
+            {
+                "name": "upstream",
+                "value": "https://example.com/patch.diff",
+                "comment": "fixes the issue",
+            }
+        ]
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        attachment = self._add_attachment(
+            bug, owner, vulnerability_patches=patches
+        )
+        attachment_url = api_url(attachment)
+        logout()
+        webservice = webservice_for_person(
+            owner, permission=OAuthPermission.READ_PUBLIC
+        )
+        response = webservice.get(attachment_url, api_version="devel")
+        self.assertEqual(200, response.status)
+        self.assertEqual(patches, response.jsonBody()["vulnerability_patches"])
+
+    def test_vulnerability_patches_unset(self):
+        # A plain attachment has no patches, and should be serialized as None.
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        # A URL attachment avoids uploading a file to the librarian.
+        attachment = self._add_attachment(
+            bug, owner, url="https://example.com/attachment"
+        )
+        attachment_url = api_url(attachment)
+        user = self.factory.makePerson()
+        logout()
+        webservice = webservice_for_person(
+            user, permission=OAuthPermission.READ_PUBLIC
+        )
+        response = webservice.get(attachment_url, api_version="devel")
+        self.assertEqual(200, response.status)
+        self.assertIsNone(response.jsonBody()["vulnerability_patches"])
