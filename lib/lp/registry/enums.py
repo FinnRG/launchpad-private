@@ -9,6 +9,7 @@ __all__ = [
     "DistributionDefaultTraversalPolicy",
     "DistroSeriesDifferenceStatus",
     "DistroSeriesDifferenceType",
+    "ExternalPackageType",
     "EXCLUSIVE_TEAM_POLICY",
     "INCLUSIVE_TEAM_POLICY",
     "PersonTransferJobType",
@@ -672,3 +673,91 @@ class StoreRisk(EnumeratedType):
     CANDIDATE = Item("candidate", "Candidate")
     BETA = Item("beta", "Beta")
     EDGE = Item("edge", "Edge")
+
+
+class ExternalPackageType(DBEnumeratedType):
+    """ExternalPackageType
+
+    The various possible types for an ExternalPackage.
+    """
+
+    UNKNOWN = DBItem(
+        0,
+        """
+        Unknown
+
+        Unknown external package
+        """,
+    )
+
+    GENERIC = DBItem(
+        1,
+        """
+        Generic
+
+        Generic external package
+        """,
+    )
+
+    SNAP = DBItem(
+        2,
+        """
+        Snap
+
+        Snap external package
+        """,
+    )
+
+    CHARM = DBItem(
+        3,
+        """
+        Charm
+
+        Charm external package
+        """,
+    )
+
+    ROCK = DBItem(
+        4,
+        """
+        Rock
+
+        Rock external package
+        """,
+    )
+
+    PYTHON = DBItem(
+        5,
+        """
+        Python
+
+        Python external package
+        """,
+    )
+
+    CONDA = DBItem(
+        6,
+        """
+        Conda
+
+        Conda external package
+        """,
+    )
+
+    CARGO = DBItem(
+        7,
+        """
+        Cargo
+
+        Cargo external package
+        """,
+    )
+
+    MAVEN = DBItem(
+        8,
+        """
+        Maven
+
+        Maven external package
+        """,
+    )
