@@ -194,6 +194,19 @@ class ISourcePackageRelease(Interface):
         required=False,
         readonly=True,
     )
+    # Really ISourcePackageGitBuild, patched in
+    # lp.soyuz.interfaces.webservice.
+    source_package_git_build = Reference(
+        schema=Interface,
+        description=_(
+            "The `SourcePackageGitBuild` which produced this source "
+            "package release, or None if it was not built from a Git "
+            "revision."
+        ),
+        title=_("Source package Git build"),
+        required=False,
+        readonly=True,
+    )
 
     def getUserDefinedField(name):
         """Case-insensitively get a user-defined field."""

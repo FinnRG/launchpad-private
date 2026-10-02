@@ -52,6 +52,9 @@ from lp.archiveuploader.utils import (
     re_valid_pkg_name,
     re_valid_version,
 )
+from lp.code.interfaces.sourcepackagerecipebuild import (
+    ISourcePackageRecipeBuild,
+)
 from lp.registry.interfaces.gpg import IGPGKeySet
 from lp.registry.interfaces.person import IPersonSet, PersonCreationRationale
 from lp.registry.interfaces.sourcepackage import (
@@ -68,6 +71,7 @@ from lp.services.gpg.interfaces import (
 from lp.services.identity.interfaces.emailaddress import InvalidEmailAddress
 from lp.services.librarian.utils import copy_and_close
 from lp.soyuz.enums import ArchivePurpose, SourcePackageFormat
+from lp.soyuz.interfaces.sourcepackagegitbuild import ISourcePackageGitBuild
 
 
 def unpack_source(dsc_filepath):
@@ -780,7 +784,12 @@ class DSCFile(SourceUploadFile, SignableTagFile):
             changelog_entry=encoded.get("simulated_changelog"),
             section=self.section,
             archive=self.policy.archive,
-            source_package_recipe_build=build,
+            source_package_recipe_build=(
+                build if ISourcePackageRecipeBuild.providedBy(build) else None
+            ),
+            source_package_git_build=(
+                build if ISourcePackageGitBuild.providedBy(build) else None
+            ),
             copyright=encoded.get("copyright"),
             # dateuploaded by default is UTC:now in the database
             user_defined_fields=user_defined_fields,

@@ -16,6 +16,9 @@ from lp.buildmaster.enums import BuildStatus
 from lp.code.interfaces.sourcepackagerecipebuild import (
     ISourcePackageRecipeBuildSource,
 )
+from lp.soyuz.interfaces.sourcepackagegitbuild import (
+    ISourcePackageGitBuildSource,
+)
 
 
 class TestSourcePackageRecipeBuildUploads(TestUploadProcessorBase):
