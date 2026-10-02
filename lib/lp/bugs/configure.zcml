@@ -962,10 +962,12 @@
                 permission="launchpad.View"
                 set_schema="lp.bugs.interfaces.bugpresence.IBugPresence"
                 attributes="
+                    id
                     bug
                     product
                     distribution
                     source_package_name
+                    api_source_package_name
                     git_repository
                     break_fix_data"/>
             <require

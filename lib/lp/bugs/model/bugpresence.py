@@ -66,6 +66,13 @@ class BugPresence(StormBase):
         self._break_fix_data = break_fix_data
 
     @property
+    def api_source_package_name(self):
+        """See `IBugPresence`."""
+        if self.source_package_name is None:
+            return None
+        return self.source_package_name.name
+
+    @property
     def break_fix_data(self):
         """See `IBugPresence`."""
         return self._break_fix_data or []

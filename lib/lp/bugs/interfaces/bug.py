@@ -66,6 +66,7 @@ from lp.bugs.enums import BugLockedStatus, BugLockStatus, BugNotificationLevel
 from lp.bugs.interfaces.bugactivity import IBugActivity
 from lp.bugs.interfaces.bugattachment import IBugAttachment
 from lp.bugs.interfaces.bugbranch import IBugBranch
+from lp.bugs.interfaces.bugpresence import IBugPresence
 from lp.bugs.interfaces.bugtask import (
     BugTaskImportance,
     BugTaskStatus,
@@ -407,6 +408,16 @@ class IBugView(Interface):
                 value_type=Reference(schema=IBugAttachment),
                 readonly=True,
             )
+        )
+    )
+    presences = doNotSnapshot(
+        exported(
+            CollectionField(
+                title=_("List of break-fix presences for this bug."),
+                value_type=Reference(schema=IBugPresence),
+                readonly=True,
+            ),
+            as_of="devel",
         )
     )
     security_related = exported(

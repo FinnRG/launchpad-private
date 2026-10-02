@@ -681,6 +681,9 @@
     <lp:url
         for="lp.bugs.interfaces.bugattachment.IBugAttachment"
         urldata="lp.bugs.browser.bugattachment.BugAttachmentURL"/>
+    <lp:url
+        for="lp.bugs.interfaces.bugpresence.IBugPresence"
+        urldata="lp.bugs.browser.bugpresence.BugPresenceURL"/>
     <browser:defaultView
         for="lp.bugs.interfaces.bugattachment.IBugAttachment"
         name="+edit"/>

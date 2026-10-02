@@ -716,3 +716,87 @@ class TestBugAttachmentVulnerabilityPatches(TestCaseWithFactory):
         self.assertEqual(400, response.status)
         with person_logged_in(owner):
             self.assertIsNone(attachment.vulnerability_patches)
+
+
+class TestBugPresencesWebservice(TestCaseWithFactory):
+    layer = DatabaseFunctionalLayer
+
+    def test_presences_and_break_fix_data_exported(self):
+        # A bug's presences are exposed as a collection on devel, and each
+        # presence exports its break_fix_data.
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        break_fix = [{"break": "abcdef123456", "fix": "654321fedcba"}]
+        with person_logged_in(owner):
+            self.factory.makeBugPresence(bug=bug, break_fix_data=break_fix)
+        bug_url = api_url(bug)
+        logout()
+        webservice = webservice_for_person(
+            owner,
+            permission=OAuthPermission.READ_PUBLIC,
+            default_api_version="devel",
+        )
+        response = webservice.get(bug_url)
+        self.assertEqual(200, response.status)
+        presences = webservice.get(
+            response.jsonBody()["presences_collection_link"]
+        ).jsonBody()
+        self.assertEqual(1, len(presences["entries"]))
+        self.assertEqual(break_fix, presences["entries"][0]["break_fix_data"])
+
+    def _get_presence_representation(self, owner, presence_url):
+        webservice = webservice_for_person(
+            owner,
+            permission=OAuthPermission.READ_PUBLIC,
+            default_api_version="devel",
+        )
+        return webservice, webservice.get(presence_url).jsonBody()
+
+    def test_presence_exports_source_package_name(self):
+        # The source package name is exported as a plain string, and the
+        # other targets are unset.
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        spn = self.factory.makeSourcePackageName()
+        with person_logged_in(owner):
+            presence = self.factory.makeBugPresence(
+                bug=bug, source_package_name=spn
+            )
+        presence_url = api_url(presence)
+        logout()
+        _, representation = self._get_presence_representation(
+            owner, presence_url
+        )
+        self.assertEqual(spn.name, representation["source_package_name"])
+        self.assertIsNone(representation["product_link"])
+        self.assertIsNone(representation["distribution_link"])
+        self.assertIsNone(representation["git_repository_link"])
+
+    def test_presence_exports_product_distribution_and_git_repository(self):
+        # Product, distribution and git repository are exported as links.
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        targets = {
+            "product": self.factory.makeProduct(),
+            "distribution": self.factory.makeDistribution(),
+            "git_repository": self.factory.makeGitRepository(),
+        }
+        target_urls = {}
+        presence_urls = {}
+        with person_logged_in(owner):
+            for name, target in targets.items():
+                presence = self.factory.makeBugPresence(
+                    bug=bug, **{name: target}
+                )
+                target_urls[name] = api_url(target)
+                presence_urls[name] = api_url(presence)
+        logout()
+        for name, presence_url in presence_urls.items():
+            webservice, representation = self._get_presence_representation(
+                owner, presence_url
+            )
+            self.assertEqual(
+                webservice.getAbsoluteUrl(target_urls[name]),
+                representation[name + "_link"],
+            )
+            self.assertIsNone(representation["source_package_name"])
