@@ -16,6 +16,7 @@ from zope.interface import Attribute, Interface
 from zope.schema import Bool, Choice, Datetime, TextLine
 
 from lp import _
+from lp.app.interfaces.launchpad import IPrivacy
 from lp.registry.interfaces.distroseries import IDistroSeries
 from lp.registry.interfaces.pocket import PackagePublishingPocket
 from lp.registry.interfaces.sourcepackagename import ISourcePackageName
@@ -27,7 +28,7 @@ from lp.soyuz.interfaces.packageset import IPackageset
 
 
 @exported_as_webservice_entry(as_of="beta", publish_web_link=False)
-class IArchivePermission(Interface):
+class IArchivePermission(IPrivacy):
     """The interface for `ArchivePermission`."""
 
     id = Attribute("The archive permission ID.")

@@ -133,6 +133,11 @@ class ArchivePermission(StormBase):
             )
 
     @property
+    def private(self):
+        """See `IPrivacy`."""
+        return self.archive.private
+
+    @property
     def component_name(self):
         """See `IArchivePermission`"""
         if self.component:
