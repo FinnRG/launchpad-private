@@ -39,7 +39,6 @@ class IBugPresenceSet(Interface):
         """Get a `IBugPresence` by id."""
 
     def create(
-        id,
         bug,
         product,
         distribution,
