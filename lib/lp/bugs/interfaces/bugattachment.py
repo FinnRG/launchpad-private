@@ -22,7 +22,17 @@ from lazr.restful.declarations import (
 )
 from lazr.restful.fields import Reference
 from zope.interface import Interface
-from zope.schema import URI, Bool, Bytes, Choice, Int, List, TextLine
+from zope.schema import (
+    URI,
+    Bool,
+    Bytes,
+    Choice,
+    Dict,
+    Int,
+    List,
+    Text,
+    TextLine,
+)
 
 from lp import _
 from lp.bugs.interfaces.hasbug import IHasBug
@@ -118,8 +128,18 @@ class IBugAttachmentView(IHasBug):
         ),
         readonly=True,
     )
-    vulnerability_patches = List(
-        title=_("Vulnerability patches"), readonly=True
+    vulnerability_patches = exported(
+        List(
+            title=_("Vulnerability patches"),
+            description=_(
+                "A list of patches for the associated vulnerability. Each "
+                "entry is a mapping with the patch 'name', its 'value' (the "
+                "patch URL) and an optional 'comment'."
+            ),
+            value_type=Dict(key_type=Text(), value_type=Text()),
+            required=False,
+        ),
+        as_of="devel",
     )
 
     def getFileByName(filename):

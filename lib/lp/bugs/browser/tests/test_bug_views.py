@@ -35,6 +35,7 @@ from lp.testing import (
     admin_logged_in,
     login_person,
     person_logged_in,
+    test_tales,
 )
 from lp.testing.layers import DatabaseFunctionalLayer, LaunchpadFunctionalLayer
 from lp.testing.matchers import HasQueryCount
@@ -1035,3 +1036,110 @@ class TestMainBugView(BrowserTestCase):
             url = canonical_url(self.bug)
             # No exception is raised when the page is rendered.
             self.getUserBrowser(url, user=self.user)
+
+
+class TestBugPatchesPortlet(TestCaseWithFactory):
+    layer = DatabaseFunctionalLayer
+
+    def _render_portlet(self, bug, owner):
+        with person_logged_in(owner):
+            getUtility(IOpenLaunchBag).add(bug.default_bugtask)
+            return create_initialized_view(
+                bug, "+portlet-attachments", principal=owner
+            )()
+
+    def test_vulnerability_patches_rendered_as_separate_links(self):
+        # Each vulnerability patch of an attachment is shown as its own
+        # link, labelled by the patch name.
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        patches = [
+            {
+                "name": "upstream",
+                "value": "https://example.com/a.diff",
+                "comment": "first patch",
+            },
+            {
+                "name": "distro",
+                "value": "https://example.com/b.diff",
+                "comment": "second patch",
+            },
+        ]
+        with person_logged_in(owner):
+            bug.addAttachment(
+                owner=owner,
+                data=None,
+                comment=None,
+                filename=None,
+                url=None,
+                is_patch=True,
+                description="test-package",
+                vulnerability_patches=patches,
+            )
+        html = self._render_portlet(bug, owner)
+        patches_portlet = Tag(
+            "patches portlet", "div", attrs={"id": "portlet-patches"}
+        )
+        self.assertThat(
+            html,
+            MatchesAll(
+                HTMLContains(
+                    Within(
+                        patches_portlet,
+                        Tag(
+                            "upstream patch link",
+                            "a",
+                            text=re.compile("upstream"),
+                            attrs={"href": "https://example.com/a.diff"},
+                        ),
+                    ),
+                    Within(
+                        patches_portlet,
+                        Tag(
+                            "distro patch link",
+                            "a",
+                            text=re.compile("distro"),
+                            attrs={"href": "https://example.com/b.diff"},
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+    def test_attachment_link_formatter_renders_all_patches(self):
+        # The fmt:attachment_link formatter, shared by the Patches portlet
+        # and the comment box, renders every patch of a vulnerability
+        # attachment, each labelled by its name and optional comment.
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        patches = [
+            {
+                "name": "upstream",
+                "value": "https://example.com/a.diff",
+                "comment": "first patch",
+            },
+            {
+                "name": "debdiff",
+                "value": "https://example.com/b.diff",
+                "comment": "second patch",
+            },
+        ]
+        with person_logged_in(owner):
+            attachment = bug.addAttachment(
+                owner=owner,
+                data=None,
+                comment=None,
+                filename=None,
+                url=None,
+                is_patch=True,
+                description="linux",
+                vulnerability_patches=patches,
+            )
+            markup = test_tales(
+                "attachment/fmt:attachment_link", attachment=attachment
+            )
+        self.assertIn("linux:", markup)
+        self.assertIn('href="https://example.com/a.diff"', markup)
+        self.assertIn(">upstream (first patch)</a>", markup)
+        self.assertIn('href="https://example.com/b.diff"', markup)
+        self.assertIn(">debdiff (second patch)</a>", markup)

@@ -2751,7 +2751,7 @@ class Bug(StormBase, InformationTypeMixin):
                 BugAttachment.bug == self,
                 Or(
                     BugAttachment.url != None,
-                    BugAttachment.vulnerability_patches != None,
+                    BugAttachment._vulnerability_patches != None,
                     LibraryFileAlias.content_id != None,
                 ),
             )
