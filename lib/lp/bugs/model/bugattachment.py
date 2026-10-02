@@ -12,6 +12,7 @@ from zope.event import notify
 from zope.interface import implementer
 
 from lp.app.errors import NotFoundError
+from lp.bugs.errors import CannotSetVulnerabilityPatches
 from lp.bugs.interfaces.bugattachment import (
     BugAttachmentType,
     IBugAttachment,
@@ -45,7 +46,9 @@ class BugAttachment(StormBase):
     url = Unicode(allow_none=True)
     _message_id = Int(name="message", allow_none=False)
     _message = Reference(_message_id, "Message.id")
-    vulnerability_patches = JSON(allow_none=True)
+    _vulnerability_patches = JSON(
+        name="vulnerability_patches", allow_none=True
+    )
 
     def __init__(
         self,
@@ -77,6 +80,19 @@ class BugAttachment(StormBase):
     @title.setter
     def title(self, title) -> None:
         self._title = title
+
+    @property
+    def vulnerability_patches(self):
+        return self._vulnerability_patches
+
+    @vulnerability_patches.setter
+    def vulnerability_patches(self, value) -> None:
+        if value and (self.libraryfile_id is not None or self.url):
+            raise CannotSetVulnerabilityPatches(
+                "Vulnerability patches cannot be set on an attachment that "
+                "has a file or URL."
+            )
+        self._vulnerability_patches = value
 
     @cachedproperty
     def message(self):

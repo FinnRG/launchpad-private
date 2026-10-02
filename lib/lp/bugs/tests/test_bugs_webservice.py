@@ -616,3 +616,103 @@ class TestBugAttachmentVulnerabilityPatches(TestCaseWithFactory):
         response = webservice.get(attachment_url, api_version="devel")
         self.assertEqual(200, response.status)
         self.assertIsNone(response.jsonBody()["vulnerability_patches"])
+
+    def test_vulnerability_patches_writable(self):
+        # Someone with launchpad.Edit on the attachment can replace the
+        # patches through the API.
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        attachment = self._add_attachment(
+            bug,
+            owner,
+            vulnerability_patches=[
+                {"name": "upstream", "value": "https://example.com/old.diff"}
+            ],
+        )
+        attachment_url = api_url(attachment)
+        new_patches = [
+            {
+                "name": "debdiff",
+                "value": "https://example.com/new.diff",
+                "comment": "updated",
+            }
+        ]
+        logout()
+        webservice = webservice_for_person(
+            owner,
+            permission=OAuthPermission.WRITE_PRIVATE,
+            default_api_version="devel",
+        )
+        response = webservice.patch(
+            attachment_url,
+            "application/json",
+            json.dumps({"vulnerability_patches": new_patches}),
+        )
+        self.assertEqual(209, response.status)
+        with person_logged_in(owner):
+            self.assertEqual(new_patches, attachment.vulnerability_patches)
+
+    def test_vulnerability_patches_write_requires_edit(self):
+        # A user without launchpad.Edit on the attachment cannot change the
+        # patches.
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        original_patches = [
+            {"name": "upstream", "value": "https://example.com/old.diff"}
+        ]
+        attachment = self._add_attachment(
+            bug, owner, vulnerability_patches=original_patches
+        )
+        attachment_url = api_url(attachment)
+        other = self.factory.makePerson()
+        logout()
+        webservice = webservice_for_person(
+            other,
+            permission=OAuthPermission.WRITE_PRIVATE,
+            default_api_version="devel",
+        )
+        response = webservice.patch(
+            attachment_url,
+            "application/json",
+            json.dumps(
+                {
+                    "vulnerability_patches": [
+                        {"name": "x", "value": "https://example.com/x.diff"}
+                    ]
+                }
+            ),
+        )
+        self.assertEqual(401, response.status)
+        with person_logged_in(owner):
+            self.assertEqual(
+                original_patches, attachment.vulnerability_patches
+            )
+
+    def test_vulnerability_patches_conflict_with_url_rejected(self):
+        # Setting patches on an attachment that has a URL returns 400.
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        attachment = self._add_attachment(
+            bug, owner, url="https://example.com/attachment"
+        )
+        attachment_url = api_url(attachment)
+        logout()
+        webservice = webservice_for_person(
+            owner,
+            permission=OAuthPermission.WRITE_PRIVATE,
+            default_api_version="devel",
+        )
+        response = webservice.patch(
+            attachment_url,
+            "application/json",
+            json.dumps(
+                {
+                    "vulnerability_patches": [
+                        {"name": "x", "value": "https://example.com/x.diff"}
+                    ]
+                }
+            ),
+        )
+        self.assertEqual(400, response.status)
+        with person_logged_in(owner):
+            self.assertIsNone(attachment.vulnerability_patches)

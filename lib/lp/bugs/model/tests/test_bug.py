@@ -13,6 +13,7 @@ from lp.app.enums import InformationType
 from lp.app.interfaces.launchpad import ILaunchpadCelebrities
 from lp.bugs.adapters.bugchange import BugTitleChange
 from lp.bugs.enums import BugNotificationLevel, BugNotificationStatus
+from lp.bugs.errors import CannotSetVulnerabilityPatches
 from lp.bugs.interfaces.bugnotification import IBugNotificationSet
 from lp.bugs.interfaces.bugtask import BugTaskStatus
 from lp.bugs.mail.bugnotificationrecipients import BugNotificationRecipients
@@ -1285,3 +1286,25 @@ class TestBugAttachmentDisplayedURL(TestCaseWithFactory):
         self.assertEqual(
             "https://example.com/attachment", attachment.displayed_url
         )
+
+    def test_cannot_set_patches_on_url_attachment(self):
+        # Setting vulnerability patches on an attachment that has a URL is
+        # rejected, to avoid a mixed file/URL/patch state.
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        with person_logged_in(owner):
+            attachment = bug.addAttachment(
+                owner=owner,
+                data=None,
+                comment=None,
+                filename=None,
+                url="https://example.com/attachment",
+                description="test-attachment",
+            )
+            self.assertRaises(
+                CannotSetVulnerabilityPatches,
+                setattr,
+                removeSecurityProxy(attachment),
+                "vulnerability_patches",
+                [{"name": "upstream", "value": "https://example.com/a.diff"}],
+            )

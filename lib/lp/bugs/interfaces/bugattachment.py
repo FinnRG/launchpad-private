@@ -138,7 +138,6 @@ class IBugAttachmentView(IHasBug):
             ),
             value_type=Dict(key_type=Text(), value_type=Text()),
             required=False,
-            readonly=True,
         ),
         as_of="devel",
     )
