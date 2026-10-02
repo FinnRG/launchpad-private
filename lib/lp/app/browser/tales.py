@@ -1893,6 +1893,31 @@ class BugAttachmentFormatterAPI(CustomizableFormatter):
         else:
             css = ' class="' + sprite + '"'
 
+        patches = self._context.vulnerability_patches
+        if patches:
+            # A vulnerability attachment has no single file; render one link
+            # per patch, labelled by its name and optional comment.
+            links = []
+            for patch in patches:
+                url = patch.get("value")
+                if not url:
+                    continue
+                label = html_escape(patch.get("name") or "patch")
+                comment = patch.get("comment")
+                if comment:
+                    label = "{label} ({comment})".format(
+                        label=label, comment=html_escape(comment)
+                    )
+                links.append(
+                    '<a href="{url}" rel="nofollow">{label}</a>'.format(
+                        url=html_escape(url), label=label
+                    )
+                )
+            return "{title}: {links}".format(
+                title=html_escape(self._context.title),
+                links=", ".join(links),
+            )
+
         if self._context.url:
             rel = ' rel="nofollow"'
         else:

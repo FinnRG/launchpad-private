@@ -116,7 +116,9 @@ class BugAttachment(StormBase):
     @property
     def displayed_url(self):
         if self.vulnerability_patches:
-            return [patch.get("value") for patch in self.vulnerability_patches]
+            # An attachment can carry several patch URLs; use the first as
+            # the representative link. The UI lists them all separately.
+            return self.vulnerability_patches[0].get("value")
 
         return (
             self.url

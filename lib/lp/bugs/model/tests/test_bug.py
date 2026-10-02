@@ -1236,3 +1236,52 @@ class TestBugAutoConfirmation(TestCaseWithFactory):
                 duplicate_bug = self.factory.makeBug(owner=bug.owner)
                 duplicate_bug.markAsDuplicate(bug)
             self.assertEqual(BugTaskStatus.NEW, bug.bugtasks[0].status)
+
+
+class TestBugAttachmentDisplayedURL(TestCaseWithFactory):
+    layer = DatabaseFunctionalLayer
+
+    def _add_patch_attachment(self, bug, owner, vulnerability_patches):
+        with person_logged_in(owner):
+            return bug.addAttachment(
+                owner=owner,
+                data=None,
+                comment=None,
+                filename=None,
+                url=None,
+                is_patch=True,
+                description="test-package",
+                vulnerability_patches=vulnerability_patches,
+            )
+
+    def test_displayed_url_returns_first_patch_url(self):
+        # With vulnerability patches, displayed_url is a single URL string,
+        # taken from the first patch entry.
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        patches = [
+            {"name": "upstream", "value": "https://example.com/a.diff"},
+            {"name": "distro", "value": "https://example.com/b.diff"},
+        ]
+        attachment = self._add_patch_attachment(bug, owner, patches)
+        self.assertEqual(
+            "https://example.com/a.diff", attachment.displayed_url
+        )
+
+    def test_displayed_url_falls_back_to_url(self):
+        # Without vulnerability patches, displayed_url is the attachment's
+        # own external URL (or library file).
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        with person_logged_in(owner):
+            attachment = bug.addAttachment(
+                owner=owner,
+                data=None,
+                comment=None,
+                filename=None,
+                url="https://example.com/attachment",
+                description="test-attachment",
+            )
+        self.assertEqual(
+            "https://example.com/attachment", attachment.displayed_url
+        )
