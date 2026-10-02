@@ -267,6 +267,15 @@ class BuildFarmJobType(DBEnumeratedType):
         """,
     )
 
+    SOURCEPACKAGEGITBUILD = DBItem(
+        12,
+        """
+        Source package Git build
+
+        Build a source package from a Git revision.
+        """,
+    )
+
 
 class BuildQueueStatus(DBEnumeratedType):
     """Build queue status.

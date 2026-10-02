@@ -113,8 +113,8 @@ class SourcePackageRelease(StormBase):
     upload_archive_id = Int(name="upload_archive", allow_none=False)
     upload_archive = Reference(upload_archive_id, "Archive.id")
 
-    # DB constraint: at most one of source_package_recipe_build and ci_build
-    # is non-NULL.
+    # DB constraint: at most one of source_package_recipe_build, ci_build
+    # and source_package_git_build is non-NULL.
     source_package_recipe_build_id = Int(
         name="sourcepackage_recipe_build", allow_none=True
     )
@@ -123,6 +123,12 @@ class SourcePackageRelease(StormBase):
     )
     ci_build_id = Int(name="ci_build", allow_none=True)
     ci_build = Reference(ci_build_id, "CIBuild.id")
+    source_package_git_build_id = Int(
+        name="source_package_git_build", allow_none=True
+    )
+    source_package_git_build = Reference(
+        source_package_git_build_id, "SourcePackageGitBuild.id"
+    )
 
     dsc_maintainer_rfc822 = Unicode(name="dsc_maintainer_rfc822")
     dsc_standards_version = Unicode(name="dsc_standards_version")
@@ -159,6 +165,7 @@ class SourcePackageRelease(StormBase):
         homepage=None,
         source_package_recipe_build=None,
         ci_build=None,
+        source_package_git_build=None,
         dsc_maintainer_rfc822=None,
         dsc_standards_version=None,
         dsc_format=None,
@@ -192,6 +199,7 @@ class SourcePackageRelease(StormBase):
         self.homepage = homepage
         self.source_package_recipe_build = source_package_recipe_build
         self.ci_build = ci_build
+        self.source_package_git_build = source_package_git_build
         self.dsc_maintainer_rfc822 = dsc_maintainer_rfc822
         self.dsc_standards_version = dsc_standards_version
         self.dsc_format = dsc_format
