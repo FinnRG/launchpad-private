@@ -38,7 +38,7 @@ from lp.testing import (
     record_two_runs,
     set_feature_flag,
 )
-from lp.testing.layers import DatabaseFunctionalLayer
+from lp.testing.layers import DatabaseFunctionalLayer, LaunchpadFunctionalLayer
 from lp.testing.matchers import Equals, HasQueryCount, LessThan
 
 
@@ -1308,3 +1308,26 @@ class TestBugAttachmentDisplayedURL(TestCaseWithFactory):
                 "vulnerability_patches",
                 [{"name": "upstream", "value": "https://example.com/a.diff"}],
             )
+
+
+class TestBugAttachmentDisplayedURLLibraryFile(TestCaseWithFactory):
+    # The librarian is needed to store the attachment's file.
+    layer = LaunchpadFunctionalLayer
+
+    def test_displayed_url_uses_library_file(self):
+        # With a library file (and no URL or patches), displayed_url is the
+        # proxied download URL of the attached file.
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        with person_logged_in(owner):
+            attachment = bug.addAttachment(
+                owner=owner,
+                data=b"patch content",
+                comment=None,
+                filename="test.patch",
+                url=None,
+                description="test-attachment",
+            )
+        displayed_url = attachment.displayed_url
+        self.assertIn("/+attachment/", displayed_url)
+        self.assertTrue(displayed_url.endswith("/+files/test.patch"))
