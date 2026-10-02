@@ -122,6 +122,11 @@ patch_plain_parameter_type(
 patch_plain_parameter_type(
     IBug, "unlinkMergeProposal", "merge_proposal", IBranchMergeProposal
 )
+patch_plain_parameter_type(IBug, "addPresence", "product", IProduct)
+patch_plain_parameter_type(IBug, "addPresence", "distribution", IDistribution)
+patch_plain_parameter_type(
+    IBug, "addPresence", "git_repository", IGitRepository
+)
 
 # IBugPresence
 patch_reference_property(IBugPresence, "product", IProduct)

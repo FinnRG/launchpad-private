@@ -5,6 +5,8 @@
 
 __all__ = [
     "CannotSetVulnerabilityPatches",
+    "InvalidBreakFixData",
+    "InvalidBugPresenceTarget",
     "InvalidDuplicateValue",
     "InvalidSearchParameters",
 ]
@@ -29,3 +31,13 @@ class InvalidSearchParameters(ValueError):
 @error_status(http.client.BAD_REQUEST)
 class CannotSetVulnerabilityPatches(ValueError):
     """Vulnerability patches conflict with the attachment's file or URL."""
+
+
+@error_status(http.client.BAD_REQUEST)
+class InvalidBugPresenceTarget(ValueError):
+    """A bug presence must have exactly one target."""
+
+
+@error_status(http.client.BAD_REQUEST)
+class InvalidBreakFixData(ValueError):
+    """The break-fix data is not a list of 'break'/'fix' mappings."""

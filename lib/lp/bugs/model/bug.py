@@ -97,7 +97,11 @@ from lp.bugs.adapters.bugchange import (
     UnsubscribedFromBug,
 )
 from lp.bugs.enums import BugLockedStatus, BugLockStatus, BugNotificationLevel
-from lp.bugs.errors import InvalidDuplicateValue
+from lp.bugs.errors import (
+    InvalidBreakFixData,
+    InvalidBugPresenceTarget,
+    InvalidDuplicateValue,
+)
 from lp.bugs.interfaces.bug import (
     IBug,
     IBugBecameQuestionEvent,
@@ -172,6 +176,7 @@ from lp.registry.interfaces.sharingjob import (
     IRemoveArtifactSubscriptionsJobSource,
 )
 from lp.registry.interfaces.sourcepackage import ISourcePackage
+from lp.registry.interfaces.sourcepackagename import ISourcePackageNameSet
 from lp.registry.model.accesspolicy import reconcile_access_for_artifacts
 from lp.registry.model.person import Person, PersonSet, person_sort_key
 from lp.registry.model.teammembership import TeamParticipation
@@ -1768,8 +1773,33 @@ class Bug(StormBase, InformationTypeMixin):
         user,
     ):
         """See `IBug`."""
+        # A source package name may arrive by name over the web service.
+        if isinstance(source_package_name, str):
+            resolved = getUtility(ISourcePackageNameSet).queryByName(
+                source_package_name
+            )
+            if resolved is None:
+                raise InvalidBugPresenceTarget(
+                    "No such source package name: %s" % source_package_name
+                )
+            source_package_name = resolved
 
-        # TODO: we are not doing any validation here. See `IBug`.
+        targets = [product, distribution, source_package_name, git_repository]
+        if sum(target is not None for target in targets) != 1:
+            raise InvalidBugPresenceTarget(
+                "Exactly one of product, distribution, source_package_name "
+                "or git_repository must be provided."
+            )
+
+        if not isinstance(break_fix_data, list):
+            raise InvalidBreakFixData("break_fix_data must be a list.")
+        for entry in break_fix_data:
+            if not isinstance(entry, dict) or set(entry) != {"break", "fix"}:
+                raise InvalidBreakFixData(
+                    "Each break-fix entry must be a mapping with exactly "
+                    "'break' and 'fix' keys."
+                )
+
         bug_presence = getUtility(IBugPresenceSet).create(
             bug=self,
             product=product,

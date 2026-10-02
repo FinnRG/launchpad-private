@@ -800,3 +800,129 @@ class TestBugPresencesWebservice(TestCaseWithFactory):
                 representation[name + "_link"],
             )
             self.assertIsNone(representation["source_package_name"])
+
+    def _make_bug_with_moderator(self):
+        # The product owner has a bug role, so they hold launchpad.Moderate.
+        owner = self.factory.makePerson()
+        product = self.factory.makeProduct(owner=owner)
+        bug = self.factory.makeBug(target=product, owner=owner)
+        return owner, bug
+
+    def _write_webservice(self, person):
+        return webservice_for_person(
+            person,
+            permission=OAuthPermission.WRITE_PRIVATE,
+            default_api_version="devel",
+        )
+
+    def _add_presence(self, webservice, bug_url, spn):
+        return webservice.named_post(
+            bug_url,
+            "addPresence",
+            source_package_name=spn.name,
+            break_fix_data=[{"break": "abc", "fix": "def"}],
+        )
+
+    def test_add_presence(self):
+        # A user with launchpad.Moderate can add a presence via the API,
+        # passing the source package by name.
+        owner, bug = self._make_bug_with_moderator()
+        spn = self.factory.makeSourcePackageName()
+        bug_url = api_url(bug)
+        logout()
+        webservice = self._write_webservice(owner)
+        response = self._add_presence(webservice, bug_url, spn)
+        self.assertEqual(201, response.status)
+        presence = webservice.get(response.getHeader("Location")).jsonBody()
+        self.assertEqual(
+            [{"break": "abc", "fix": "def"}], presence["break_fix_data"]
+        )
+
+    def test_add_presence_denied_to_unrelated_user(self):
+        # An ordinary user, even on a public bug, cannot add a presence.
+        owner, bug = self._make_bug_with_moderator()
+        spn = self.factory.makeSourcePackageName()
+        bug_url = api_url(bug)
+        other = self.factory.makePerson()
+        logout()
+        response = self._add_presence(
+            self._write_webservice(other), bug_url, spn
+        )
+        self.assertEqual(401, response.status)
+
+    def test_add_presence_denied_to_bug_reporter_without_role(self):
+        # Reporting the bug does not grant the right to add presences.
+        product = self.factory.makeProduct()
+        reporter = self.factory.makePerson()
+        bug = self.factory.makeBug(target=product, owner=reporter)
+        spn = self.factory.makeSourcePackageName()
+        bug_url = api_url(bug)
+        logout()
+        response = self._add_presence(
+            self._write_webservice(reporter), bug_url, spn
+        )
+        self.assertEqual(401, response.status)
+
+    def test_add_presence_requires_exactly_one_target(self):
+        # Providing no target is rejected with 400.
+        owner, bug = self._make_bug_with_moderator()
+        bug_url = api_url(bug)
+        logout()
+        webservice = self._write_webservice(owner)
+        response = webservice.named_post(
+            bug_url,
+            "addPresence",
+            break_fix_data=[{"break": "abc", "fix": "def"}],
+        )
+        self.assertEqual(400, response.status)
+
+    def test_add_presence_rejects_bad_break_fix_data(self):
+        # Break-fix entries without 'break' and 'fix' keys are rejected.
+        owner, bug = self._make_bug_with_moderator()
+        spn = self.factory.makeSourcePackageName()
+        bug_url = api_url(bug)
+        logout()
+        webservice = self._write_webservice(owner)
+        response = webservice.named_post(
+            bug_url,
+            "addPresence",
+            source_package_name=spn.name,
+            break_fix_data=[{"wrong": "key"}],
+        )
+        self.assertEqual(400, response.status)
+
+    def test_remove_presence(self):
+        # A user with launchpad.Moderate can remove a presence via the API.
+        owner, bug = self._make_bug_with_moderator()
+        with person_logged_in(owner):
+            presence = self.factory.makeBugPresence(
+                bug=bug, break_fix_data=[{"break": "a", "fix": "b"}]
+            )
+        bug_url = api_url(bug)
+        presence_url = api_url(presence)
+        logout()
+        webservice = self._write_webservice(owner)
+        response = webservice.named_post(
+            bug_url, "removePresence", bug_presence=presence_url
+        )
+        self.assertEqual(200, response.status)
+        with person_logged_in(owner):
+            self.assertEqual(0, bug.presences.count())
+
+    def test_remove_presence_denied_to_unrelated_user(self):
+        # An ordinary user cannot remove a presence, and it is kept.
+        owner, bug = self._make_bug_with_moderator()
+        with person_logged_in(owner):
+            presence = self.factory.makeBugPresence(
+                bug=bug, break_fix_data=[{"break": "a", "fix": "b"}]
+            )
+        bug_url = api_url(bug)
+        presence_url = api_url(presence)
+        other = self.factory.makePerson()
+        logout()
+        response = self._write_webservice(other).named_post(
+            bug_url, "removePresence", bug_presence=presence_url
+        )
+        self.assertEqual(401, response.status)
+        with person_logged_in(owner):
+            self.assertEqual(1, bug.presences.count())
