@@ -609,6 +609,27 @@ class BugView(LaunchpadView, BugViewMixin):
             return False
         return self.context.isSubscribed(user)
 
+    @cachedproperty
+    def presence_portlet_data(self):
+        """Return a list of dicts describing the bug presences.
+
+        Each dict has the keys `source_package_name`, `product`,
+        `distribution`, `git_repository` and `break_fix`.
+        """
+        return [
+            {
+                "source_package_name": presence.source_package_name,
+                "product": presence.product,
+                "distribution": presence.distribution,
+                "git_repository": presence.git_repository,
+                "break_fix": [
+                    {"break": item.get("break"), "fix": item.get("fix")}
+                    for item in presence.break_fix_data
+                ],
+            }
+            for presence in self.context.presences
+        ]
+
     def duplicates(self):
         """Return a list of dicts of duplicates.
 
