@@ -1140,6 +1140,11 @@
         name="SOURCEPACKAGEGITBUILD">
         <allow interface="lp.buildmaster.interfaces.buildfarmjob.ISpecificBuildFarmJobSource"/>
     </lp:securedutility>
+    <adapter
+        for=".interfaces.sourcepackagegitbuild.ISourcePackageGitBuild"
+        provides="lp.buildmaster.interfaces.buildfarmjobbehaviour.IBuildFarmJobBehaviour"
+        factory=".model.sourcepackagegitbuildbehaviour.SourcePackageGitBuildBehaviour"
+        permission="zope.Public"/>
     <!-- LiveFSFile -->
     <class class=".model.livefsbuild.LiveFSFile">
         <allow

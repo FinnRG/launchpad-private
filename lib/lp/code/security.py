@@ -55,6 +55,7 @@ from lp.security import (
     OnlyBazaarExpertsAndAdmins,
     OnlyVcsImportsAndAdmins,
 )
+from lp.soyuz.interfaces.sourcepackagegitbuild import ISourcePackageGitBuild
 
 
 class ViewRevisionStatusReport(DelegatedAuthorization):
@@ -570,6 +571,26 @@ class ViewSourcePackageRecipeBuild(DelegatedAuthorization):
         if self.obj.recipe is not None:
             yield self.obj.recipe
         yield self.obj.archive
+
+
+class ViewSourcePackageGitBuild(DelegatedAuthorization):
+    permission = "launchpad.View"
+    usedfor = ISourcePackageGitBuild
+
+    def iter_objects(self):
+        yield self.obj.git_repository
+        yield self.obj.archive
+
+
+class EditSourcePackageGitBuild(AdminByBuilddAdmin):
+    permission = "launchpad.Edit"
+    usedfor = ISourcePackageGitBuild
+
+    def checkAuthenticated(self, user):
+        auth_repository = EditGitRepository(self.obj.git_repository)
+        if auth_repository.checkAuthenticated(user):
+            return True
+        return super().checkAuthenticated(user)
 
 
 class ViewCIBuild(DelegatedAuthorization):

@@ -159,6 +159,9 @@ from lp.soyuz.interfaces.publishing import (
     active_publishing_status,
     inactive_publishing_status,
 )
+from lp.soyuz.interfaces.sourcepackagegitbuild import (
+    ISourcePackageGitBuildSource,
+)
 from lp.soyuz.model.archive import Archive, validate_ppa
 from lp.soyuz.model.publishing import SourcePackagePublishingHistory
 from lp.soyuz.scripts.packagecopier import check_copy_permissions
@@ -255,6 +258,13 @@ class ArchiveNavigation(
     @stepthrough("+recipebuild")
     def traverse_recipebuild(self, name):
         build = get_build_by_id_str(ISourcePackageRecipeBuildSource, name)
+        if build is None or build.archive != self.context:
+            return None
+        return build
+
+    @stepthrough("+gitbuild")
+    def traverse_gitbuild(self, name):
+        build = get_build_by_id_str(ISourcePackageGitBuildSource, name)
         if build is None or build.archive != self.context:
             return None
         return build
