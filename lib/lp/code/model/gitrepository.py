@@ -10,6 +10,7 @@ __all__ = [
 
 import email
 import logging
+import re
 from collections import OrderedDict, defaultdict
 from datetime import datetime, timedelta, timezone
 from fnmatch import fnmatch
@@ -65,6 +66,7 @@ from lp.code.errors import (
     GitRepositoryScanFault,
     GitTargetError,
     NoSuchGitReference,
+    SourcePackageGitBuildRequestError,
 )
 from lp.code.event.git import GitRefsCreatedEvent, GitRefsUpdatedEvent
 from lp.code.interfaces.branchmergeproposal import (
@@ -117,6 +119,7 @@ from lp.registry.interfaces.distributionsourcepackage import (
 )
 from lp.registry.interfaces.ociproject import IOCIProject
 from lp.registry.interfaces.person import IPerson, IPersonSet
+from lp.registry.interfaces.pocket import PackagePublishingPocket
 from lp.registry.interfaces.product import IProduct
 from lp.registry.interfaces.role import IHasOwner
 from lp.registry.interfaces.sharingjob import (
@@ -160,6 +163,9 @@ from lp.services.webapp.interfaces import ILaunchBag
 from lp.services.webhooks.interfaces import IWebhookSet
 from lp.services.webhooks.model import WebhookTargetMixin
 from lp.snappy.interfaces.snap import ISnapSet
+from lp.soyuz.interfaces.sourcepackagegitbuild import (
+    ISourcePackageGitBuildSource,
+)
 
 REVISION_STATUS_REPORT_ALLOW_CREATE = "revision_status_report.allow_create"
 
@@ -533,6 +539,60 @@ class GitRepository(
         return getUtility(IRevisionStatusReportSet).findByCommit(
             self, commit_sha1
         )
+
+    def buildSourcePackageFromGitRef(
+        self,
+        git_ref,
+        target_ppa,
+        user,
+        version_suffix=None,
+        distroseries=None,
+        pocket=PackagePublishingPocket.RELEASE,
+    ):
+        """See `IGitRepository`."""
+        if self.private:
+            raise SourcePackageGitBuildRequestError(
+                "Source package Git builds require a public repository."
+            )
+        if not target_ppa.is_ppa:
+            raise SourcePackageGitBuildRequestError(
+                "Source package Git builds require a PPA."
+            )
+        ref = self.getRefByPath(git_ref)
+        if ref is not None:
+            commit_sha1 = ref.commit_sha1
+        elif re.fullmatch(r"[0-9a-f]{40}", git_ref):
+            # A commit need not be the tip of a stored ref. The builder
+            # checks that it exists when fetching it from the repository.
+            commit_sha1 = git_ref
+        else:
+            raise NoSuchGitReference(self, git_ref)
+        if distroseries is None:
+            distroseries = target_ppa.distribution.currentseries
+        if distroseries.distribution != target_ppa.distribution:
+            raise SourcePackageGitBuildRequestError(
+                "The series must belong to the PPA's distribution."
+            )
+        reject_reason = target_ppa.checkUpload(
+            user,
+            distroseries,
+            None,
+            target_ppa.default_component,
+            pocket,
+        )
+        if reject_reason is not None:
+            raise reject_reason
+        build = getUtility(ISourcePackageGitBuildSource).new(
+            self,
+            commit_sha1,
+            target_ppa,
+            distroseries,
+            user,
+            version_suffix or "",
+            pocket=pocket,
+        )
+        build.queueBuild()
+        return build
 
     def fork(self, requester, new_owner):
         if not requester.inTeam(new_owner):

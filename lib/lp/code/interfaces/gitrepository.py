@@ -73,6 +73,7 @@ from lp.code.interfaces.revisionstatus import IRevisionStatusReport
 from lp.registry.interfaces.distributionsourcepackage import (
     IDistributionSourcePackage,
 )
+from lp.registry.interfaces.distroseries import IDistroSeries
 from lp.registry.interfaces.ociproject import IOCIProject
 from lp.registry.interfaces.person import IPerson
 from lp.registry.interfaces.persondistributionsourcepackage import (
@@ -80,6 +81,7 @@ from lp.registry.interfaces.persondistributionsourcepackage import (
 )
 from lp.registry.interfaces.personociproject import IPersonOCIProjectFactory
 from lp.registry.interfaces.personproduct import IPersonProductFactory
+from lp.registry.interfaces.pocket import PackagePublishingPocket
 from lp.registry.interfaces.product import IProduct
 from lp.registry.interfaces.role import IPersonRoles
 from lp.services.auth.enums import AccessTokenScope
@@ -89,6 +91,7 @@ from lp.services.auth.interfaces import (
 )
 from lp.services.fields import InlineObject, PersonChoice, PublicPersonChoice
 from lp.services.webhooks.interfaces import IWebhookTarget
+from lp.soyuz.interfaces.archive import IArchive
 
 GIT_REPOSITORY_NAME_VALIDATION_ERROR_MESSAGE = _(
     "Git repository names must start with a number or letter.  The characters "
@@ -1326,6 +1329,49 @@ class IGitRepositoryEdit(IWebhookTarget, IAccessTokenTargetEdit):
         :param url: The external link of the status report.
         :param result_summary: The description of the new report.
         :param result: The result of the new report.
+        """
+
+    @call_with(user=REQUEST_USER)
+    @operation_parameters(
+        git_ref=TextLine(title=_("The Git ref or commit SHA-1 to build.")),
+        target_ppa=Reference(
+            title=_("The PPA to upload the source package to."),
+            schema=IArchive,
+        ),
+        version_suffix=TextLine(
+            title=_("The suffix to append to the package version."),
+            required=False,
+        ),
+        distroseries=Reference(
+            title=_("The distribution series to build for."),
+            schema=IDistroSeries,
+            required=False,
+        ),
+        pocket=Choice(
+            title=_("The upload pocket."),
+            vocabulary=PackagePublishingPocket,
+            required=False,
+            default=PackagePublishingPocket.RELEASE,
+        ),
+    )
+    @operation_returns_entry(Interface)
+    @export_write_operation()
+    @operation_for_version("devel")
+    def buildSourcePackageFromGitRef(
+        git_ref,
+        target_ppa,
+        user,
+        version_suffix=None,
+        distroseries=None,
+        pocket=PackagePublishingPocket.RELEASE,
+    ):
+        """Build a source package from a Git ref into a PPA.
+
+        If version_suffix is omitted, no suffix is appended.
+        Callers are responsible for version uniqueness. Validation jobs
+        supply a timestamp-and-commit suffix.
+        If distroseries is omitted, use the distribution's current series.
+        The archive's normal upload policy applies to the chosen pocket.
         """
 
 
