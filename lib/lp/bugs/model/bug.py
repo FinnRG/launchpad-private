@@ -850,7 +850,11 @@ class Bug(StormBase, InformationTypeMixin):
     @property
     def presences(self):
         """See `IBug`."""
-        return Store.of(self).find(BugPresence, BugPresence.bug_id == self.id)
+        return (
+            Store.of(self)
+            .find(BugPresence, BugPresence.bug_id == self.id)
+            .order_by(BugPresence.id)
+        )
 
     @property
     def default_bugtask(self):

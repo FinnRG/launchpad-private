@@ -1,0 +1,43 @@
+<div
+    xmlns:tal="http://xml.zope.org/namespaces/tal"
+    xmlns:metal="http://xml.zope.org/namespaces/metal"
+    xmlns:i18n="http://xml.zope.org/namespaces/i18n"
+    tal:omit-tag="">
+  <tal:presences define="presences view/presence_portlet_data">
+    <div tal:condition="presences" class="portlet" id="portlet-presence">
+      <h2 i18n:translate="">Bug presence</h2>
+      <ul>
+        <li tal:repeat="presence presences">
+          <div tal:condition="presence/product">
+            <tal:label i18n:translate="">Product:</tal:label> <a tal:replace="structure presence/product/fmt:link" />
+          </div>
+          <div tal:condition="presence/distribution">
+            <tal:label i18n:translate="">Distribution:</tal:label>
+            <a tal:replace="structure presence/distribution/fmt:link" />
+          </div>
+          <div tal:condition="presence/source_package_name">
+            <tal:label i18n:translate="">Source package:</tal:label>
+            <strong tal:content="presence/source_package_name/name" />
+          </div>
+          <div tal:condition="presence/git_repository">
+            <tal:label i18n:translate="">Repository:</tal:label>
+            <a tal:replace="structure presence/git_repository/fmt:link" />
+          </div>
+          <ul tal:condition="presence/break_fix">
+            <li tal:repeat="item presence/break_fix">
+              <tal:break condition="item/break">
+                <tal:label i18n:translate="">Broken:</tal:label>
+                <code tal:content="item/break" />
+              </tal:break>
+              <br tal:condition="python: item['break'] and item['fix']" />
+              <tal:fix condition="item/fix">
+                <tal:label i18n:translate="">Fixed:</tal:label>
+                <code tal:content="item/fix" />
+              </tal:fix>
+            </li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+  </tal:presences>
+</div>

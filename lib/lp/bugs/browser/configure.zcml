@@ -1016,6 +1016,9 @@
                 name="+portlet-attachments"
                 template="../templates/bug-portlet-attachments.pt"/>
             <browser:page
+                name="+portlet-presence"
+                template="../templates/bug-portlet-presence.pt"/>
+            <browser:page
                 name="+portlet-notified"
                 template="../templates/bug-portlet-notified.pt"/>
             <browser:page
