@@ -56,7 +56,17 @@ from lazr.restful.fields import CollectionField, Reference, ReferenceChoice
 from lazr.restful.interface import copy_field
 from zope.component import getUtility
 from zope.interface import Attribute, Interface
-from zope.schema import Bool, Choice, Datetime, Field, Int, Text, TextLine
+from zope.schema import (
+    Bool,
+    Choice,
+    Datetime,
+    Dict,
+    Field,
+    Int,
+    List,
+    Text,
+    TextLine,
+)
 from zope.security.interfaces import Unauthorized
 
 from lp import _
@@ -69,6 +79,7 @@ from lp.bugs.interfaces.bugwatch import (
     UnrecognizedBugTrackerURL,
 )
 from lp.bugs.interfaces.hasbug import IHasBug
+from lp.registry.enums import ExternalPackageType
 from lp.services.fields import (
     BugField,
     PersonChoice,
@@ -486,15 +497,39 @@ class IBugTask(IHasBug, IBugTaskDelete):
     )
     sourcepackagename_id = Attribute("The sourcepackagename ID")
 
-    packagetype = Int(
-        title=_("Package type"),
-        default=None,
-        readonly=True,
+    packagetype = exported(
+        Choice(
+            title=_("Package type"),
+            vocabulary=ExternalPackageType,
+            required=False,
+            default=None,
+            readonly=True,
+        ),
+        exported_as="package_type",
+        as_of="devel",
     )
 
-    channel = Attribute("The package channel")
+    channel = exported(
+        List(
+            title=_("Package channel"),
+            description=_("The channel as a list of track, risk and branch."),
+            value_type=TextLine(required=False),
+            required=False,
+            readonly=True,
+        ),
+        as_of="devel",
+    )
 
-    metadata = Attribute("Bugtask metadata")
+    metadata = exported(
+        Dict(
+            title=_("Metadata"),
+            description=_("Metadata of the bug task."),
+            key_type=TextLine(title=_("Metadata key")),
+            required=False,
+            readonly=True,
+        ),
+        as_of="devel",
+    )
 
     distribution = Choice(
         title=_("Distribution"), required=False, vocabulary="Distribution"

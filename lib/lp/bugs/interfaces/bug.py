@@ -372,6 +372,7 @@ class IBugView(Interface):
         )
     )
     has_cves = Bool(title="True if the bug has cve entries.")
+    presences = Attribute("The `IBugPresence` entries of this bug.")
     vulnerabilities = exported(
         CollectionField(
             title=_("Vulnerability instances related to this bug."),

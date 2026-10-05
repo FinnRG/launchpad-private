@@ -839,6 +839,11 @@
             path_expression="sequence"
             parent_utility="lp.bugs.interfaces.cve.ICveSet"
             rootsite="bugs" />
+        <lp:url
+            for="lp.bugs.interfaces.cvereference.ICveReference"
+            path_expression="string:+reference/${id}"
+            attribute_to_parent="cve"
+            rootsite="bugs"/>
         <browser:defaultView
             for="lp.bugs.interfaces.cve.ICve"
             name="+index"/>
@@ -1010,6 +1015,9 @@
             <browser:page
                 name="+portlet-attachments"
                 template="../templates/bug-portlet-attachments.pt"/>
+            <browser:page
+                name="+portlet-presence"
+                template="../templates/bug-portlet-presence.pt"/>
             <browser:page
                 name="+portlet-notified"
                 template="../templates/bug-portlet-notified.pt"/>

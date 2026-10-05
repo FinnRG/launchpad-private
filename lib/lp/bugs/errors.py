@@ -4,6 +4,7 @@
 """Errors used in the lp/bugs modules."""
 
 __all__ = [
+    "CannotSetVulnerabilityPatches",
     "InvalidDuplicateValue",
     "InvalidSearchParameters",
 ]
@@ -23,3 +24,8 @@ class InvalidDuplicateValue(LaunchpadValidationError):
 @error_status(http.client.BAD_REQUEST)
 class InvalidSearchParameters(ValueError):
     """Invalid search parameters were passed to searchTasks."""
+
+
+@error_status(http.client.BAD_REQUEST)
+class CannotSetVulnerabilityPatches(ValueError):
+    """Vulnerability patches conflict with the attachment's file or URL."""

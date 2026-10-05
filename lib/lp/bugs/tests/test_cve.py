@@ -640,3 +640,34 @@ class TestCve(TestCaseWithFactory):
         # It is forbidden to use cve._cvss
         with ExpectedException(ForbiddenAttribute):
             self.cve._cvss = {"example authority": ["example score"]}
+
+
+class TestCveWebService(TestCaseWithFactory):
+    """Tests for Cve fields and methods exposed over the webservice."""
+
+    layer = DatabaseFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        self.cve = self.factory.makeCVE("2025-9999")
+
+    def test_references_exported_over_webservice(self):
+        """The references collection is readable via the webservice."""
+        self.cve.createReference(
+            source="XF", content="example content", url="http://example.com"
+        )
+        person = self.factory.makePerson()
+        webservice = webservice_for_person(
+            person,
+            permission=OAuthPermission.READ_PUBLIC,
+            default_api_version="devel",
+        )
+
+        response = webservice.get(api_url(self.cve) + "/references")
+
+        self.assertEqual(200, response.status)
+        entries = response.jsonBody()["entries"]
+        self.assertEqual(1, len(entries))
+        self.assertEqual("XF", entries[0]["source"])
+        self.assertEqual("example content", entries[0]["content"])
+        self.assertEqual("http://example.com", entries[0]["url"])

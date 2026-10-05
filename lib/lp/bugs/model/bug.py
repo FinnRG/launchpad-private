@@ -850,7 +850,11 @@ class Bug(StormBase, InformationTypeMixin):
     @property
     def presences(self):
         """See `IBug`."""
-        return Store.of(self).find(BugPresence, BugPresence.bug_id == self.id)
+        return (
+            Store.of(self)
+            .find(BugPresence, BugPresence.bug_id == self.id)
+            .order_by(BugPresence.id)
+        )
 
     @property
     def default_bugtask(self):
@@ -2751,7 +2755,7 @@ class Bug(StormBase, InformationTypeMixin):
                 BugAttachment.bug == self,
                 Or(
                     BugAttachment.url != None,
-                    BugAttachment.vulnerability_patches != None,
+                    BugAttachment._vulnerability_patches != None,
                     LibraryFileAlias.content_id != None,
                 ),
             )

@@ -13,6 +13,7 @@ from lp.app.enums import InformationType
 from lp.app.interfaces.launchpad import ILaunchpadCelebrities
 from lp.bugs.adapters.bugchange import BugTitleChange
 from lp.bugs.enums import BugNotificationLevel, BugNotificationStatus
+from lp.bugs.errors import CannotSetVulnerabilityPatches
 from lp.bugs.interfaces.bugnotification import IBugNotificationSet
 from lp.bugs.interfaces.bugtask import BugTaskStatus
 from lp.bugs.mail.bugnotificationrecipients import BugNotificationRecipients
@@ -37,7 +38,7 @@ from lp.testing import (
     record_two_runs,
     set_feature_flag,
 )
-from lp.testing.layers import DatabaseFunctionalLayer
+from lp.testing.layers import DatabaseFunctionalLayer, LaunchpadFunctionalLayer
 from lp.testing.matchers import Equals, HasQueryCount, LessThan
 
 
@@ -1236,3 +1237,97 @@ class TestBugAutoConfirmation(TestCaseWithFactory):
                 duplicate_bug = self.factory.makeBug(owner=bug.owner)
                 duplicate_bug.markAsDuplicate(bug)
             self.assertEqual(BugTaskStatus.NEW, bug.bugtasks[0].status)
+
+
+class TestBugAttachmentDisplayedURL(TestCaseWithFactory):
+    layer = DatabaseFunctionalLayer
+
+    def _add_patch_attachment(self, bug, owner, vulnerability_patches):
+        with person_logged_in(owner):
+            return bug.addAttachment(
+                owner=owner,
+                data=None,
+                comment=None,
+                filename=None,
+                url=None,
+                is_patch=True,
+                description="test-package",
+                vulnerability_patches=vulnerability_patches,
+            )
+
+    def test_displayed_url_returns_first_patch_url(self):
+        # With vulnerability patches, displayed_url is a single URL string,
+        # taken from the first patch entry.
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        patches = [
+            {"name": "upstream", "value": "https://example.com/a.diff"},
+            {"name": "distro", "value": "https://example.com/b.diff"},
+        ]
+        attachment = self._add_patch_attachment(bug, owner, patches)
+        self.assertEqual(
+            "https://example.com/a.diff", attachment.displayed_url
+        )
+
+    def test_displayed_url_falls_back_to_url(self):
+        # Without vulnerability patches, displayed_url is the attachment's
+        # own external URL (or library file).
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        with person_logged_in(owner):
+            attachment = bug.addAttachment(
+                owner=owner,
+                data=None,
+                comment=None,
+                filename=None,
+                url="https://example.com/attachment",
+                description="test-attachment",
+            )
+        self.assertEqual(
+            "https://example.com/attachment", attachment.displayed_url
+        )
+
+    def test_cannot_set_patches_on_url_attachment(self):
+        # Setting vulnerability patches on an attachment that has a URL is
+        # rejected, to avoid a mixed file/URL/patch state.
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        with person_logged_in(owner):
+            attachment = bug.addAttachment(
+                owner=owner,
+                data=None,
+                comment=None,
+                filename=None,
+                url="https://example.com/attachment",
+                description="test-attachment",
+            )
+            self.assertRaises(
+                CannotSetVulnerabilityPatches,
+                setattr,
+                removeSecurityProxy(attachment),
+                "vulnerability_patches",
+                [{"name": "upstream", "value": "https://example.com/a.diff"}],
+            )
+
+
+class TestBugAttachmentDisplayedURLLibraryFile(TestCaseWithFactory):
+    # The librarian is needed to store the attachment's file.
+    layer = LaunchpadFunctionalLayer
+
+    def test_displayed_url_uses_library_file(self):
+        # With a library file (and no URL or patches), displayed_url is the
+        # proxied download URL of the attached file.
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        with person_logged_in(owner):
+            attachment = bug.addAttachment(
+                owner=owner,
+                data=b"patch content",
+                comment=None,
+                filename="test.patch",
+                url=None,
+                description="test-attachment",
+            )
+        displayed_url = attachment.displayed_url
+        self.assertIn("/+attachment/", displayed_url)
+        self.assertTrue(displayed_url.endswith("/+files/test.patch"))

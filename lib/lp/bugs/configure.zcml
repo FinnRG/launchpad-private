@@ -826,7 +826,6 @@
                 permission="launchpad.Append"
                 interface="lp.bugs.interfaces.bug.IBugAppend"
                 attributes="
-                    presences
                     linkBranch
                     unlinkBranch"/>
             <require

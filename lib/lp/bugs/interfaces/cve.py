@@ -29,6 +29,7 @@ from zope.schema import Choice, Datetime, Dict, Int, List, Text, TextLine
 
 from lp import _
 from lp.app.validators.validation import valid_vulnerability_identifier
+from lp.bugs.interfaces.cvereference import ICveReference
 from lp.services.config import config
 
 
@@ -181,7 +182,14 @@ class ICve(Interface):
             readonly=True,
         )
     )
-    references = Attribute("The set of CVE References for this CVE.")
+    references = exported(
+        CollectionField(
+            title=_("The set of CVE References for this CVE."),
+            readonly=True,
+            value_type=Reference(schema=ICveReference),
+        ),
+        as_of="devel",
+    )
 
     vulnerabilities = Attribute("Vulnerabilities related to this CVE entry.")
 
