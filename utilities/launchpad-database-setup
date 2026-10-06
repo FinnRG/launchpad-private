@@ -80,9 +80,7 @@ sudo tee -a /etc/postgresql/$pgversion/main/postgresql.conf <<'EOF'
 ##
 ## Launchpad configuration
 ##
-# Per Bug #90809, standard_conforming_strings should be 'on'
-standard_conforming_strings=off
-escape_string_warning=off
+standard_conforming_strings=on
 
 #enable_seqscan=false
 log_statement='none'
