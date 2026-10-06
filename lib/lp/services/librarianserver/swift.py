@@ -16,6 +16,7 @@ __all__ = [
 ]
 
 import hashlib
+import logging
 import os.path
 import re
 import socket
@@ -37,8 +38,13 @@ MAX_SWIFT_OBJECT_SIZE = 5 * 1024**3  # 5GB Swift limit.
 
 ONE_DAY = 24 * 60 * 60
 
-# Number of attempts (including the first) for a Swift request before
-# giving up, and the delay in seconds between attempts.
+logger = logging.getLogger(__name__)
+
+# Number of attempts (including the first) for a Swift request before giving
+# up, and the delay in seconds between attempts. A constant delay (rather
+# than exponential backoff with jitter) is enough here: librarian-gc is a
+# single batch job with low Swift concurrency, not a fleet of workers that
+# could synchronise into a retry storm.
 SWIFT_MAX_RETRIES = 3
 SWIFT_RETRY_DELAY = 5
 
@@ -47,7 +53,8 @@ SWIFT_RETRY_DELAY = 5
 # while the others cover connection resets and socket timeouts.
 SWIFT_RETRYABLE_EXCEPTIONS = (
     URLLib3HTTPError,
-    requests.exceptions.RequestException,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
     socket.timeout,
     ConnectionError,
 )
@@ -73,9 +80,10 @@ def quiet_swiftclient(func, *args, **kwargs):
 
 def _is_retryable_swift_error(exc: BaseException) -> bool:
     if isinstance(exc, swiftclient.ClientException):
-        # Only server-side failures are worth retrying; client errors such
-        # as a 404 will not be fixed by trying again.
-        return exc.http_status is None or exc.http_status >= 500
+        # Retry only server-side (5xx) failures. A client error such as a
+        # 404 will not be fixed by trying again, and a missing status
+        # usually means auth or misconfiguration, which is not transient.
+        return exc.http_status is not None and exc.http_status >= 500
     return isinstance(exc, SWIFT_RETRYABLE_EXCEPTIONS)
 
 
@@ -93,10 +101,22 @@ def robust_swiftclient(
         try:
             return quiet_swiftclient(func, *args, **kwargs)
         except Exception as exc:
-            if attempt >= SWIFT_MAX_RETRIES or not _is_retryable_swift_error(
-                exc
-            ):
+            if not _is_retryable_swift_error(exc):
                 raise
+            if attempt >= SWIFT_MAX_RETRIES:
+                logger.warning(
+                    "Swift request failed (attempt %d of %d), giving up: %s",
+                    attempt,
+                    SWIFT_MAX_RETRIES,
+                    exc,
+                )
+                raise
+            logger.info(
+                "Swift request failed (attempt %d of %d), retrying: %s",
+                attempt,
+                SWIFT_MAX_RETRIES,
+                exc,
+            )
             time.sleep(SWIFT_RETRY_DELAY)
 
 
