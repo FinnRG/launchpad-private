@@ -74,6 +74,9 @@ class IDistroArchSeriesPublic(IHasBuildRecords, IHasOwner):
     """Public attributes for a DistroArchSeries."""
 
     id = Attribute("Identifier")
+    distroseries_id = Int(
+        title=_("Distroseries ID"), required=True, readonly=True
+    )
     distroseries = exported(
         Reference(
             IDistroSeries,

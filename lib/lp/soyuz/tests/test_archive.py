@@ -3782,6 +3782,50 @@ class TestGetPoolFileByPath(TestCaseWithFactory):
             )
 
 
+class TestSourcePackageListModel(TestCaseWithFactory):
+    layer = DatabaseFunctionalLayer
+
+    def test_ordering_accepts_lists_and_tuples(self):
+        """Lists and tuples specify the same explicit source-name ordering."""
+        with admin_logged_in():
+            archive = self.factory.makeArchive()
+            series = self.factory.makeDistroSeries(
+                distribution=archive.distribution
+            )
+            publications = [
+                self.factory.makeSourcePackagePublishingHistory(
+                    archive=archive,
+                    distroseries=series,
+                    sourcepackagename=self.factory.makeSourcePackageName(
+                        name=name
+                    ),
+                    status=PackagePublishingStatus.PUBLISHED,
+                )
+                for name in ("alpha", "zulu")
+            ]
+            expected_ids = [publication.id for publication in publications]
+            for ordering in (
+                ["source_package_name"],
+                ("source_package_name",),
+            ):
+                result = archive.getSourcePackageList(order_by=ordering)
+                self.assertEqual(
+                    expected_ids,
+                    [source["id"] for source in result["sources"]],
+                )
+
+    def test_ordering_rejects_bare_strings(self):
+        """Bare strings, including an empty string, are invalid sort inputs."""
+        with admin_logged_in():
+            archive = self.factory.makeArchive()
+            for ordering in ("source_package_name", "-date_created", ""):
+                self.assertRaises(
+                    InvalidOrderBy,
+                    archive.getSourcePackageList,
+                    order_by=ordering,
+                )
+
+
 class TestGetPublishedSources(TestCaseWithFactory):
     layer = DatabaseFunctionalLayer
 

@@ -1334,6 +1334,37 @@ class IPublishingSet(Interface):
              `BinaryPackageRelease`, `BinaryPackageName`, `DistroArchSeries`)
         """
 
+    def getActiveBinariesForSources(one_or_more_source_publications, limit=20):
+        """Return up to `limit` active binaries per source publication.
+
+        :param one_or_more_source_publications: list of, or a single,
+            `SourcePackagePublishingHistory` object or integer id.
+        :param limit: Maximum unique names per source. Defaults to 20;
+            None returns all matching names.
+
+        :return: a dict mapping each `SourcePackagePublishingHistory` id to a
+            list of dicts with keys 'binary_package_name' and
+            'binary_publication_id', sorted by name and capped at `limit`.
+            The id is the newest active publication for that name in the
+            source's archive, series and pocket. Sources with no active
+            binaries are omitted; an empty input returns an empty dict.
+        """
+
+    def getBuildArchitecturesForSources(one_or_more_source_publications):
+        """Return architectures of active same-named binaries per source.
+
+        :param one_or_more_source_publications: list of, or a single,
+            `SourcePackagePublishingHistory` object or integer id.
+
+        :return: a dict mapping each `SourcePackagePublishingHistory` id to a
+            list of dicts with keys 'architecture_tag', 'build_status' and
+            'build_web_link', sorted by architecture tag. Repeated matches
+            select the newest build id for each architecture. Only active
+            binaries in the source's archive, series and pocket whose name
+            matches the source name are included. Sources with no matching
+            binaries are omitted; an empty input returns an empty dict.
+        """
+
     def getBuiltPackagesSummaryForSourcePublication(source_publication):
         """Return a summary of the built packages for this source publication.
 

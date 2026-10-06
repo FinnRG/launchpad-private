@@ -771,6 +771,148 @@ class IArchiveSubscriberView(Interface):
         # It loads additional related objects only needed in the API call
         # context (i.e. security checks and entries marshalling).
 
+    @operation_parameters(
+        page=Int(title=_("Page"), min=1, required=False),
+        page_size=Int(title=_("Page size"), min=1, max=100, required=False),
+        name=TextLine(title=_("Source package name"), required=False),
+        exact_match=Bool(title=_("Exact name match"), required=False),
+        include_inactive=Bool(
+            title=_("Include inactive source publications"), required=False
+        ),
+        ubuntu_change=Bool(title=_("Changed by Ubuntu"), required=False),
+        signed_by=Reference(IPerson, title=_("Signed by"), required=False),
+        maintained_by=Reference(
+            IPerson, title=_("Maintained by"), required=False
+        ),
+        distroseries=Reference(
+            IDistroSeries, title=_("Series"), required=False
+        ),
+        pocket=Choice(
+            title=_("Pocket"),
+            vocabulary=PackagePublishingPocket,
+            required=False,
+        ),
+        order_by=List(
+            title=_("Sort order"), value_type=TextLine(), required=False
+        ),
+        include_binaries=Bool(
+            title=_("Include active binaries"),
+            description=_(
+                "Include unique active binary names and publication ids. "
+                "Defaults to False."
+            ),
+            required=False,
+        ),
+        include_architectures=Bool(
+            title=_("Include build architectures"),
+            description=_(
+                "Include build details by architecture for active binaries "
+                "whose name matches the source name. Defaults to False."
+            ),
+            required=False,
+        ),
+        binary_names_limit=Int(
+            title=_("Maximum binaries per source"),
+            min=1,
+            max=100,
+            required=False,
+        ),
+    )
+    @export_read_operation()
+    @operation_for_version("devel")
+    def getSourcePackageList(
+        page=1,
+        page_size=50,
+        name=None,
+        exact_match=False,
+        include_inactive=False,
+        ubuntu_change=None,
+        signed_by=None,
+        maintained_by=None,
+        distroseries=None,
+        pocket=None,
+        order_by=None,
+        include_binaries=False,
+        include_architectures=False,
+        binary_names_limit=20,
+    ):
+        """Return a paginated source package listing as JSON.
+
+        :param page: One-based page number. Defaults to 1; must be positive.
+        :param page_size: Publications per page. Defaults to 50; must be
+            between 1 and 100.
+        :param name: Optional source package name search string. Matching
+            uses containment unless `exact_match` is True.
+        :param exact_match: Match the complete source package name rather
+            than a substring. Defaults to False.
+        :param include_inactive: Include all source publication statuses.
+            Defaults to False, returning only Pending and Published sources.
+        :param ubuntu_change: If True, return only source versions containing
+            "ubuntu". If False, exclude that marker. If None, do not filter
+            on the version marker. Defaults to None.
+        :param signed_by: Optional `IPerson` filter matching
+            `SourcePackageRelease.signing_key_owner`.
+        :param maintained_by: Optional `IPerson` filter matching
+            `SourcePackageRelease.maintainer`.
+        :param distroseries: Optional `IDistroSeries` filter.
+        :param pocket: Optional `PackagePublishingPocket` filter.
+        :param order_by: A sequence of sort keys: "source_package_name",
+            "series", "pocket", "status", "date_created" or "date_published".
+            Prefix a key with "-" for descending order. Multiple keys apply
+            in the order given. Series sort by Debian version; pocket and
+            status sort alphabetically by title. Omitted or empty sequences
+            default to newest creation date first. Publication id descending
+            breaks ties. Bare strings are not accepted.
+        :param include_binaries: Include unique active binary names and
+            representative publication ids in each source's "binaries" list.
+            Defaults to False. May be combined with `include_architectures`.
+        :param include_architectures: Include "architecture_tag",
+            "build_status" and "build_web_link" in each source's
+            "architectures" list. Only active binaries whose name matches
+            the source name are considered, using the newest build per
+            architecture. Defaults to False.
+        :param binary_names_limit: Maximum unique binaries per source when
+            requested. Defaults to 20; must be between 1 and 100.
+
+        :return: A dict with "total", "total_pages", "page", "page_size" and
+            "sources". Totals count matching publications, not distinct
+            source names. Each source contains "id", "source_package_name",
+            "source_package_version", "series", "pocket" and "status".
+            Series is its name; pocket and status are readable titles.
+            Requested binaries have "name" and "id", usable with
+            `getBinaryPackageDetails`. Unrequested enrichment keys are
+            omitted; requested enrichments with no matches are empty lists.
+            An empty archive returns page 1 with no sources and zero pages.
+        :raises ValueError: If pagination or binary limits are invalid.
+        :raises InvalidOrderBy: If the sort input is a bare string or a key
+            is not recognized.
+        :raises NotFoundError: If the requested page is beyond the results.
+        """
+
+    @operation_parameters(
+        binary_id=Int(title=_("Binary publication ID"), required=True),
+    )
+    @export_read_operation()
+    @operation_for_version("devel")
+    def getBinaryPackageDetails(binary_id):
+        """Return a binary publication's description and artifacts as JSON.
+
+        Files include active releases of the same binary built from the
+        same source release in this archive, series and pocket across
+        architectures. The selected release's files are included even if
+        that publication is inactive.
+
+        :param binary_id: A `BinaryPackagePublishingHistory` id belonging to
+            this archive, such as an id from `getSourcePackageList`'s
+            "binaries" entries.
+        :return: A dict with "id", "binary_package_name",
+            "binary_package_version", "description" and "files". Each file
+            contains "filename", "size" in bytes and a webapp-proxied "url".
+            Duplicate file aliases are omitted.
+        :raises NotFoundError: If the id is unknown or belongs to a
+            publication outside this archive.
+        """
+
     def getPublishedSources(
         name=None,
         version=None,

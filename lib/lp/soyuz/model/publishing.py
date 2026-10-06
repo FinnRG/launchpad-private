@@ -20,12 +20,16 @@ from typing import Dict, List
 
 from storm.databases.postgres import JSON
 from storm.expr import (
+    SQL,
+    Alias,
     And,
     Cast,
+    Column,
     Count,
     Desc,
     Join,
     LeftJoin,
+    Max,
     Not,
     Or,
     Select,
@@ -1894,11 +1898,11 @@ class PublishingSet:
     def _extractIDs(self, one_or_more_source_publications):
         """Return a list of database IDs for the given list or single object.
 
-        :param one_or_more_source_publications: an single object or a list of
-            `ISourcePackagePublishingHistory` objects.
+        :param one_or_more_source_publications: a single object or a list of
+            `ISourcePackagePublishingHistory` objects or integer ids.
 
-        :return: a list of database IDs corresponding to the give set of
-            objects.
+        :return: a list of database IDs corresponding to the given set of
+            objects or ids.
         """
         try:
             source_publications = tuple(one_or_more_source_publications)
@@ -1906,7 +1910,8 @@ class PublishingSet:
             source_publications = (one_or_more_source_publications,)
 
         return [
-            source_publication.id for source_publication in source_publications
+            source if isinstance(source, int) else source.id
+            for source in source_publications
         ]
 
     def getBuildsForSources(self, one_or_more_source_publications):
@@ -2075,6 +2080,127 @@ class PublishingSet:
         )
 
         return result_set
+
+    def getActiveBinariesForSources(
+        self, one_or_more_source_publications, limit=20
+    ):
+        """See `IPublishingSet`."""
+        source_publication_ids = self._extractIDs(
+            one_or_more_source_publications
+        )
+        if not source_publication_ids:
+            return {}
+        join = [
+            SourcePackagePublishingHistory.sourcepackagerelease_id
+            == BinaryPackageBuild.source_package_release_id,
+            BinaryPackageRelease.build_id == BinaryPackageBuild.id,
+            BinaryPackageRelease.binarypackagename_id == BinaryPackageName.id,
+            BinaryPackagePublishingHistory.binarypackagerelease_id
+            == BinaryPackageRelease.id,
+            BinaryPackagePublishingHistory.archive_id
+            == SourcePackagePublishingHistory.archive_id,
+            BinaryPackagePublishingHistory.pocket
+            == SourcePackagePublishingHistory.pocket,
+            BinaryPackagePublishingHistory.status.is_in(
+                active_publishing_status
+            ),
+            SourcePackagePublishingHistory.id.is_in(source_publication_ids),
+            # Copies can be published in a different series from their build.
+            SourcePackagePublishingHistory.distroseries_id
+            == Select(
+                DistroArchSeries.distroseries_id,
+                tables=[DistroArchSeries],
+                where=DistroArchSeries.id
+                == BinaryPackagePublishingHistory.distroarchseries_id,
+            ),
+        ]
+        # Rank grouped names, not individual architecture publications.
+        ranked = Alias(
+            Select(
+                (
+                    Alias(SourcePackagePublishingHistory.id, "source_id"),
+                    Alias(BinaryPackageName.name, "binary_name"),
+                    Alias(Max(BinaryPackagePublishingHistory.id), "binary_id"),
+                    Alias(
+                        SQL(
+                            "row_number() OVER (PARTITION BY "
+                            "sourcepackagepublishinghistory.id ORDER BY "
+                            "binarypackagename.name)"
+                        ),
+                        "position",
+                    ),
+                ),
+                where=And(join),
+                group_by=(
+                    SourcePackagePublishingHistory.id,
+                    BinaryPackageName.name,
+                ),
+            ),
+            "ranked_binaries",
+        )
+        source_id = Column("source_id", ranked)
+        binary_name = Column("binary_name", ranked)
+        binary_id = Column("binary_id", ranked)
+        clauses = (
+            [] if limit is None else [Column("position", ranked) <= limit]
+        )
+        result_set = (
+            IStore(SourcePackagePublishingHistory)
+            .using(ranked)
+            .find((source_id, binary_name, binary_id), *clauses)
+            .order_by(source_id, binary_name)
+        )
+        binaries = defaultdict(list)
+        for spph_id, name, bpph_id in result_set:
+            binaries[spph_id].append(
+                {
+                    "binary_package_name": name,
+                    "binary_publication_id": bpph_id,
+                }
+            )
+        return binaries
+
+    def getBuildArchitecturesForSources(self, one_or_more_source_publications):
+        """See `IPublishingSet`."""
+        architectures = defaultdict(list)
+        ids = self._extractIDs(one_or_more_source_publications)
+        if not ids:
+            return architectures
+        # Rebuilds and repeated publications must not duplicate architectures.
+        rows = (
+            IStore(SourcePackagePublishingHistory)
+            .find(
+                (
+                    SourcePackagePublishingHistory.id,
+                    BinaryPackageBuild,
+                    DistroArchSeries,
+                ),
+                self._getSourceBinaryJoinForSources(ids),
+                SourcePackageName.id
+                == SourcePackagePublishingHistory.sourcepackagename_id,
+                BinaryPackageName.name == SourcePackageName.name,
+            )
+            .config(
+                distinct=(
+                    SourcePackagePublishingHistory.id,
+                    DistroArchSeries.architecturetag,
+                )
+            )
+            .order_by(
+                SourcePackagePublishingHistory.id,
+                DistroArchSeries.architecturetag,
+                Desc(BinaryPackageBuild.id),
+            )
+        )
+        for source_id, build, das in rows:
+            architectures[source_id].append(
+                {
+                    "architecture_tag": das.architecturetag,
+                    "build_status": build.status.title,
+                    "build_web_link": canonical_url(build),
+                }
+            )
+        return architectures
 
     def getBuiltPackagesSummaryForSourcePublication(self, source_publication):
         """See `IPublishingSet`."""
