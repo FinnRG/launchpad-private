@@ -28,10 +28,12 @@ from urllib.parse import quote
 import requests
 from swiftclient import client as swiftclient
 from urllib3.exceptions import HTTPError as URLLib3HTTPError
+from zope.component import getUtility
 
 from lp.services.config import config
 from lp.services.database.interfaces import IStandbyStore
 from lp.services.librarian.model import LibraryFileContent
+from lp.services.statsd.interfaces.statsd_client import IStatsdClient
 
 SWIFT_CONTAINER_PREFIX = "librarian_"
 MAX_SWIFT_OBJECT_SIZE = 5 * 1024**3  # 5GB Swift limit.
@@ -96,10 +98,15 @@ def robust_swiftclient(
     network fails temporarily (read timeouts, connection resets, 5xx
     responses). Errors that a retry cannot fix, such as a 404, are raised
     immediately so callers can handle them.
+
+    Outcome metrics are labelled by operations and are counted based on their
+    results: "success", "retry" and "give-up".
     """
+    statsd_client = getUtility(IStatsdClient)
+    labels = {"operation": getattr(func, "__name__", "unknown")}
     for attempt in range(1, SWIFT_MAX_RETRIES + 1):
         try:
-            return quiet_swiftclient(func, *args, **kwargs)
+            result = quiet_swiftclient(func, *args, **kwargs)
         except Exception as exc:
             if not _is_retryable_swift_error(exc):
                 raise
@@ -110,6 +117,7 @@ def robust_swiftclient(
                     SWIFT_MAX_RETRIES,
                     exc,
                 )
+                statsd_client.incr("librarian.swift.giveup", labels=labels)
                 raise
             logger.info(
                 "Swift request failed (attempt %d of %d), retrying: %s",
@@ -117,7 +125,11 @@ def robust_swiftclient(
                 SWIFT_MAX_RETRIES,
                 exc,
             )
+            statsd_client.incr("librarian.swift.retry", labels=labels)
             time.sleep(SWIFT_RETRY_DELAY)
+        else:
+            statsd_client.incr("librarian.swift.success", labels=labels)
+            return result
 
 
 def to_swift(
