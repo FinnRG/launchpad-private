@@ -1784,6 +1784,8 @@ class Bug(StormBase, InformationTypeMixin):
                 )
             source_package_name = resolved
 
+        # A presence pins break/fix history to a single target, so the
+        # targets are mutually exclusive rather than combinable.
         targets = [product, distribution, source_package_name, git_repository]
         if sum(target is not None for target in targets) != 1:
             raise InvalidBugPresenceTarget(
@@ -1813,6 +1815,13 @@ class Bug(StormBase, InformationTypeMixin):
 
     def removePresence(self, bug_presence, user):
         """See `IBug`."""
+        # Only this bug's own presences may be removed, so a moderator of
+        # one bug cannot delete another bug's presence by passing its
+        # reference.
+        if bug_presence.bug.id != self.id:
+            raise InvalidBugPresenceTarget(
+                "The bug presence does not belong to this bug."
+            )
         self.addChange(BugPresenceRemoved(UTC_NOW, user, bug_presence))
         bug_presence.destroySelf()
 

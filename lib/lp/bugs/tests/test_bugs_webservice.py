@@ -926,3 +926,32 @@ class TestBugPresencesWebservice(TestCaseWithFactory):
         self.assertEqual(401, response.status)
         with person_logged_in(owner):
             self.assertEqual(1, bug.presences.count())
+
+    def test_remove_presence_from_other_bug_rejected(self):
+        # A presence belonging to another bug cannot be removed by passing
+        # its reference to this bug's removePresence, even by a moderator.
+        owner, bug = self._make_bug_with_moderator()
+        other_bug = self.factory.makeBug(owner=owner)
+        with person_logged_in(owner):
+            presence = self.factory.makeBugPresence(
+                bug=other_bug, break_fix_data=[{"break": "a", "fix": "b"}]
+            )
+        bug_url = api_url(bug)
+        presence_url = api_url(presence)
+        logout()
+        webservice = self._write_webservice(owner)
+        response = webservice.named_post(
+            bug_url, "removePresence", bug_presence=presence_url
+        )
+        self.assertEqual(400, response.status)
+        with person_logged_in(owner):
+            self.assertEqual(1, other_bug.presences.count())
+
+    def test_traverse_nonexistent_presence_not_found(self):
+        # Traversing to a +presence id that does not exist returns 404.
+        owner, bug = self._make_bug_with_moderator()
+        bug_url = api_url(bug)
+        logout()
+        webservice = self._write_webservice(owner)
+        response = webservice.get("%s/+presence/0" % bug_url)
+        self.assertEqual(404, response.status)
