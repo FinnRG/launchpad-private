@@ -14,6 +14,7 @@ __all__ = [
 ]
 
 from zope.component import getUtility
+from zope.security.proxy import isinstance as zope_isinstance
 
 from lp.app.browser.launchpadform import LaunchpadFormView, action
 from lp.app.validators.cve import valid_cve, valid_vulnerability_id
@@ -67,6 +68,45 @@ class CveIndexView(BugLinksListingView):
     @property
     def page_title(self):
         return self.context.displayname
+
+    @property
+    def cvss_entries(self):
+        """The CVSS scores of the CVE, as a flat list of dicts.
+
+        `CVE.cvss` holds the CNA `metrics` list of the CVE JSON feed, where
+        each item maps a key such as `cvssV3_1` to the score data. Anything
+        in a different shape is ignored. Scores are returned as strings.
+        """
+        entries = []
+        cvss = self.context.cvss
+        if not zope_isinstance(cvss, list):
+            return entries
+        for metric in cvss:
+            if not zope_isinstance(metric, dict):
+                continue
+            for key, data in metric.items():
+                if not key.startswith("cvssV"):
+                    continue
+                if not zope_isinstance(data, dict):
+                    continue
+                vector = data.get("vectorString")
+                if not isinstance(vector, str) or not vector:
+                    continue
+                base_score = data.get("baseScore")
+                severity = data.get("baseSeverity")
+                entries.append(
+                    {
+                        "authority": "CNA",
+                        "score": (
+                            str(base_score) if base_score is not None else None
+                        ),
+                        "severity": (
+                            severity if isinstance(severity, str) else None
+                        ),
+                        "vector": vector,
+                    }
+                )
+        return entries
 
 
 class CveLinkView(LaunchpadFormView):
