@@ -80,10 +80,10 @@ correctly, especially for the case of LIKE which uses % characters.
     ...
     SELECT 1
     SELECT 2
-    SELECT * FROM person where name = E'fred'
+    SELECT * FROM person where name = 'fred'
     SELECT * FROM person where name = '%s foo'
     SELECT * FROM person where id = 2
-    SELECT * FROM person where name like '%' || E'fred'
+    SELECT * FROM person where name like '%' || 'fred'
     SELECT * FROM person where name like '%d foo'||'%%'
 
 A timeline is created too:
@@ -96,10 +96,10 @@ A timeline is created too:
     ...
     SELECT 1
     SELECT 2
-    SELECT * FROM person where name = E'fred'
+    SELECT * FROM person where name = 'fred'
     SELECT * FROM person where name = '%s foo'
     SELECT * FROM person where id = 2
-    SELECT * FROM person where name like '%' || E'fred'
+    SELECT * FROM person where name like '%' || 'fred'
     SELECT * FROM person where name like '%d foo'||'%%'
 
 After we complete the request, the statement log is cleared:
