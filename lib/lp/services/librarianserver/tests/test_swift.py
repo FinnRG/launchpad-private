@@ -5,12 +5,15 @@
 
 import hashlib
 import io
+import logging
 import os.path
 import time
 from unittest.mock import patch
 
 import transaction
+from fixtures import FakeLogger, MonkeyPatch
 from swiftclient import client as swiftclient
+from urllib3.exceptions import ReadTimeoutError
 
 from lp.services.database import write_transaction
 from lp.services.database.interfaces import IStore
@@ -20,9 +23,33 @@ from lp.services.librarian.model import LibraryFileAlias
 from lp.services.librarianserver import swift
 from lp.services.librarianserver.storage import LibrarianStorage
 from lp.services.log.logger import BufferLogger
+from lp.services.statsd.tests import StatsMixin
 from lp.testing import TestCase
-from lp.testing.layers import BaseLayer, LaunchpadZopelessLayer, LibrarianLayer
+from lp.testing.layers import (
+    BaseLayer,
+    LaunchpadZopelessLayer,
+    LibrarianLayer,
+    ZopelessDatabaseLayer,
+)
 from lp.testing.swift.fixture import SwiftFixture
+
+
+class FakeSwiftCall:
+    """A callable that raises the given errors before returning a result."""
+
+    def __init__(self, errors, result):
+        self._errors = list(errors)
+        self._result = result
+        self.calls = 0
+        # Give the callable a name so robust_swiftclient's "operation"
+        # metric label is meaningful in tests.
+        self.__name__ = "fake_call"
+
+    def __call__(self, *args, **kwargs):
+        self.calls += 1
+        if self._errors:
+            raise self._errors.pop(0)
+        return self._result
 
 
 class TestFeedSwift(TestCase):
@@ -446,6 +473,140 @@ class TestFeedSwift(TestCase):
             "container",
             "name",
         )
+
+
+class TestRobustSwiftClient(StatsMixin, TestCase):
+    layer = ZopelessDatabaseLayer
+
+    def setUp(self):
+        super().setUp()
+        self.setUpStats()
+        # Record sleeps, so the tests can assert how many retries happened.
+        self.sleeps = []
+        self.useFixture(
+            MonkeyPatch(
+                "lp.services.librarianserver.swift.time.sleep",
+                self.sleeps.append,
+            )
+        )
+
+    def test_returns_result_without_retrying(self):
+        """A call that succeeds first time is made exactly once and counts a
+        single success."""
+        func = FakeSwiftCall([], "done")
+        self.assertEqual("done", swift.robust_swiftclient(func))
+        self.assertEqual(1, func.calls)
+        self.assertEqual(0, len(self.sleeps))
+        self.assertEqual(
+            1, len(self.filterStatsdCallsByName("librarian.swift.success"))
+        )
+
+    def test_retries_transient_network_error(self):
+        """A transient network failure is retried until the call succeeds,
+        counting each retry and the final success."""
+        error = ReadTimeoutError(None, "url", "Read timed out.")
+        func = FakeSwiftCall([error, error], "done")
+        self.assertEqual("done", swift.robust_swiftclient(func))
+        self.assertEqual(3, func.calls)
+        self.assertEqual(2, len(self.sleeps))
+        self.assertEqual(
+            2, len(self.filterStatsdCallsByName("librarian.swift.retry"))
+        )
+        self.assertEqual(
+            1, len(self.filterStatsdCallsByName("librarian.swift.success"))
+        )
+
+    def test_retries_server_error(self):
+        """A server-side Swift error (5xx) is retried, as it may be
+        transient."""
+        error = swiftclient.ClientException("boom", http_status=503)
+        func = FakeSwiftCall([error], "done")
+        self.assertEqual("done", swift.robust_swiftclient(func))
+        self.assertEqual(2, func.calls)
+        self.assertEqual(1, len(self.sleeps))
+        self.assertEqual(
+            1, len(self.filterStatsdCallsByName("librarian.swift.retry"))
+        )
+
+    def test_gives_up_after_max_retries(self):
+        """If every attempt fails, the last error is raised after the
+        configured number of attempts, and the final failure is logged."""
+        logger = self.useFixture(
+            FakeLogger(
+                name="lp.services.librarianserver.swift",
+                level=logging.WARNING,
+            )
+        )
+        error = ReadTimeoutError(None, "url", "Read timed out.")
+        func = FakeSwiftCall([error, error, error], "done")
+        self.assertRaises(ReadTimeoutError, swift.robust_swiftclient, func)
+        self.assertEqual(swift.SWIFT_MAX_RETRIES, func.calls)
+        self.assertEqual(swift.SWIFT_MAX_RETRIES - 1, len(self.sleeps))
+        self.assertIn("attempt 3 of 3", logger.output)
+        self.assertIn("giving up", logger.output)
+        self.assertEqual(
+            1, len(self.filterStatsdCallsByName("librarian.swift.giveup"))
+        )
+        self.assertEqual(
+            0, len(self.filterStatsdCallsByName("librarian.swift.success"))
+        )
+
+    def test_metric_is_labelled_by_operation(self):
+        """The emitted metrics carry the swift operation as a label."""
+        error = swiftclient.ClientException("boom", http_status=503)
+        func = FakeSwiftCall([error], "done")
+        self.assertEqual("done", swift.robust_swiftclient(func))
+        self.stats_client.incr.assert_any_call(
+            "librarian.swift.retry,env=test,operation=fake_call"
+        )
+
+    def test_does_not_retry_client_error(self):
+        """A client error such as a 404 is raised immediately, without
+        retrying, so callers can handle it."""
+        error = swiftclient.ClientException("missing", http_status=404)
+        func = FakeSwiftCall([error], "done")
+        self.assertRaises(
+            swiftclient.ClientException, swift.robust_swiftclient, func
+        )
+        self.assertEqual(1, func.calls)
+        self.assertEqual(0, len(self.sleeps))
+        self.assertEqual(0, self.stats_client.incr.call_count)
+
+    def test_does_not_retry_client_error_without_status(self):
+        """A ClientException with no HTTP status (e.g. auth failure) is not
+        retried, since it is unlikely to be transient."""
+        error = swiftclient.ClientException("no status", http_status=None)
+        func = FakeSwiftCall([error], "done")
+        self.assertRaises(
+            swiftclient.ClientException, swift.robust_swiftclient, func
+        )
+        self.assertEqual(1, func.calls)
+        self.assertEqual(0, len(self.sleeps))
+        self.assertEqual(0, self.stats_client.incr.call_count)
+
+    def test_does_not_retry_unexpected_error(self):
+        """An unrelated exception is raised immediately, without retrying."""
+        func = FakeSwiftCall([ValueError("bug")], "done")
+        self.assertRaises(ValueError, swift.robust_swiftclient, func)
+        self.assertEqual(1, func.calls)
+        self.assertEqual(0, len(self.sleeps))
+        self.assertEqual(0, self.stats_client.incr.call_count)
+
+    def test_logs_each_retry(self):
+        """Each retry is logged at info level so the behaviour is visible in
+        production; a call that recovers does not warn about giving up."""
+        logger = self.useFixture(
+            FakeLogger(
+                name="lp.services.librarianserver.swift",
+                level=logging.INFO,
+            )
+        )
+        error = ReadTimeoutError(None, "url", "Read timed out.")
+        func = FakeSwiftCall([error, error], "done")
+        self.assertEqual("done", swift.robust_swiftclient(func))
+        self.assertIn("attempt 1 of 3), retrying", logger.output)
+        self.assertIn("attempt 2 of 3), retrying", logger.output)
+        self.assertNotIn("giving up", logger.output)
 
 
 class TestHashStream(TestCase):

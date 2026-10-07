@@ -49,7 +49,7 @@ def file_exists(content_id):
             swift_connection = connection_pool.get()
             container, name = swift.swift_location(content_id)
             try:
-                swift.quiet_swiftclient(
+                swift.robust_swiftclient(
                     swift_connection.head_object, container, name
                 )
                 return True
@@ -76,7 +76,7 @@ def open_stream(content_id):
             try:
                 swift_connection = connection_pool.get()
                 container, name = swift.swift_location(content_id)
-                chunks = swift.quiet_swiftclient(
+                chunks = swift.robust_swiftclient(
                     swift_connection.get_object,
                     container,
                     name,
@@ -597,7 +597,7 @@ class UnreferencedContentPruner:
             for connection_pool in swift.connection_pools:
                 with swift.connection(connection_pool) as swift_connection:
                     try:
-                        swift.quiet_swiftclient(
+                        swift.robust_swiftclient(
                             swift_connection.delete_object, container, name
                         )
                         removed.append(f"Swift {connection_pool.os_auth_url}")
@@ -873,7 +873,7 @@ def swift_files(max_lfc_id):
                     objs.extend(
                         [
                             (obj, pool_index)
-                            for obj in swift.quiet_swiftclient(
+                            for obj in swift.robust_swiftclient(
                                 swift_connection.get_container,
                                 container,
                                 full_listing=True,
@@ -992,7 +992,9 @@ def delete_unwanted_swift_files(con):
             else:
                 with swift.connection(connection_pool) as swift_connection:
                     try:
-                        swift_connection.delete_object(container, name)
+                        swift.robust_swiftclient(
+                            swift_connection.delete_object, container, name
+                        )
                         log.debug3(
                             "Deleted (%s, %s) from Swift (%s)",
                             container,

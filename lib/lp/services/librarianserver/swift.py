@@ -10,27 +10,56 @@ __all__ = [
     "filesystem_path",
     "quiet_swiftclient",
     "reconfigure_connection_pools",
+    "robust_swiftclient",
     "swift_location",
     "to_swift",
 ]
 
 import hashlib
+import logging
 import os.path
 import re
+import socket
 import time
 from contextlib import contextmanager
+from typing import Any, Callable
 from urllib.parse import quote
 
+import requests
 from swiftclient import client as swiftclient
+from urllib3.exceptions import HTTPError as URLLib3HTTPError
+from zope.component import getUtility
 
 from lp.services.config import config
 from lp.services.database.interfaces import IStandbyStore
 from lp.services.librarian.model import LibraryFileContent
+from lp.services.statsd.interfaces.statsd_client import IStatsdClient
 
 SWIFT_CONTAINER_PREFIX = "librarian_"
 MAX_SWIFT_OBJECT_SIZE = 5 * 1024**3  # 5GB Swift limit.
 
 ONE_DAY = 24 * 60 * 60
+
+logger = logging.getLogger(__name__)
+
+# Number of attempts (including the first) for a Swift request before giving
+# up, and the delay in seconds between attempts. A constant delay (rather
+# than exponential backoff with jitter) is enough here: librarian-gc is a
+# single batch job with low Swift concurrency, not a fleet of workers that
+# could synchronise into a retry storm.
+SWIFT_MAX_RETRIES = 3
+SWIFT_RETRY_DELAY = 5
+
+# Network-level failures that are worth retrying. `URLLib3HTTPError` covers
+# read timeouts and incomplete reads (as seen coming from swiftclient),
+# while the others cover connection resets and socket timeouts.
+SWIFT_RETRYABLE_EXCEPTIONS = (
+    URLLib3HTTPError,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+    socket.timeout,
+    ConnectionError,
+)
 
 
 def quiet_swiftclient(func, *args, **kwargs):
@@ -49,6 +78,58 @@ def quiet_swiftclient(func, *args, **kwargs):
         return func(*args, **kwargs)
     finally:
         swiftclient.logger.disabled = old_disabled
+
+
+def _is_retryable_swift_error(exc: BaseException) -> bool:
+    if isinstance(exc, swiftclient.ClientException):
+        # Retry only server-side (5xx) failures. A client error such as a
+        # 404 will not be fixed by trying again, and a missing status
+        # usually means auth or misconfiguration, which is not transient.
+        return exc.http_status is not None and exc.http_status >= 500
+    return isinstance(exc, SWIFT_RETRYABLE_EXCEPTIONS)
+
+
+def robust_swiftclient(
+    func: Callable[..., Any], *args: Any, **kwargs: Any
+) -> Any:
+    """Call a swiftclient function, retrying transient failures.
+
+    Wraps `quiet_swiftclient` and retries a few times when Swift or the
+    network fails temporarily (read timeouts, connection resets, 5xx
+    responses). Errors that a retry cannot fix, such as a 404, are raised
+    immediately so callers can handle them.
+
+    Outcome metrics are labelled by operations and are counted based on their
+    results: "success", "retry" and "give-up".
+    """
+    statsd_client = getUtility(IStatsdClient)
+    labels = {"operation": getattr(func, "__name__", "unknown")}
+    for attempt in range(1, SWIFT_MAX_RETRIES + 1):
+        try:
+            result = quiet_swiftclient(func, *args, **kwargs)
+        except Exception as exc:
+            if not _is_retryable_swift_error(exc):
+                raise
+            if attempt >= SWIFT_MAX_RETRIES:
+                logger.warning(
+                    "Swift request failed (attempt %d of %d), giving up: %s",
+                    attempt,
+                    SWIFT_MAX_RETRIES,
+                    exc,
+                )
+                statsd_client.incr("librarian.swift.giveup", labels=labels)
+                raise
+            logger.info(
+                "Swift request failed (attempt %d of %d), retrying: %s",
+                attempt,
+                SWIFT_MAX_RETRIES,
+                exc,
+            )
+            statsd_client.incr("librarian.swift.retry", labels=labels)
+            time.sleep(SWIFT_RETRY_DELAY)
+        else:
+            statsd_client.incr("librarian.swift.success", labels=labels)
+            return result
 
 
 def to_swift(
