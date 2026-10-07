@@ -415,6 +415,21 @@ class OnceTests:
         )
         self.assertSearchFinds(params, self.bugtasks[1:])
 
+    def test_modified_before(self):
+        # Search results can be limited to bugs modified before a given time.
+        one_day_ago = self.bugtasks[0].bug.date_last_updated - timedelta(
+            days=1
+        )
+        two_days_ago = self.bugtasks[0].bug.date_last_updated - timedelta(
+            days=2
+        )
+        bug = self.bugtasks[0].bug
+        removeSecurityProxy(bug).date_last_updated = two_days_ago
+        params = self.getBugTaskSearchParams(
+            user=None, modified_before=one_day_ago
+        )
+        self.assertSearchFinds(params, self.bugtasks[:1])
+
     def test_branches_linked(self):
         # Search results can be limited to bugs with or without linked
         # branches and merge proposals.
@@ -2604,6 +2619,44 @@ class TestBugTaskSearch(TestCaseWithFactory):
         bug2.date_last_updated += timedelta(days=1)
         result = target.searchTasks(None, modified_since=date)
         self.assertEqual([task2], list(result))
+
+    def test_modified_before_excludes_later_bugtasks(self):
+        # When we search for bug tasks that have been modified before a
+        # certain time, tasks for bugs that have been modified after then
+        # are excluded.
+        target = self.makeBugTarget()
+        self.login()
+        task = self.factory.makeBugTask(target=target)
+        date = task.bug.date_last_updated - timedelta(days=1)
+        result = target.searchTasks(None, modified_before=date)
+        self.assertEqual([], list(result))
+
+    def test_modified_before_includes_earlier_bugtasks(self):
+        # When we search for bug tasks that have been modified before a
+        # certain time, tasks for bugs that have been modified before then
+        # are included.
+        target = self.makeBugTarget()
+        self.login()
+        task = self.factory.makeBugTask(target=target)
+        date = task.bug.date_last_updated + timedelta(days=1)
+        result = target.searchTasks(None, modified_before=date)
+        self.assertEqual([task], list(result))
+
+    def test_modified_before_includes_earlier_excludes_later(self):
+        # When we search for bugs that have been modified before a certain
+        # time, tasks for bugs that have been modified before then are
+        # included, tasks modified after are excluded.
+        target = self.makeBugTarget()
+        self.login()
+        task1 = self.factory.makeBugTask(target=target)
+        date = task1.bug.date_last_updated
+        bug1 = removeSecurityProxy(task1.bug)
+        bug1.date_last_updated -= timedelta(days=1)
+        task2 = self.factory.makeBugTask(target=target)
+        bug2 = removeSecurityProxy(task2.bug)
+        bug2.date_last_updated += timedelta(days=1)
+        result = target.searchTasks(None, modified_before=date)
+        self.assertEqual([task1], list(result))
 
     def test_private_bug_view_permissions_cached(self):
         """Private bugs from a search know the user can see the bugs."""
