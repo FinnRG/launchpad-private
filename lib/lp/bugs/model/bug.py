@@ -1784,13 +1784,26 @@ class Bug(StormBase, InformationTypeMixin):
                 )
             source_package_name = resolved
 
-        # A presence pins break/fix history to a single target, so the
-        # targets are mutually exclusive rather than combinable.
-        targets = [product, distribution, source_package_name, git_repository]
+        # A presence pins break/fix history to one target: a product, a git
+        # repository, a source package, or a distribution. A source package
+        # may stand alone (naming an upstream package, as UCT break/fix data
+        # does) or be paired with a distribution to name a distribution
+        # source package.
+        if distribution is not None and source_package_name is not None:
+            # A distribution and source package together form one target.
+            targets = [product, distribution, git_repository]
+        else:
+            targets = [
+                product,
+                distribution,
+                source_package_name,
+                git_repository,
+            ]
         if sum(target is not None for target in targets) != 1:
             raise InvalidBugPresenceTarget(
-                "Exactly one of product, distribution, source_package_name "
-                "or git_repository must be provided."
+                "Provide exactly one of product, distribution, "
+                "source_package_name or git_repository, optionally pairing a "
+                "distribution with a source_package_name."
             )
 
         if not isinstance(break_fix_data, list):

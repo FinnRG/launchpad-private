@@ -825,7 +825,7 @@ class TestBugPresencesWebservice(TestCaseWithFactory):
 
     def test_add_presence(self):
         # A user with launchpad.Moderate can add a presence via the API,
-        # passing the source package by name.
+        # passing the source package by name on its own.
         owner, bug = self._make_bug_with_moderator()
         spn = self.factory.makeSourcePackageName()
         bug_url = api_url(bug)
@@ -837,6 +837,26 @@ class TestBugPresencesWebservice(TestCaseWithFactory):
         self.assertEqual(
             [{"break": "abc", "fix": "def"}], presence["break_fix_data"]
         )
+
+    def test_add_presence_with_distribution_and_source_package(self):
+        # A distribution paired with a source package name is accepted.
+        owner, bug = self._make_bug_with_moderator()
+        spn = self.factory.makeSourcePackageName()
+        distribution = self.factory.makeDistribution()
+        distribution_url = api_url(distribution)
+        bug_url = api_url(bug)
+        logout()
+        webservice = self._write_webservice(owner)
+        response = webservice.named_post(
+            bug_url,
+            "addPresence",
+            distribution=distribution_url,
+            source_package_name=spn.name,
+            break_fix_data=[{"break": "abc", "fix": "def"}],
+        )
+        self.assertEqual(201, response.status)
+        presence = webservice.get(response.getHeader("Location")).jsonBody()
+        self.assertEqual(spn.name, presence["source_package_name"])
 
     def test_add_presence_denied_to_unrelated_user(self):
         # An ordinary user, even on a public bug, cannot add a presence.
@@ -872,6 +892,24 @@ class TestBugPresencesWebservice(TestCaseWithFactory):
         response = webservice.named_post(
             bug_url,
             "addPresence",
+            break_fix_data=[{"break": "abc", "fix": "def"}],
+        )
+        self.assertEqual(400, response.status)
+
+    def test_add_presence_rejects_source_package_with_product(self):
+        # A source package name paired with a non-distribution target is
+        # rejected with 400.
+        owner, bug = self._make_bug_with_moderator()
+        spn = self.factory.makeSourcePackageName()
+        product_url = api_url(self.factory.makeProduct())
+        bug_url = api_url(bug)
+        logout()
+        webservice = self._write_webservice(owner)
+        response = webservice.named_post(
+            bug_url,
+            "addPresence",
+            product=product_url,
+            source_package_name=spn.name,
             break_fix_data=[{"break": "abc", "fix": "def"}],
         )
         self.assertEqual(400, response.status)

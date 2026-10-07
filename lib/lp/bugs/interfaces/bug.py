@@ -1368,8 +1368,10 @@ class IBugModerate(Interface):
     ):
         """Add a bug presence to this bug.
 
-        Exactly one of `product`, `distribution`, `source_package_name` or
-        `git_repository` must be given.
+        Provide exactly one of `product`, `distribution`,
+        `source_package_name` or `git_repository`. A `source_package_name`
+        may stand alone (naming an upstream package) or be paired with a
+        `distribution` to name a distribution source package.
 
         :product: The product this BugPresence relates to.
         :distribution: The distribution this BugPresence relates to.
