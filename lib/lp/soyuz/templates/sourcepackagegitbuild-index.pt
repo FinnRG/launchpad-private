@@ -1,0 +1,156 @@
+<html
+  xmlns="http://www.w3.org/1999/xhtml"
+  xmlns:tal="http://xml.zope.org/namespaces/tal"
+  xmlns:metal="http://xml.zope.org/namespaces/metal"
+  xmlns:i18n="http://xml.zope.org/namespaces/i18n"
+  metal:use-macro="view/macro:page/main_only"
+  i18n:domain="launchpad"
+>
+
+  <body>
+
+    <tal:registering metal:fill-slot="registering">
+        created
+        <tal:created
+          replace="structure context/date_created/fmt:displaydatetitle" />
+    </tal:registering>
+
+    <div metal:fill-slot="main">
+
+      <div class="yui-g">
+
+        <div id="status" class="yui-u first">
+          <div class="portlet">
+            <div metal:use-macro="template/macros/status" />
+          </div>
+        </div>
+
+        <div id="details" class="yui-u">
+          <div class="portlet">
+            <div metal:use-macro="template/macros/details" />
+          </div>
+        </div>
+
+      </div> <!-- yui-g -->
+
+      <div id="buildlog" class="portlet"
+           tal:condition="context/status/enumvalue:BUILDING">
+        <div metal:use-macro="template/macros/buildlog" />
+      </div>
+
+    </div> <!-- main -->
+
+
+<metal:macros fill-slot="bogus">
+
+  <metal:macro define-macro="details">
+    <h2>Build details</h2>
+    <div class="two-column-list">
+      <dl>
+        <dt>Repository:</dt>
+          <dd tal:content="structure context/git_repository/fmt:link" />
+      </dl>
+      <dl>
+        <dt>Commit:</dt>
+          <dd id="commit-sha1" tal:content="context/commit_sha1" />
+      </dl>
+      <dl>
+        <dt>Archive:</dt>
+          <dd tal:content="structure context/archive/fmt:link" />
+      </dl>
+      <dl>
+        <dt>Series:</dt>
+          <dd><a class="sprite distribution"
+                 tal:define="series context/distro_series"
+                 tal:attributes="href series/fmt:url"
+                 tal:content="series/displayname" />
+          </dd>
+      </dl>
+      <dl>
+        <dt>Pocket:</dt>
+          <dd tal:content="context/pocket/title" />
+      </dl>
+      <dl tal:condition="context/version_suffix">
+        <dt>Version suffix:</dt>
+          <dd tal:content="context/version_suffix" />
+      </dl>
+      <dl tal:define="spr context/source_package_release"
+          tal:condition="spr">
+        <dt>Source package:</dt>
+          <dd id="source-package-release" tal:content="spr/title" />
+      </dl>
+    </div>
+  </metal:macro>
+
+  <metal:macro define-macro="status">
+    <h2>Build status</h2>
+    <p>
+      <span tal:replace="structure context/image:icon" />
+      <span tal:attributes="class string:buildstatus${context/status/name}"
+            tal:content="context/status/title" />
+      <tal:builder condition="context/builder">
+        on <a tal:content="context/builder/title"
+              tal:attributes="href context/builder/fmt:url" />
+      </tal:builder>
+    </p>
+
+    <ul>
+      <li tal:condition="context/dependencies">
+        Missing build dependencies: <em tal:content="context/dependencies" />
+      </li>
+      <tal:queued define="queue_record context/buildqueue_record"
+                  condition="queue_record">
+      <tal:pending condition="queue_record/status/enumvalue:WAITING">
+        <li tal:define="eta queue_record/getEstimatedJobStartTime">
+          Start <tal:eta replace="eta/fmt:approximatedate" />
+          (<span tal:replace="queue_record/lastscore" />)
+          <a href="https://documentation.ubuntu.com/launchpad/user/reference/packaging/build-scores/"
+             target="_blank">What's this?</a>
+        </li>
+      </tal:pending>
+      </tal:queued>
+      <li tal:condition="context/date_started">
+        Started <tal:started
+          replace="structure context/date_started/fmt:displaydatetitle" />
+      </li>
+      <tal:finish condition="not: context/date_finished">
+        <li tal:define="eta view/eta" tal:condition="eta">
+          Estimated finish <tal:eta replace="eta/fmt:approximatedate" />
+        </li>
+      </tal:finish>
+      <li tal:condition="context/date_finished">
+        Finished <tal:finished
+          replace="structure context/date_finished/fmt:displaydatetitle" />
+        <tal:duration condition="context/duration">
+          (took <span tal:replace="context/duration/fmt:exactduration" />)
+        </tal:duration>
+      </li>
+      <li tal:define="file context/log"
+          tal:condition="file">
+        <a class="sprite download"
+           tal:attributes="href context/log_url">buildlog</a>
+        (<span tal:replace="file/content/filesize/fmt:bytes" />)
+      </li>
+      <li tal:define="file context/upload_log"
+          tal:condition="file">
+        <a class="sprite download"
+           tal:attributes="href context/upload_log_url">uploadlog</a>
+        (<span tal:replace="file/content/filesize/fmt:bytes" />)
+      </li>
+    </ul>
+  </metal:macro>
+
+  <metal:macro define-macro="buildlog">
+    <h2>Buildlog</h2>
+    <div id="buildlog-tail" class="logtail"
+         tal:define="logtail context/buildqueue_record/logtail"
+         tal:content="structure logtail/fmt:text-to-html" />
+    <p class="lesser" tal:condition="view/user">
+      Updated on <span tal:replace="structure view/user/fmt:local-time" />
+    </p>
+  </metal:macro>
+
+</metal:macros>
+
+  </body>
+</html>

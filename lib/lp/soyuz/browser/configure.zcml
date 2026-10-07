@@ -762,6 +762,26 @@
         path_expression="string:+build/${id}"
         attribute_to_parent="livefs"
         />
+    <lp:url
+        for="lp.soyuz.interfaces.sourcepackagegitbuild.ISourcePackageGitBuild"
+        path_expression="string:+gitbuild/${id}"
+        attribute_to_parent="archive"
+        />
+    <lp:navigation
+        module="lp.soyuz.browser.sourcepackagegitbuild"
+        classes="SourcePackageGitBuildNavigation"
+        />
+    <browser:defaultView
+        for="lp.soyuz.interfaces.sourcepackagegitbuild.ISourcePackageGitBuild"
+        name="+index"
+        />
+    <browser:page
+        for="lp.soyuz.interfaces.sourcepackagegitbuild.ISourcePackageGitBuild"
+        class="lp.soyuz.browser.sourcepackagegitbuild.SourcePackageGitBuildView"
+        permission="launchpad.View"
+        name="+index"
+        template="../templates/sourcepackagegitbuild-index.pt"
+        />
     <lp:menus
         module="lp.soyuz.browser.livefsbuild"
         classes="LiveFSBuildContextMenu"
