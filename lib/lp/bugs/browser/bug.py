@@ -69,6 +69,7 @@ from lp.bugs.interfaces.bugattachment import (
     IBugAttachmentSet,
 )
 from lp.bugs.interfaces.bugnomination import IBugNominationSet
+from lp.bugs.interfaces.bugpresence import IBugPresenceSet
 from lp.bugs.interfaces.bugtask import BugTaskStatus, IBugTask
 from lp.bugs.interfaces.bugtasksearch import (
     BugTaskSearchParams,
@@ -162,6 +163,17 @@ class BugNavigation(Navigation):
             attachment = getUtility(IBugAttachmentSet)[name]
             if attachment is not None and attachment.bug == self.context:
                 return attachment
+
+    @stepthrough("+presence")
+    def traverse_presence(self, name):
+        """Retrieve a BugPresence by ID.
+
+        Only return a presence if it is related to this bug.
+        """
+        if name.isdigit():
+            presence = getUtility(IBugPresenceSet)[name]
+            if presence is not None and presence.bug == self.context:
+                return presence
 
     @stepthrough("nominations")
     def traverse_nominations(self, nomination_id):

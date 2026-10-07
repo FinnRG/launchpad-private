@@ -66,9 +66,16 @@ class BugPresence(StormBase):
         self._break_fix_data = break_fix_data
 
     @property
+    def api_source_package_name(self):
+        """See `IBugPresence`."""
+        if self.source_package_name is None:
+            return None
+        return self.source_package_name.name
+
+    @property
     def break_fix_data(self):
         """See `IBugPresence`."""
-        return self._break_fix_data or {}
+        return self._break_fix_data or []
 
     @break_fix_data.setter
     def break_fix_data(self, value):
@@ -85,12 +92,12 @@ class BugPresence(StormBase):
 class BugPresenceSet:
     """The set of `IBugPresence` objects."""
 
-    def __getitem__(id):
+    def __getitem__(self, id):
         """See IBugPresenceSet."""
-        return IStore(BugPresence).find(BugPresence, id=id).one()
+        return IStore(BugPresence).find(BugPresence, id=int(id)).one()
 
     def create(
-        id,
+        self,
         bug,
         product,
         distribution,

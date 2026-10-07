@@ -324,16 +324,16 @@ class ViewBugPresence(DelegatedAuthorization):
 
 
 class DeleteBugPresence(DelegatedAuthorization):
-    """Security adapter for deleting a bug presence."""
+    """Security adapter for deleting a bug presence.
+
+    Anyone who can moderate the bug can delete its presences.
+    """
 
     permission = "launchpad.Delete"
     usedfor = IBugPresence
 
-    def checkAuthenticated(self, user):
-        return user.in_admin
-
-    def checkUnauthenticated(self):
-        return False
+    def __init__(self, bugpresence):
+        super().__init__(bugpresence, bugpresence.bug, "launchpad.Moderate")
 
 
 class ViewBugActivity(DelegatedAuthorization):

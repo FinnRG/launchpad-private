@@ -716,3 +716,280 @@ class TestBugAttachmentVulnerabilityPatches(TestCaseWithFactory):
         self.assertEqual(400, response.status)
         with person_logged_in(owner):
             self.assertIsNone(attachment.vulnerability_patches)
+
+
+class TestBugPresencesWebservice(TestCaseWithFactory):
+    layer = DatabaseFunctionalLayer
+
+    def test_presences_and_break_fix_data_exported(self):
+        # A bug's presences are exposed as a collection on devel, and each
+        # presence exports its break_fix_data.
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        break_fix = [{"break": "abcdef123456", "fix": "654321fedcba"}]
+        with person_logged_in(owner):
+            self.factory.makeBugPresence(bug=bug, break_fix_data=break_fix)
+        bug_url = api_url(bug)
+        logout()
+        webservice = webservice_for_person(
+            owner,
+            permission=OAuthPermission.READ_PUBLIC,
+            default_api_version="devel",
+        )
+        response = webservice.get(bug_url)
+        self.assertEqual(200, response.status)
+        presences = webservice.get(
+            response.jsonBody()["presences_collection_link"]
+        ).jsonBody()
+        self.assertEqual(1, len(presences["entries"]))
+        self.assertEqual(break_fix, presences["entries"][0]["break_fix_data"])
+
+    def _get_presence_representation(self, owner, presence_url):
+        webservice = webservice_for_person(
+            owner,
+            permission=OAuthPermission.READ_PUBLIC,
+            default_api_version="devel",
+        )
+        return webservice, webservice.get(presence_url).jsonBody()
+
+    def test_presence_exports_source_package_name(self):
+        # The source package name is exported as a plain string, and the
+        # other targets are unset.
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        spn = self.factory.makeSourcePackageName()
+        with person_logged_in(owner):
+            presence = self.factory.makeBugPresence(
+                bug=bug, source_package_name=spn
+            )
+        presence_url = api_url(presence)
+        logout()
+        _, representation = self._get_presence_representation(
+            owner, presence_url
+        )
+        self.assertEqual(spn.name, representation["source_package_name"])
+        self.assertIsNone(representation["product_link"])
+        self.assertIsNone(representation["distribution_link"])
+        self.assertIsNone(representation["git_repository_link"])
+
+    def test_presence_exports_product_distribution_and_git_repository(self):
+        # Product, distribution and git repository are exported as links.
+        owner = self.factory.makePerson()
+        bug = self.factory.makeBug(owner=owner)
+        targets = {
+            "product": self.factory.makeProduct(),
+            "distribution": self.factory.makeDistribution(),
+            "git_repository": self.factory.makeGitRepository(),
+        }
+        target_urls = {}
+        presence_urls = {}
+        with person_logged_in(owner):
+            for name, target in targets.items():
+                presence = self.factory.makeBugPresence(
+                    bug=bug, **{name: target}
+                )
+                target_urls[name] = api_url(target)
+                presence_urls[name] = api_url(presence)
+        logout()
+        for name, presence_url in presence_urls.items():
+            webservice, representation = self._get_presence_representation(
+                owner, presence_url
+            )
+            self.assertEqual(
+                webservice.getAbsoluteUrl(target_urls[name]),
+                representation[name + "_link"],
+            )
+            self.assertIsNone(representation["source_package_name"])
+
+    def _make_bug_with_moderator(self):
+        # The product owner has a bug role, so they hold launchpad.Moderate.
+        owner = self.factory.makePerson()
+        product = self.factory.makeProduct(owner=owner)
+        bug = self.factory.makeBug(target=product, owner=owner)
+        return owner, bug
+
+    def _write_webservice(self, person):
+        return webservice_for_person(
+            person,
+            permission=OAuthPermission.WRITE_PRIVATE,
+            default_api_version="devel",
+        )
+
+    def _add_presence(self, webservice, bug_url, spn):
+        return webservice.named_post(
+            bug_url,
+            "addPresence",
+            source_package_name=spn.name,
+            break_fix_data=[{"break": "abc", "fix": "def"}],
+        )
+
+    def test_add_presence(self):
+        # A user with launchpad.Moderate can add a presence via the API,
+        # passing the source package by name on its own.
+        owner, bug = self._make_bug_with_moderator()
+        spn = self.factory.makeSourcePackageName()
+        bug_url = api_url(bug)
+        logout()
+        webservice = self._write_webservice(owner)
+        response = self._add_presence(webservice, bug_url, spn)
+        self.assertEqual(201, response.status)
+        presence = webservice.get(response.getHeader("Location")).jsonBody()
+        self.assertEqual(
+            [{"break": "abc", "fix": "def"}], presence["break_fix_data"]
+        )
+
+    def test_add_presence_with_distribution_and_source_package(self):
+        # A distribution paired with a source package name is accepted.
+        owner, bug = self._make_bug_with_moderator()
+        spn = self.factory.makeSourcePackageName()
+        distribution = self.factory.makeDistribution()
+        distribution_url = api_url(distribution)
+        bug_url = api_url(bug)
+        logout()
+        webservice = self._write_webservice(owner)
+        response = webservice.named_post(
+            bug_url,
+            "addPresence",
+            distribution=distribution_url,
+            source_package_name=spn.name,
+            break_fix_data=[{"break": "abc", "fix": "def"}],
+        )
+        self.assertEqual(201, response.status)
+        presence = webservice.get(response.getHeader("Location")).jsonBody()
+        self.assertEqual(spn.name, presence["source_package_name"])
+
+    def test_add_presence_denied_to_unrelated_user(self):
+        # An ordinary user, even on a public bug, cannot add a presence.
+        owner, bug = self._make_bug_with_moderator()
+        spn = self.factory.makeSourcePackageName()
+        bug_url = api_url(bug)
+        other = self.factory.makePerson()
+        logout()
+        response = self._add_presence(
+            self._write_webservice(other), bug_url, spn
+        )
+        self.assertEqual(401, response.status)
+
+    def test_add_presence_denied_to_bug_reporter_without_role(self):
+        # Reporting the bug does not grant the right to add presences.
+        product = self.factory.makeProduct()
+        reporter = self.factory.makePerson()
+        bug = self.factory.makeBug(target=product, owner=reporter)
+        spn = self.factory.makeSourcePackageName()
+        bug_url = api_url(bug)
+        logout()
+        response = self._add_presence(
+            self._write_webservice(reporter), bug_url, spn
+        )
+        self.assertEqual(401, response.status)
+
+    def test_add_presence_requires_exactly_one_target(self):
+        # Providing no target is rejected with 400.
+        owner, bug = self._make_bug_with_moderator()
+        bug_url = api_url(bug)
+        logout()
+        webservice = self._write_webservice(owner)
+        response = webservice.named_post(
+            bug_url,
+            "addPresence",
+            break_fix_data=[{"break": "abc", "fix": "def"}],
+        )
+        self.assertEqual(400, response.status)
+
+    def test_add_presence_rejects_source_package_with_product(self):
+        # A source package name paired with a non-distribution target is
+        # rejected with 400.
+        owner, bug = self._make_bug_with_moderator()
+        spn = self.factory.makeSourcePackageName()
+        product_url = api_url(self.factory.makeProduct())
+        bug_url = api_url(bug)
+        logout()
+        webservice = self._write_webservice(owner)
+        response = webservice.named_post(
+            bug_url,
+            "addPresence",
+            product=product_url,
+            source_package_name=spn.name,
+            break_fix_data=[{"break": "abc", "fix": "def"}],
+        )
+        self.assertEqual(400, response.status)
+
+    def test_add_presence_rejects_bad_break_fix_data(self):
+        # Break-fix entries without 'break' and 'fix' keys are rejected.
+        owner, bug = self._make_bug_with_moderator()
+        spn = self.factory.makeSourcePackageName()
+        bug_url = api_url(bug)
+        logout()
+        webservice = self._write_webservice(owner)
+        response = webservice.named_post(
+            bug_url,
+            "addPresence",
+            source_package_name=spn.name,
+            break_fix_data=[{"wrong": "key"}],
+        )
+        self.assertEqual(400, response.status)
+
+    def test_remove_presence(self):
+        # A user with launchpad.Moderate can remove a presence via the API.
+        owner, bug = self._make_bug_with_moderator()
+        with person_logged_in(owner):
+            presence = self.factory.makeBugPresence(
+                bug=bug, break_fix_data=[{"break": "a", "fix": "b"}]
+            )
+        bug_url = api_url(bug)
+        presence_url = api_url(presence)
+        logout()
+        webservice = self._write_webservice(owner)
+        response = webservice.named_post(
+            bug_url, "removePresence", bug_presence=presence_url
+        )
+        self.assertEqual(200, response.status)
+        with person_logged_in(owner):
+            self.assertEqual(0, bug.presences.count())
+
+    def test_remove_presence_denied_to_unrelated_user(self):
+        # An ordinary user cannot remove a presence, and it is kept.
+        owner, bug = self._make_bug_with_moderator()
+        with person_logged_in(owner):
+            presence = self.factory.makeBugPresence(
+                bug=bug, break_fix_data=[{"break": "a", "fix": "b"}]
+            )
+        bug_url = api_url(bug)
+        presence_url = api_url(presence)
+        other = self.factory.makePerson()
+        logout()
+        response = self._write_webservice(other).named_post(
+            bug_url, "removePresence", bug_presence=presence_url
+        )
+        self.assertEqual(401, response.status)
+        with person_logged_in(owner):
+            self.assertEqual(1, bug.presences.count())
+
+    def test_remove_presence_from_other_bug_rejected(self):
+        # A presence belonging to another bug cannot be removed by passing
+        # its reference to this bug's removePresence, even by a moderator.
+        owner, bug = self._make_bug_with_moderator()
+        other_bug = self.factory.makeBug(owner=owner)
+        with person_logged_in(owner):
+            presence = self.factory.makeBugPresence(
+                bug=other_bug, break_fix_data=[{"break": "a", "fix": "b"}]
+            )
+        bug_url = api_url(bug)
+        presence_url = api_url(presence)
+        logout()
+        webservice = self._write_webservice(owner)
+        response = webservice.named_post(
+            bug_url, "removePresence", bug_presence=presence_url
+        )
+        self.assertEqual(400, response.status)
+        with person_logged_in(owner):
+            self.assertEqual(1, other_bug.presences.count())
+
+    def test_traverse_nonexistent_presence_not_found(self):
+        # Traversing to a +presence id that does not exist returns 404.
+        owner, bug = self._make_bug_with_moderator()
+        bug_url = api_url(bug)
+        logout()
+        webservice = self._write_webservice(owner)
+        response = webservice.get("%s/+presence/0" % bug_url)
+        self.assertEqual(404, response.status)

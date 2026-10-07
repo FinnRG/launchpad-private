@@ -17,6 +17,7 @@ __all__ = [
     "IBugBranch",
     "IBugLinkTarget",
     "IBugNomination",
+    "IBugPresence",
     "IBugSubscription",
     "IBugSubscriptionFilter",
     "IBugTarget",
@@ -58,6 +59,7 @@ from lp.bugs.interfaces.bugnomination import (
     NominationError,
     NominationSeriesObsoleteError,
 )
+from lp.bugs.interfaces.bugpresence import IBugPresence
 from lp.bugs.interfaces.bugsubscription import IBugSubscription
 from lp.bugs.interfaces.bugsubscriptionfilter import IBugSubscriptionFilter
 from lp.bugs.interfaces.bugtarget import IBugTarget, IHasBugs
@@ -86,11 +88,13 @@ from lp.bugs.interfaces.structuralsubscription import (
 )
 from lp.bugs.interfaces.vulnerability import IVulnerability, IVulnerabilitySet
 from lp.code.interfaces.branchmergeproposal import IBranchMergeProposal
+from lp.code.interfaces.gitrepository import IGitRepository
 from lp.registry.interfaces.distribution import IDistribution
 from lp.registry.interfaces.distributionsourcepackage import (
     IDistributionSourcePackage,
 )
 from lp.registry.interfaces.person import IPerson
+from lp.registry.interfaces.product import IProduct
 from lp.services.webservice.apihelpers import (
     patch_collection_property,
     patch_collection_return_type,
@@ -118,6 +122,16 @@ patch_plain_parameter_type(
 patch_plain_parameter_type(
     IBug, "unlinkMergeProposal", "merge_proposal", IBranchMergeProposal
 )
+patch_plain_parameter_type(IBug, "addPresence", "product", IProduct)
+patch_plain_parameter_type(IBug, "addPresence", "distribution", IDistribution)
+patch_plain_parameter_type(
+    IBug, "addPresence", "git_repository", IGitRepository
+)
+
+# IBugPresence
+patch_reference_property(IBugPresence, "product", IProduct)
+patch_reference_property(IBugPresence, "distribution", IDistribution)
+patch_reference_property(IBugPresence, "git_repository", IGitRepository)
 
 # IBugTask
 patch_reference_property(IBugTask, "owner", IPerson)

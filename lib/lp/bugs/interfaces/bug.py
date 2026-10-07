@@ -48,6 +48,7 @@ from zope.schema import (
     Bytes,
     Choice,
     Datetime,
+    Dict,
     Int,
     List,
     Object,
@@ -66,6 +67,7 @@ from lp.bugs.enums import BugLockedStatus, BugLockStatus, BugNotificationLevel
 from lp.bugs.interfaces.bugactivity import IBugActivity
 from lp.bugs.interfaces.bugattachment import IBugAttachment
 from lp.bugs.interfaces.bugbranch import IBugBranch
+from lp.bugs.interfaces.bugpresence import IBugPresence
 from lp.bugs.interfaces.bugtask import (
     BugTaskImportance,
     BugTaskStatus,
@@ -407,6 +409,16 @@ class IBugView(Interface):
                 value_type=Reference(schema=IBugAttachment),
                 readonly=True,
             )
+        )
+    )
+    presences = doNotSnapshot(
+        exported(
+            CollectionField(
+                title=_("List of break-fix presences for this bug."),
+                value_type=Reference(schema=IBugPresence),
+                readonly=True,
+            ),
+            as_of="devel",
         )
     )
     security_related = exported(
@@ -932,39 +944,6 @@ class IBugAppend(Interface):
     def removeAttachment(bug_attachment, user):
         """Remove a bug attachment from the bug."""
 
-    def addPresence(
-        product,
-        distribution,
-        source_package_name,
-        git_repository,
-        break_fix_data,
-        user,
-    ):
-        """Add a bug presence to this bug.
-
-        XXX enriqueesanchz 2025-05-29: we are not doing any validation in terms
-        of which target combinations make sense. If the endpoint is exposed, we
-        should add it, but for now this is only used internally within
-        Launchpad.
-
-        :product: The product where this BugPresence is related to.
-        :distribution: The distribution where this BugPresence is related to.
-        :source_package_name: The source_package_name where this BugPresence is
-            related to.
-        :git_repository: The git_repository where this BugPresence is related
-            to.
-        :break_fix_data: The dict of commits that caused the issue (break) and
-            commits that solved it (fix).
-        :user: The user that adds this bug presence.
-        """
-
-    def removePresence(bug_presence, user):
-        """Remove a bug presence from the bug.
-
-        :bug_presence: The bug presence to be removed.
-        :user: The user that removes the bug presence.
-        """
-
     def addCommentNotification(
         message,
         recipients=None,
@@ -1349,6 +1328,74 @@ class IBugModerate(Interface):
 
         :reason: The reason for locking the bug.
         :who: The IPerson who is making the change.
+        """
+
+    @call_with(user=REQUEST_USER)
+    @operation_parameters(
+        # Really IProduct, patched in lp.bugs.interfaces.webservice.
+        product=Reference(
+            schema=Interface, title=_("Product"), required=False
+        ),
+        # Really IDistribution, patched in lp.bugs.interfaces.webservice.
+        distribution=Reference(
+            schema=Interface, title=_("Distribution"), required=False
+        ),
+        source_package_name=TextLine(
+            title=_("Source package name"), required=False
+        ),
+        # Really IGitRepository, patched in lp.bugs.interfaces.webservice.
+        git_repository=Reference(
+            schema=Interface, title=_("Git repository"), required=False
+        ),
+        break_fix_data=List(
+            title=_("Break-Fix data"),
+            description=_(
+                "A list of mappings, each with a 'break' and a 'fix' commit."
+            ),
+            value_type=Dict(key_type=Text(), value_type=Text()),
+            required=True,
+        ),
+    )
+    @export_factory_operation(IBugPresence, [])
+    @operation_for_version("devel")
+    def addPresence(
+        product,
+        distribution,
+        source_package_name,
+        git_repository,
+        break_fix_data,
+        user,
+    ):
+        """Add a bug presence to this bug.
+
+        Provide exactly one of `product`, `distribution`,
+        `source_package_name` or `git_repository`. A `source_package_name`
+        may stand alone (naming an upstream package) or be paired with a
+        `distribution` to name a distribution source package.
+
+        :product: The product this BugPresence relates to.
+        :distribution: The distribution this BugPresence relates to.
+        :source_package_name: The source package name (or its name as a
+            string) this BugPresence relates to.
+        :git_repository: The git repository this BugPresence relates to.
+        :break_fix_data: A list of mappings, each with a 'break' and a 'fix'
+            commit.
+        :user: The user that adds this bug presence.
+        """
+
+    @call_with(user=REQUEST_USER)
+    @operation_parameters(
+        bug_presence=Reference(
+            schema=IBugPresence, title=_("Bug presence"), required=True
+        )
+    )
+    @export_write_operation()
+    @operation_for_version("devel")
+    def removePresence(bug_presence, user):
+        """Remove a bug presence from the bug.
+
+        :bug_presence: The bug presence to be removed.
+        :user: The user that removes the bug presence.
         """
 
 
