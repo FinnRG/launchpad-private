@@ -105,6 +105,15 @@ flag_info = sorted(
             "",
         ),
         (
+            "soyuz.mp_validation.enabled",
+            "boolean",
+            "Validate public source package merge proposals for opted-in "
+            "registrants. Supports team and distribution scopes.",
+            "disabled",
+            "Merge proposal package validation",
+            "",
+        ),
+        (
             "hard_timeout",
             "float",
             "Sets the hard request timeout in milliseconds.",
