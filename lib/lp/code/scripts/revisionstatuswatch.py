@@ -5,6 +5,7 @@
 
 __all__ = [
     "RevisionStatusWatchCollector",
+    "RevisionStatusWatchCronScript",
     "RevisionStatusWatchPollResult",
 ]
 
@@ -13,8 +14,15 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
 import transaction
+from zope.component import getUtility
+from zope.security.proxy import removeSecurityProxy
 
 from lp.code.enums import RevisionStatusResult
+from lp.code.interfaces.revisionstatuswatch import IRevisionStatusWatchSet
+from lp.services.scripts.base import (
+    LaunchpadCronScript,
+    LaunchpadScriptFailure,
+)
 
 FINAL_RESULTS = (
     RevisionStatusResult.SUCCEEDED,
@@ -233,3 +241,47 @@ class RevisionStatusWatchCollector:
         ) + FINAL_RESULTS
         if poll_result.result not in allowed_results:
             raise ValueError("Handler returned an invalid revision status")
+
+
+class RevisionStatusWatchCronScript(LaunchpadCronScript):
+    """Run a bounded collector batch under the standard cron lock."""
+
+    description = "Collect results for external revision status watches."
+
+    def add_my_options(self):
+        self.parser.add_option(
+            "--batch-size",
+            type="int",
+            default=100,
+            metavar="COUNT",
+            help="Maximum number of watches to check (default: %default).",
+        )
+
+    def getHandlers(self):
+        """Return handlers when supported external adapters are available."""
+        return {}
+
+    def main(self):
+        if self.args:
+            raise LaunchpadScriptFailure("Unexpected positional arguments.")
+        if self.options.batch_size <= 0:
+            raise LaunchpadScriptFailure("--batch-size must be positive.")
+        handlers = self.getHandlers()
+        if not handlers:
+            raise LaunchpadScriptFailure(
+                "No revision status watch handlers are configured; "
+                "no watches were processed."
+            )
+        watch_set = removeSecurityProxy(getUtility(IRevisionStatusWatchSet))
+        collector = RevisionStatusWatchCollector(
+            watch_set,
+            handlers,
+            logger=self.logger,
+            transaction_manager=self.txn,
+        )
+        self.logger.info(
+            "Checking up to %s revision status watches.",
+            self.options.batch_size,
+        )
+        collector.run(limit=self.options.batch_size)
+        self.logger.info("Finished checking revision status watches.")

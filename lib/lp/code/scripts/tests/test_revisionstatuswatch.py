@@ -4,6 +4,7 @@
 """Tests for collecting external revision check results."""
 
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 import transaction
 from fixtures import FakeLogger
@@ -14,11 +15,16 @@ from zope.security.proxy import removeSecurityProxy
 from lp.code.enums import RevisionStatusResult
 from lp.code.interfaces.revisionstatus import IRevisionStatusReportSet
 from lp.code.interfaces.revisionstatuswatch import IRevisionStatusWatchSet
+from lp.code.scripts import revisionstatuswatch
 from lp.code.scripts.revisionstatuswatch import (
     RevisionStatusWatchCollector,
+    RevisionStatusWatchCronScript,
     RevisionStatusWatchPollResult,
 )
+from lp.services.config import config
 from lp.services.database.isolation import check_no_transaction
+from lp.services.log.logger import DevNullLogger
+from lp.services.scripts.base import LaunchpadScriptFailure
 from lp.testing import TestCaseWithFactory
 from lp.testing.layers import DatabaseFunctionalLayer
 
@@ -410,3 +416,136 @@ class TestRevisionStatusWatchCollector(TestCaseWithFactory):
             {},
             max_backoff=timedelta(minutes=1),
         )
+
+
+class TestRevisionStatusWatchCronScript(TestCaseWithFactory):
+    layer = DatabaseFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        self.watch_set = removeSecurityProxy(
+            getUtility(IRevisionStatusWatchSet)
+        )
+
+    def makeScript(self, args=None, handlers=None):
+        script = RevisionStatusWatchCronScript(
+            "update-revision-status-watches",
+            dbuser=config.revisionstatuswatch.dbuser,
+            test_args=[] if args is None else args,
+            logger=DevNullLogger(),
+        )
+        script.txn = transaction
+        if handlers is not None:
+            self.patch(script, "getHandlers", lambda: handlers)
+        return script
+
+    def makeWatch(self):
+        report = self.factory.makeRevisionStatusReport(
+            result=RevisionStatusResult.WAITING
+        )
+        watch = self.watch_set.new(
+            report,
+            "test-service",
+            {"request_id": "test-request"},
+            next_check=datetime(2000, 1, 1, tzinfo=timezone.utc),
+        )
+        Store.of(watch).flush()
+        return watch.id, report.id
+
+    def test_defaults(self):
+        script = self.makeScript()
+        self.assertEqual(100, script.options.batch_size)
+        self.assertEqual("revision-status-watches", script.dbuser)
+        self.assertEqual(
+            "launchpad-update-revision-status-watches.lock",
+            script.lockfilename,
+        )
+
+    def test_no_handlers_does_not_change_watches(self):
+        watch_id, report_id = self.makeWatch()
+        self.assertRaises(LaunchpadScriptFailure, self.makeScript().main)
+        watch = self.watch_set.getByID(watch_id)
+        self.assertIsNone(watch.lastchecked)
+        self.assertEqual(0, watch.failure_count)
+        self.assertEqual(
+            datetime(2000, 1, 1, tzinfo=timezone.utc), watch.next_check
+        )
+        self.assertEqual(report_id, watch.report_id)
+        self.assertEqual(RevisionStatusResult.WAITING, watch.report.result)
+
+    def test_batch_size_must_be_positive(self):
+        for size in (0, -1):
+            script = self.makeScript(args=["--batch-size=%s" % size])
+            self.assertRaises(LaunchpadScriptFailure, script.main)
+
+    def test_positional_arguments_are_rejected(self):
+        script = self.makeScript(args=["unexpected"])
+        self.assertRaises(LaunchpadScriptFailure, script.main)
+
+    def test_delegates_to_collector(self):
+        handlers = {"test-service": FakeWatchHandler()}
+        script = self.makeScript(args=["--batch-size=7"], handlers=handlers)
+        collector_class = mock.Mock()
+        self.patch(
+            revisionstatuswatch,
+            "RevisionStatusWatchCollector",
+            collector_class,
+        )
+        script.main()
+        collector_class.assert_called_once_with(
+            self.watch_set,
+            handlers,
+            logger=script.logger,
+            transaction_manager=transaction,
+        )
+        collector_class.return_value.run.assert_called_once_with(limit=7)
+
+    def test_runs_collector_with_handler(self):
+        watch_id, report_id = self.makeWatch()
+        handler = FakeWatchHandler()
+        handler.responses["test-request"] = RevisionStatusWatchPollResult(
+            result=RevisionStatusResult.SUCCEEDED
+        )
+        self.makeScript(handlers={"test-service": handler}).main()
+        self.assertEqual([{"request_id": "test-request"}], handler.calls)
+        self.assertIsNone(self.watch_set.getByID(watch_id))
+        report = getUtility(IRevisionStatusReportSet).getByID(report_id)
+        self.assertEqual(RevisionStatusResult.SUCCEEDED, report.result)
+
+    def test_lock_wraps_run(self):
+        script = self.makeScript()
+        calls = mock.Mock()
+        self.patch(script, "lock_or_die", calls.lock)
+        self.patch(script, "run", calls.run)
+        self.patch(script, "unlock", calls.unlock)
+        script.lock_and_run()
+        self.assertEqual(
+            [
+                mock.call.lock(blocking=False),
+                mock.call.run(
+                    use_web_security=False, isolation="read_committed"
+                ),
+                mock.call.unlock(skip_delete=False),
+            ],
+            calls.mock_calls,
+        )
+
+    def test_unlocks_after_failed_run(self):
+        script = self.makeScript()
+        self.patch(script, "lock_or_die", mock.Mock())
+        self.patch(script, "run", mock.Mock(side_effect=SystemExit(1)))
+        unlock = mock.Mock()
+        self.patch(script, "unlock", unlock)
+        self.assertRaises(SystemExit, script.lock_and_run)
+        unlock.assert_called_once_with(skip_delete=False)
+
+    def test_lock_contention_does_not_run_collector(self):
+        script = self.makeScript()
+        self.patch(script, "lock_or_die", mock.Mock(side_effect=SystemExit(1)))
+        run = mock.Mock()
+        unlock = mock.Mock()
+        self.patch(script, "run", run)
+        self.patch(script, "unlock", unlock)
+        self.assertRaises(SystemExit, script.lock_and_run)
+        run.assert_not_called()
+        unlock.assert_not_called()
