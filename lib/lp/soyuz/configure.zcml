@@ -52,6 +52,12 @@
 
     <!-- BuildStatusChange -->
     <subscriber
+        for="lp.soyuz.interfaces.publishing.IBinaryPackagePublishingHistory
+            lp.soyuz.interfaces.event.IBinaryPackagePublishedEvent"
+        handler="lp.soyuz.subscribers.autopkgtest.request_autopkgtests_on_publication"
+    />
+
+    <subscriber
         for="lp.soyuz.interfaces.binarypackagebuild.IBinaryPackageBuild
             lazr.lifecycle.interfaces.IObjectModifiedEvent"
         handler="lp.soyuz.subscribers.archive.build_status_change_webhook"

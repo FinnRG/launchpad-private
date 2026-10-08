@@ -65,6 +65,9 @@ def _parameters(description):
         lines.append(line)
     headers = HeaderParser().parsestr("\n".join(reversed(lines)))
     parameters = {key.lower(): value.strip() for key, value in headers.items()}
+    for key in ("activate-workflow", "autopkgtest-all-proposed"):
+        if key in parameters:
+            parameters[key] = parameters[key].lower()
     parameters.setdefault("activate-workflow", "true")
     parameters.setdefault("autopkgtest-all-proposed", "false")
     return parameters

@@ -8,6 +8,7 @@ creating proposals, or diffs relating to the proposals.
 """
 
 __all__ = [
+    "AutopkgtestRequestNotReady",
     "BranchMergeProposalJob",
     "BranchMergeProposalJobDerived",
     "BranchMergeProposalJobSource",
@@ -16,6 +17,7 @@ __all__ = [
     "GenerateIncrementalDiffJob",
     "MergeProposalNeedsReviewEmailJob",
     "MergeProposalUpdatedEmailJob",
+    "RequestAutopkgtestJob",
     "ReviewRequestedEmailJob",
     "UpdatePreviewDiffJob",
 ]
@@ -30,13 +32,22 @@ from lazr.enum import DBEnumeratedType, DBItem
 from storm.expr import And, Desc, Or
 from storm.locals import Int, Reference, Unicode
 from storm.store import Store
-from zope.component import getUtility
+from zope.component import getUtility, queryUtility
 from zope.interface import implementer, provider
 
 from lp.app.errors import NotFoundError
 from lp.code.adapters.branch import BranchMergeProposalDelta
-from lp.code.enums import BranchType
+from lp.code.enums import (
+    BranchMergeProposalStatus,
+    BranchType,
+    RevisionStatusResult,
+)
 from lp.code.errors import BranchHasPendingWrites, UpdatePreviewDiffNotReady
+from lp.code.interfaces.autopkgtest import (
+    IRequestAutopkgtestBackend,
+    IRequestAutopkgtestJob,
+    IRequestAutopkgtestJobSource,
+)
 from lp.code.interfaces.branchmergeproposal import (
     IBranchMergeProposalJob,
     IBranchMergeProposalJobSource,
@@ -66,11 +77,13 @@ from lp.services.config import config
 from lp.services.database.enumcol import DBEnum
 from lp.services.database.interfaces import IPrimaryStore, IStore
 from lp.services.database.stormbase import StormBase
+from lp.services.features import getFeatureFlag
 from lp.services.job.interfaces.job import JobStatus
 from lp.services.job.model.job import EnumeratedSubclass, Job
 from lp.services.job.runner import BaseRunnableJob, BaseRunnableJobSource
 from lp.services.mail.sendmail import format_address_for_person
 from lp.services.webapp import canonical_url
+from lp.soyuz.enums import PackagePublishingStatus
 
 
 class BranchMergeProposalJobType(DBEnumeratedType):
@@ -138,6 +151,15 @@ class BranchMergeProposalJobType(DBEnumeratedType):
         Create a validation archive
 
         Create a contributor-owned PPA and request a source package Git build.
+        """,
+    )
+
+    REQUEST_AUTOPKGTEST = DBItem(
+        7,
+        """
+        Request autopkgtests
+
+        Request tests for a validation package and architecture.
         """,
     )
 
@@ -646,6 +668,155 @@ class GenerateIncrementalDiffJob(BranchMergeProposalJobDerived):
         """Return a list of email-ids to notify about user errors."""
         registrant = self.branch_merge_proposal.registrant
         return format_address_for_person(registrant)
+
+
+class AutopkgtestRequestNotReady(Exception):
+    """The request cannot yet be executed safely."""
+
+
+@implementer(IRequestAutopkgtestJob)
+@provider(IRequestAutopkgtestJobSource)
+class RequestAutopkgtestJob(BranchMergeProposalJobDerived):
+    """Request autopkgtests for one validation package and architecture.
+
+    Created when a binary package is published, this job saves the archive,
+    source version, built commit, architecture, and validation options. A
+    worker checks that the validation is still active and the publication
+    still matches those details, then delegates submission to the configured
+    autopkgtest backend.
+    """
+
+    class_job_type = BranchMergeProposalJobType.REQUEST_AUTOPKGTEST
+    config = config.IBranchMergeProposalJobSource
+    retry_error_types = (AutopkgtestRequestNotReady,)
+
+    @classmethod
+    def create(cls, validation, publication):
+        from lp.soyuz.model.mergeproposalvalidation import (
+            MergeProposalValidation,
+        )
+
+        source = publication.build.source_package_release
+        git_build = source.source_package_git_build
+        store = IPrimaryStore(MergeProposalValidation)
+        store.flush()
+        store.execute(
+            "SELECT id FROM MergeProposalValidation WHERE id = %s FOR UPDATE",
+            (validation.id,),
+        )
+        store.autoreload(validation)
+        if (
+            validation.status
+            not in (
+                RevisionStatusResult.WAITING,
+                RevisionStatusResult.RUNNING,
+            )
+            or validation.date_finished is not None
+        ):
+            return None
+        identity = {
+            "validation_id": validation.id,
+            "source_package_release_id": source.id,
+            "distro_arch_series_id": publication.distroarchseries.id,
+        }
+        existing = store.find(
+            BranchMergeProposalJob,
+            branch_merge_proposal=validation.branch_merge_proposal,
+            job_type=cls.class_job_type,
+        )
+        for job in existing:
+            if all(
+                job.metadata.get(key) == value
+                for key, value in identity.items()
+            ):
+                return cls(job)
+        metadata = dict(
+            identity,
+            publication_id=publication.id,
+            source_package_git_build_id=git_build.id,
+            archive_id=publication.archive.id,
+            commit_sha1=git_build.commit_sha1,
+            source_package_name=source.sourcepackagename.name,
+            source_package_version=str(source.version),
+            parameters={
+                key: value
+                for key, value in validation.parameters.items()
+                if key.startswith("autopkgtest-")
+            },
+        )
+        return cls._create(validation.branch_merge_proposal, metadata)
+
+    def run(self):
+        from lp.soyuz.model.mergeproposalvalidation import (
+            MergeProposalValidation,
+        )
+        from lp.soyuz.model.publishing import BinaryPackagePublishingHistory
+
+        metadata = self.metadata
+        store = IPrimaryStore(MergeProposalValidation)
+        validation = store.get(
+            MergeProposalValidation, metadata["validation_id"]
+        )
+        publication = store.get(
+            BinaryPackagePublishingHistory, metadata["publication_id"]
+        )
+        if validation is None or publication is None:
+            return
+        proposal = self.branch_merge_proposal
+        if (
+            validation.status
+            not in (
+                RevisionStatusResult.WAITING,
+                RevisionStatusResult.RUNNING,
+            )
+            or validation.date_finished is not None
+            or proposal.queue_status
+            in (
+                BranchMergeProposalStatus.MERGED,
+                BranchMergeProposalStatus.REJECTED,
+                BranchMergeProposalStatus.SUPERSEDED,
+            )
+            or not publication.archive.is_ppa
+            or publication.archive.private
+            or proposal.source_git_repository is None
+            or proposal.target_git_repository is None
+            or proposal.source_git_repository.private
+            or proposal.target_git_repository.private
+        ):
+            return
+        if publication.status != PackagePublishingStatus.PUBLISHED:
+            raise AutopkgtestRequestNotReady("Package is not published.")
+        binary_build = publication.build
+        source = (
+            None
+            if binary_build is None
+            else binary_build.source_package_release
+        )
+        git_build = None if source is None else source.source_package_git_build
+        if (
+            validation.branch_merge_proposal_id != proposal.id
+            or validation.archive_id != metadata["archive_id"]
+            or validation.commit_sha1 != metadata["commit_sha1"]
+            or publication.archive_id != metadata["archive_id"]
+            or publication.distroarchseries.id
+            != metadata["distro_arch_series_id"]
+            or source is None
+            or source.id != metadata["source_package_release_id"]
+            or git_build is None
+            or git_build.id != metadata["source_package_git_build_id"]
+            or git_build.commit_sha1 != metadata["commit_sha1"]
+            or git_build.git_repository != proposal.source_git_repository
+        ):
+            raise AutopkgtestRequestNotReady("Validation identity changed.")
+        backend = queryUtility(IRequestAutopkgtestBackend)
+        if (
+            not getFeatureFlag("autopkgtest.request.enabled")
+            or backend is None
+        ):
+            raise AutopkgtestRequestNotReady(
+                "Autopkgtest request execution is not configured or enabled."
+            )
+        backend.requestTests(self)
 
 
 @provider(IBranchMergeProposalJobSource)

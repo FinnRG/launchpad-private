@@ -240,6 +240,16 @@
     <allow interface="lp.code.interfaces.branchmergeproposal.IUpdatePreviewDiffJobSource"/>
   </lp:securedutility>
 
+  <class class="lp.code.model.branchmergeproposaljob.RequestAutopkgtestJob">
+    <allow interface="lp.code.interfaces.autopkgtest.IRequestAutopkgtestJob" />
+    <allow interface="lp.code.interfaces.branchmergeproposal.IBranchMergeProposalJob" />
+  </class>
+  <lp:securedutility
+      component="lp.code.model.branchmergeproposaljob.RequestAutopkgtestJob"
+      provides="lp.code.interfaces.autopkgtest.IRequestAutopkgtestJobSource">
+    <allow interface="lp.code.interfaces.autopkgtest.IRequestAutopkgtestJobSource" />
+  </lp:securedutility>
+
   <class class="lp.code.model.branchmergeproposaljob.CodeReviewCommentEmailJob">
     <allow interface="lp.code.interfaces.branchmergeproposal.ICodeReviewCommentEmailJob" />
     <allow interface="lp.code.interfaces.branchmergeproposal.IBranchMergeProposalJob" />
