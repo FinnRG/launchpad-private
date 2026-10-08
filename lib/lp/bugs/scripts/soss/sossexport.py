@@ -78,11 +78,11 @@ class SOSSExporter(SVTExporter):
     def _get_cvss(self, cvss: Dict) -> List[SOSSRecord.CVSS]:
         """Get a list of SOSSRecord.CVSS from a cvss dict"""
         cvss_list = []
-        for authority in cvss.keys():
-            for c in cvss[authority]:
+        for authority, scores in cvss.items():
+            for c in scores:
                 cvss_list.append(
                     SOSSRecord.CVSS(
-                        c.get("source"),
+                        authority,
                         c.get("vector"),
                         c.get("baseScore"),
                         c.get("baseSeverity"),

@@ -66,7 +66,6 @@ class TestUCTRecord(TestCase):
             cvss={
                 "nvd": [
                     {
-                        "source": "nvd",
                         "vector": (
                             "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
                         ),
@@ -211,7 +210,6 @@ class TestUCTRecord(TestCase):
                 cvss={
                     "nvd": [
                         {
-                            "source": "nvd",
                             "vector": (
                                 "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
                             ),
@@ -441,7 +439,6 @@ class TestCVE(TestCaseWithFactory):
             cvss={
                 "nvd": [
                     {
-                        "source": "nvd",
                         "vector": (
                             "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
                         ),
@@ -637,7 +634,6 @@ class TestCVE(TestCaseWithFactory):
             cvss={
                 "nvd": [
                     {
-                        "source": "nvd",
                         "vector": (
                             "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
                         ),
@@ -1136,7 +1132,6 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             cvss={
                 "nvd": [
                     {
-                        "source": "nvd",
                         "vector": (
                             "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
                         ),
@@ -1231,7 +1226,6 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             cvss={
                 "nvd": [
                     {
-                        "source": "nvd",
                         "vector": (
                             "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
                         ),
@@ -1792,7 +1786,6 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             cvss={
                 "nvd": [
                     {
-                        "source": "nvd",
                         "vector": (
                             "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
                         ),

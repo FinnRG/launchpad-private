@@ -137,7 +137,6 @@ class TestSOSSImporter(TestCaseWithFactory):
         self.cvss = {
             "report@snyk.io": [
                 {
-                    "source": "report@snyk.io",
                     "vector": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:C/C:H/I:L/A:N",
                     "baseScore": 6.4,
                     "baseSeverity": "MEDIUM",
@@ -145,7 +144,6 @@ class TestSOSSImporter(TestCaseWithFactory):
             ],
             "security-advisories@github.com": [
                 {
-                    "source": "security-advisories@github.com",
                     "vector": "CVSS:3.1/AV:A/AC:L/PR:L/UI:N/S:C/C:H/I:H/A:H",
                     "baseScore": 9.0,
                     "baseSeverity": "CRITICAL",

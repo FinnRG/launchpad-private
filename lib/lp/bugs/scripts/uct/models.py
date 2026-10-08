@@ -230,7 +230,6 @@ class UCTRecord(SVTRecord):
         for c in cls._pop_cve_property(cve_data, "CVSS"):
             cvss[c["source"]].append(
                 {
-                    "source": c["source"],
                     "vector": c["vector"],
                     "baseScore": float(c["baseScore"]),
                     "baseSeverity": c["baseSeverity"],
