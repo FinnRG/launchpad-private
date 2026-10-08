@@ -482,7 +482,9 @@ class SOSSImporter(SVTImporter):
         """Prepare CVSS data from SOSS record."""
         cvss_data = defaultdict(list)
         for cvss in soss_record.cvss:
-            cvss_data[cvss.source].append(cvss.to_dict())
+            data = cvss.to_dict()
+            data.pop("source")
+            cvss_data[cvss.source].append(data)
         return dict(cvss_data)
 
     def _normalize_date_with_timezone(self, date_obj) -> Optional:

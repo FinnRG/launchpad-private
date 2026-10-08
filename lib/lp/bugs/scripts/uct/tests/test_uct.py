@@ -65,8 +65,13 @@ class TestUCTRecord(TestCase):
             ],
             cvss={
                 "nvd": [
-                    "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H "
-                    "[7.8 HIGH]",
+                    {
+                        "vector": (
+                            "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+                        ),
+                        "baseScore": 7.8,
+                        "baseSeverity": "HIGH",
+                    },
                 ]
             },
             candidate="CVE-2022-23222",
@@ -204,8 +209,13 @@ class TestUCTRecord(TestCase):
                 bugs=[""],
                 cvss={
                     "nvd": [
-                        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H "
-                        "[9.8 CRITICAL]",
+                        {
+                            "vector": (
+                                "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+                            ),
+                            "baseScore": 9.8,
+                            "baseSeverity": "CRITICAL",
+                        },
                     ]
                 },
                 candidate="CVE-2023-32637",
@@ -428,8 +438,13 @@ class TestCVE(TestCaseWithFactory):
             bugs=["https://github.com/mm2/Little-CMS/issues/29"],
             cvss={
                 "nvd": [
-                    "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H "
-                    "[7.8 HIGH]",
+                    {
+                        "vector": (
+                            "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+                        ),
+                        "baseScore": 7.8,
+                        "baseSeverity": "HIGH",
+                    },
                 ],
             },
             candidate="CVE-2022-23222",
@@ -618,8 +633,13 @@ class TestCVE(TestCaseWithFactory):
             mitigation="mitigation",
             cvss={
                 "nvd": [
-                    "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H "
-                    "[7.8 HIGH]",
+                    {
+                        "vector": (
+                            "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+                        ),
+                        "baseScore": 7.8,
+                        "baseSeverity": "HIGH",
+                    },
                 ],
             },
             patch_urls=[
@@ -1111,8 +1131,13 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             mitigation="mitigation",
             cvss={
                 "nvd": [
-                    "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H "
-                    "[7.8 HIGH]",
+                    {
+                        "vector": (
+                            "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+                        ),
+                        "baseScore": 7.8,
+                        "baseSeverity": "HIGH",
+                    },
                 ],
             },
             patch_urls=[
@@ -1200,8 +1225,13 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             crd=datetime(2022, 1, 14, 8, 15, tzinfo=timezone.utc),
             cvss={
                 "nvd": [
-                    "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H "
-                    "[7.8 HIGH]",
+                    {
+                        "vector": (
+                            "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+                        ),
+                        "baseScore": 7.8,
+                        "baseSeverity": "HIGH",
+                    },
                 ]
             },
             description="description",
@@ -1755,8 +1785,13 @@ class TestUCTImporterExporter(TestCaseWithFactory):
             mitigation="mitigation",
             cvss={
                 "nvd": [
-                    "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H "
-                    "[7.8 HIGH]",
+                    {
+                        "vector": (
+                            "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+                        ),
+                        "baseScore": 7.8,
+                        "baseSeverity": "HIGH",
+                    },
                 ],
             },
             patch_urls=[],

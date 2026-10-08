@@ -228,13 +228,12 @@ class UCTRecord(SVTRecord):
 
         cvss = defaultdict(list)
         for c in cls._pop_cve_property(cve_data, "CVSS"):
-            authority = c["source"]
-            cvss[authority].append(
-                "{} [{} {}]".format(
-                    c["vector"],
-                    c["baseScore"],
-                    c["baseSeverity"],
-                )
+            cvss[c["source"]].append(
+                {
+                    "vector": c["vector"],
+                    "baseScore": float(c["baseScore"]),
+                    "baseSeverity": c["baseSeverity"],
+                }
             )
         cvss = dict(cvss)
 
@@ -320,9 +319,14 @@ class UCTRecord(SVTRecord):
         self._write_field(
             "CVSS",
             [
-                f"{authority}: {v}"
-                for authority, vectors in self.cvss.items()
-                for v in vectors
+                "{}: {} [{} {}]".format(
+                    authority,
+                    c["vector"],
+                    c["baseScore"],
+                    c["baseSeverity"],
+                )
+                for authority, scores in self.cvss.items()
+                for c in scores
             ],
             output,
         )
