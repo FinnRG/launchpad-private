@@ -12,6 +12,7 @@ from zope.component import adapter
 from zope.interface import implementer
 from zope.security.proxy import removeSecurityProxy
 
+from lp.buildmaster.builderproxy import BuilderProxyMixin
 from lp.buildmaster.interfaces.builder import CannotBuild
 from lp.buildmaster.interfaces.buildfarmjobbehaviour import (
     BuildArgs,
@@ -21,6 +22,7 @@ from lp.buildmaster.model.buildfarmjobbehaviour import (
     BuildFarmJobBehaviourBase,
 )
 from lp.services.config import config
+from lp.services.features import getFeatureFlag
 from lp.services.propertycache import cachedproperty
 from lp.soyuz.adapters.archivedependencies import (
     get_primary_current_component,
@@ -31,7 +33,9 @@ from lp.soyuz.interfaces.sourcepackagegitbuild import ISourcePackageGitBuild
 
 @adapter(ISourcePackageGitBuild)
 @implementer(IBuildFarmJobBehaviour)
-class SourcePackageGitBuildBehaviour(BuildFarmJobBehaviourBase):
+class SourcePackageGitBuildBehaviour(
+    BuilderProxyMixin, BuildFarmJobBehaviourBase
+):
     """Dispatch source package Git builds to build workers."""
 
     builder_type = "sourcepackagegit"
@@ -83,6 +87,8 @@ class SourcePackageGitBuildBehaviour(BuildFarmJobBehaviourBase):
             tools_source=config.builddmaster.bzr_builder_sources_list,
             logger=logger,
         )
+        if getFeatureFlag("soyuz.sourcepackagegitbuild.orig_proxy"):
+            yield self.startProxySession(args, use_fetch_service=False)
         return args
 
     def verifyBuildRequest(self, logger):

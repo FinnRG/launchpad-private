@@ -6,6 +6,9 @@
 from zope.component import getUtility
 
 from lp.code.interfaces.cibuild import ICIBuildSet
+from lp.soyuz.interfaces.mergeproposalvalidation import (
+    ICreateValidationArchiveJobSource,
+)
 
 
 def _request_ci_builds(repository, event):
@@ -34,4 +37,6 @@ def refs_updated(repository, event):
     repository.markSnapsStale(event.paths)
     repository.markCharmRecipesStale(event.paths)
     repository.detectMerges(event.paths, previous_targets, logger=event.logger)
+    for merge_proposal in repository.getActiveLandingTargets(event.paths):
+        getUtility(ICreateValidationArchiveJobSource).create(merge_proposal)
     _request_ci_builds(repository, event)

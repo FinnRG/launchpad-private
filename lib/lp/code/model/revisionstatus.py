@@ -60,6 +60,12 @@ class RevisionStatusReport(StormBase):
     ci_build_id = Int(name="ci_build", allow_none=True)
     ci_build = Reference(ci_build_id, "CIBuild.id")
 
+    group_name = Unicode(allow_none=True)
+    source_package_git_build_id = Int(name="source_package_git_build")
+    source_package_git_build = Reference(
+        source_package_git_build_id, "SourcePackageGitBuild.id"
+    )
+
     # We don't always know the DAS for this report (for example, external
     # builds, or historical builds from before we introduced this column),
     # but when we do it's useful for filtering.
@@ -93,6 +99,8 @@ class RevisionStatusReport(StormBase):
         ci_build=None,
         distro_arch_series=None,
         properties=None,
+        group_name=None,
+        source_package_git_build=None,
     ):
         super().__init__()
         self.creator = user
@@ -103,6 +111,8 @@ class RevisionStatusReport(StormBase):
         self.result_summary = result_summary
         self.ci_build = ci_build
         self.distro_arch_series = distro_arch_series
+        self.group_name = group_name
+        self.source_package_git_build = source_package_git_build
         self.date_created = UTC_NOW
         self.transitionToNewResult(result)
         self.properties = properties
@@ -227,6 +237,8 @@ class RevisionStatusReportSet:
         ci_build=None,
         distro_arch_series=None,
         properties=None,
+        group_name=None,
+        source_package_git_build=None,
     ):
         """See `IRevisionStatusReportSet`."""
         store = IStore(RevisionStatusReport)
@@ -241,6 +253,8 @@ class RevisionStatusReportSet:
             ci_build=ci_build,
             distro_arch_series=distro_arch_series,
             properties=properties,
+            group_name=group_name,
+            source_package_git_build=source_package_git_build,
         )
         store.add(report)
         return report

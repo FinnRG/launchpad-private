@@ -105,6 +105,24 @@ flag_info = sorted(
             "",
         ),
         (
+            "soyuz.mp_validation.enabled",
+            "boolean",
+            "Validate public source package merge proposals for opted-in "
+            "registrants. Supports team and distribution scopes.",
+            "disabled",
+            "Merge proposal package validation",
+            "",
+        ),
+        (
+            "soyuz.sourcepackagegitbuild.orig_proxy",
+            "boolean",
+            "Give source package Git builds builder proxy access, so that "
+            "workers can fetch orig tarballs.",
+            "disabled",
+            "Orig tarball fetching for source package Git builds",
+            "",
+        ),
+        (
             "hard_timeout",
             "float",
             "Sets the hard request timeout in milliseconds.",

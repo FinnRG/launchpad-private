@@ -9,6 +9,7 @@ creating proposals, or diffs relating to the proposals.
 
 __all__ = [
     "BranchMergeProposalJob",
+    "BranchMergeProposalJobDerived",
     "BranchMergeProposalJobSource",
     "BranchMergeProposalJobType",
     "CodeReviewCommentEmailJob",
@@ -129,6 +130,15 @@ class BranchMergeProposalJobType(DBEnumeratedType):
         Generate incremental diff
 
         This job generates an incremental diff for a merge proposal.""",
+    )
+
+    CREATE_VALIDATION_ARCHIVE = DBItem(
+        6,
+        """
+        Create a validation archive
+
+        Create a contributor-owned PPA and request a source package Git build.
+        """,
     )
 
 
@@ -667,6 +677,11 @@ class BranchMergeProposalJobSource(BaseRunnableJobSource):
         ]
         if job_type is not None:
             clauses.append(BranchMergeProposalJob.job_type == job_type)
+        else:
+            clauses.append(
+                BranchMergeProposalJob.job_type
+                != BranchMergeProposalJobType.CREATE_VALIDATION_ARCHIVE
+            )
         jobs = IPrimaryStore(BranchMergeProposalJob).find(
             (BranchMergeProposalJob, Job, BranchMergeProposal), And(*clauses)
         )

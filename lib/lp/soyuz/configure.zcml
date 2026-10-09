@@ -449,6 +449,24 @@
 
     <!-- ArchiveJob -->
 
+    <class class="lp.soyuz.model.mergeproposalvalidationjob.CreateValidationArchiveJob">
+        <allow interface="lp.code.interfaces.branchmergeproposal.IBranchMergeProposalJob"/>
+        <allow interface="lp.soyuz.interfaces.mergeproposalvalidation.ICreateValidationArchiveJob"/>
+    </class>
+    <lp:securedutility
+        component="lp.soyuz.model.mergeproposalvalidationjob.CreateValidationArchiveJob"
+        provides="lp.soyuz.interfaces.mergeproposalvalidation.ICreateValidationArchiveJobSource">
+        <allow interface="lp.soyuz.interfaces.mergeproposalvalidation.ICreateValidationArchiveJobSource"/>
+    </lp:securedutility>
+    <subscriber
+        for="lp.code.interfaces.branchmergeproposal.IBranchMergeProposal
+             lazr.lifecycle.interfaces.IObjectCreatedEvent"
+        handler="lp.soyuz.model.mergeproposalvalidationjob.queue_validation"/>
+    <subscriber
+        for="lp.code.interfaces.branchmergeproposal.IBranchMergeProposal
+             lp.code.interfaces.event.IBranchMergeProposalNeedsReviewEvent"
+        handler="lp.soyuz.model.mergeproposalvalidationjob.queue_validation"/>
+
     <class class="lp.soyuz.model.archivejob.ArchiveJob">
         <allow interface="lp.soyuz.interfaces.archivejob.IArchiveJob"/>
     </class>

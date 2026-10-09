@@ -78,6 +78,13 @@ class IRevisionStatusReportView(Interface):
 
     latest_log = Attribute("The most recent log for this report.")
 
+    group_name = exported(
+        TextLine(title=_("Report group"), required=False, readonly=True)
+    )
+    source_package_git_build = Attribute(
+        "The source package Git build that produced this report, if any."
+    )
+
     @operation_parameters(
         artifact_type=Choice(
             vocabulary=RevisionStatusArtifactType, required=False
@@ -292,6 +299,8 @@ class IRevisionStatusReportSet(Interface):
         ci_build=None,
         distro_arch_series=None,
         properties=None,
+        group_name=None,
+        source_package_git_build=None,
     ):
         """Return a new revision status report.
 

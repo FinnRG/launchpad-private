@@ -3,20 +3,34 @@
 
 """Tests for source package Git builds."""
 
-from testtools.twistedsupport import AsynchronousDeferredRunTest
+import time
+from urllib.parse import urlsplit
+
+from fixtures import MockPatch
+from testtools.matchers import StartsWith
+from testtools.twistedsupport import (
+    AsynchronousDeferredRunTestForBrokenTwisted,
+)
 from twisted.internet import defer
 from zope.component import getUtility
 from zope.security.proxy import removeSecurityProxy
 
 from lp.app.enums import InformationType
 from lp.app.interfaces.launchpad import ILaunchpadCelebrities
+from lp.buildmaster.interactor import shut_down_default_process_pool
 from lp.buildmaster.interfaces.buildfarmjobbehaviour import (
     IBuildFarmJobBehaviour,
 )
 from lp.buildmaster.interfaces.processor import IProcessorSet
-from lp.buildmaster.tests.mock_workers import MockBuilder
+from lp.buildmaster.tests.builderproxy import (
+    InProcessProxyAuthAPIFixture,
+    ProxyURLMatcher,
+    RevocationEndpointMatcher,
+)
+from lp.buildmaster.tests.mock_workers import MockBuilder, WorkerTestHelpers
 from lp.registry.interfaces.pocket import PackagePublishingPocket
 from lp.services.config import config
+from lp.services.features.testing import FeatureFixture
 from lp.services.log.logger import BufferLogger
 from lp.services.privacy.interfaces import IObjectPrivacy
 from lp.services.propertycache import get_property_cache
@@ -149,7 +163,72 @@ class TestSourcePackageGitBuildBehaviour(
     SourcePackageGitBuildTestMixin, TestCaseWithFactory
 ):
     layer = ZopelessDatabaseLayer
-    run_tests_with = AsynchronousDeferredRunTest.make_factory(timeout=30)
+    run_tests_with = AsynchronousDeferredRunTestForBrokenTwisted.make_factory(
+        timeout=30
+    )
+
+    @defer.inlineCallbacks
+    def makeProxyBehaviour(self):
+        self.useFixture(
+            FeatureFixture({"soyuz.sourcepackagegitbuild.orig_proxy": "on"})
+        )
+        self.pushConfig(
+            "builddmaster",
+            bzr_builder_sources_list="deb http://foo %(series)s main",
+        )
+        proxy_api = self.useFixture(InProcessProxyAuthAPIFixture())
+        yield proxy_api.start()
+        self.addCleanup(shut_down_default_process_pool)
+        behaviour = IBuildFarmJobBehaviour(self.makeBuild())
+        builder = MockBuilder()
+        builder.processor = behaviour.build.processor
+        worker = self.useFixture(WorkerTestHelpers()).getClientWorker()
+        behaviour.setBuilder(builder, worker)
+        self.addCleanup(worker.pool.closeCachedConnections)
+        return behaviour, proxy_api
+
+    @defer.inlineCallbacks
+    def test_extraBuildArgs_proxy(self):
+        behaviour, proxy_api = yield self.makeProxyBehaviour()
+        now = time.time()
+        self.useFixture(MockPatch("time.time", return_value=now))
+        args = yield behaviour.extraBuildArgs()
+        self.assertThat(args["proxy_url"], ProxyURLMatcher(behaviour, now))
+        self.assertThat(
+            args["revocation_endpoint"],
+            RevocationEndpointMatcher(behaviour, now),
+        )
+        self.assertFalse(args["use_fetch_service"])
+        (request,) = proxy_api.tokens.requests
+        self.assertEqual(b"POST", request["method"])
+        self.assertEqual(
+            urlsplit(
+                config.builddmaster.builder_proxy_auth_api_endpoint
+            ).path.encode("UTF-8"),
+            request["uri"],
+        )
+        self.assertThat(
+            request["json"]["username"],
+            StartsWith(behaviour.build.build_cookie + "-"),
+        )
+
+    @defer.inlineCallbacks
+    def test_extraBuildArgs_proxy_unconfigured(self):
+        behaviour, proxy_api = yield self.makeProxyBehaviour()
+        self.pushConfig("builddmaster", builder_proxy_host=None)
+        self.pushConfig("snappy", builder_proxy_host=None)
+        args = yield behaviour.extraBuildArgs()
+        self.assertEqual([], proxy_api.tokens.requests)
+        self.assertNotIn("proxy_url", args)
+        self.assertNotIn("revocation_endpoint", args)
+
+    @defer.inlineCallbacks
+    def test_extraBuildArgs_proxy_disabled(self):
+        behaviour, proxy_api = yield self.makeProxyBehaviour()
+        self.useFixture(FeatureFixture({}))
+        args = yield behaviour.extraBuildArgs()
+        self.assertEqual([], proxy_api.tokens.requests)
+        self.assertNotIn("proxy_url", args)
 
     @defer.inlineCallbacks
     def test_extraBuildArgs(self):

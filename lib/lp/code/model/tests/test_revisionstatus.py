@@ -34,6 +34,9 @@ from lp.services.auth.enums import AccessTokenScope
 from lp.services.database.constants import DEFAULT, UTC_NOW
 from lp.services.osutils import write_file
 from lp.services.webapp.authorization import check_permission
+from lp.soyuz.tests.test_sourcepackagegitbuild import (
+    SourcePackageGitBuildTestMixin,
+)
 from lp.testing import (
     TestCaseWithFactory,
     anonymous_logged_in,
@@ -45,7 +48,9 @@ from lp.testing.layers import DatabaseFunctionalLayer, LaunchpadFunctionalLayer
 from lp.testing.pages import webservice_for_person
 
 
-class TestRevisionStatusReport(TestCaseWithFactory):
+class TestRevisionStatusReport(
+    SourcePackageGitBuildTestMixin, TestCaseWithFactory
+):
     layer = DatabaseFunctionalLayer
 
     def makeRevisionStatusArtifact(
@@ -170,6 +175,22 @@ class TestRevisionStatusReport(TestCaseWithFactory):
             git_repository=repo, commit_sha1="123", properties=test_properties
         )
         self.assertEqual(test_properties, report.properties)
+
+    def test_group_and_source_package_git_build(self):
+        build = self.makeBuild()
+        report = getUtility(IRevisionStatusReportSet).new(
+            creator=build.requester,
+            title="source-build",
+            git_repository=build.git_repository,
+            commit_sha1=build.commit_sha1,
+            group_name="package-validation",
+            source_package_git_build=build,
+            result=RevisionStatusResult.WAITING,
+        )
+        Store.of(report).flush()
+        Store.of(report).autoreload(report)
+        self.assertEqual("package-validation", report.group_name)
+        self.assertEqual(build, report.source_package_git_build)
 
     def test_latest_log(self):
         report = self.factory.makeRevisionStatusReport()
