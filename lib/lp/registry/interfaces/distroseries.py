@@ -1205,6 +1205,7 @@ class IDistroSeriesPublic(
         dateuploaded=None,
         source_package_recipe_build=None,
         ci_build=None,
+        source_package_git_build=None,
         user_defined_fields=None,
         homepage=None,
         buildinfo=None,
@@ -1251,6 +1252,7 @@ class IDistroSeriesPublic(
         :param dateuploaded: optional datetime, if omitted assumed `UTC_NOW`
         :param source_package_recipe_build: optional `SourcePackageRecipeBuild`
         :param ci_build: optional `CIBuild`
+        :param source_package_git_build: optional `SourcePackageGitBuild`
         :param user_defined_fields: optional sequence of key-value pairs with
                                     user defined fields
         :param homepage: optional string with (unchecked) upstream homepage

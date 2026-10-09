@@ -61,6 +61,7 @@ __all__ = [
     "PrivateGitRepositoryRecipe",
     "ReviewAlreadyPending",
     "ReviewNotPending",
+    "SourcePackageGitBuildRequestError",
     "StaleLastMirrored",
     "TooNewRecipeFormat",
     "UnknownBranchTypeError",
@@ -550,6 +551,11 @@ class GitReferenceDeletionFault(Exception):
 
 class GitTargetError(Exception):
     """Raised when there is an error determining a Git repository target."""
+
+
+@error_status(http.client.BAD_REQUEST)
+class SourcePackageGitBuildRequestError(GitTargetError):
+    """Raised when a source package Git build request is invalid."""
 
 
 class NoSuchGitRepository(NameLookupFailed):

@@ -33,6 +33,7 @@ __all__ = [
     "IHasGitRepositories",
     "IPreviewDiff",
     "IRevisionStatusReport",
+    "ISourcePackageGitBuild",
     "ISourcePackageRecipe",
     "ISourcePackageRecipeBuild",
 ]
@@ -91,6 +92,7 @@ from lp.services.webservice.apihelpers import (
     patch_plain_parameter_type,
     patch_reference_property,
 )
+from lp.soyuz.interfaces.sourcepackagegitbuild import ISourcePackageGitBuild
 
 # IBranch
 patch_collection_property(IBranch, "bug_branches", IBugBranch)
@@ -115,6 +117,9 @@ patch_plain_parameter_type(
 )
 patch_reference_property(IBranch, "sourcepackage", ISourcePackage)
 patch_reference_property(IBranch, "code_import", ICodeImport)
+patch_entry_return_type(
+    IGitRepository, "buildSourcePackageFromGitRef", ISourcePackageGitBuild
+)
 
 patch_collection_property(IBranch, "spec_links", ISpecificationBranch)
 patch_entry_return_type(IBranch, "subscribe", IBranchSubscription)

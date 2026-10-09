@@ -114,6 +114,7 @@ from lp.soyuz.interfaces.publishing import (
     ISourcePackagePublishingHistoryPublic,
 )
 from lp.soyuz.interfaces.queue import IPackageUpload, IPackageUploadLog
+from lp.soyuz.interfaces.sourcepackagegitbuild import ISourcePackageGitBuild
 from lp.soyuz.interfaces.sourcepackagerelease import ISourcePackageRelease
 
 # IArchive
@@ -286,3 +287,6 @@ patch_reference_property(
     ISourcePackageRecipeBuild,
 )
 patch_reference_property(ISourcePackageRelease, "ci_build", ICIBuild)
+patch_reference_property(
+    ISourcePackageRelease, "source_package_git_build", ISourcePackageGitBuild
+)

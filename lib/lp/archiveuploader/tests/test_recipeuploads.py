@@ -16,6 +16,9 @@ from lp.buildmaster.enums import BuildStatus
 from lp.code.interfaces.sourcepackagerecipebuild import (
     ISourcePackageRecipeBuildSource,
 )
+from lp.soyuz.interfaces.sourcepackagegitbuild import (
+    ISourcePackageGitBuildSource,
+)
 
 
 class TestSourcePackageRecipeBuildUploads(TestUploadProcessorBase):
@@ -67,3 +70,46 @@ class TestSourcePackageRecipeBuildUploads(TestUploadProcessorBase):
 
         self.assertEqual(BuildStatus.FULLYBUILT, self.build.status)
         self.assertEqual(True, self.build.verifySuccessfulUpload())
+
+
+class TestSourcePackageGitBuildUploads(TestUploadProcessorBase):
+    def setUp(self):
+        super().setUp()
+        self.setupBreezy()
+        self.switchToAdmin()
+        repository = self.factory.makeGitRepository()
+        self.build = getUtility(ISourcePackageGitBuildSource).new(
+            git_repository=repository,
+            commit_sha1="a" * 40,
+            archive=self.factory.makeArchive(
+                distribution=self.ubuntu, owner=repository.owner
+            ),
+            distroseries=self.breezy,
+            requester=repository.owner,
+            version_suffix="~ppa1",
+        )
+        self.build.updateStatus(BuildStatus.UPLOADING)
+        self.switchToUploader()
+        self.options.context = "buildd"
+        self.uploadprocessor = self.getUploadProcessor(
+            self.layer.txn, builds=True
+        )
+
+    def test_source_upload(self):
+        self.assertIsNone(self.build.source_package_release)
+        self.queueUpload("bar_1.0-1", "%d/ubuntu" % self.build.archive.id)
+        handler = UploadHandler.forProcessor(
+            self.uploadprocessor,
+            self.incoming_folder,
+            "bar_1.0-1",
+            self.build,
+        )
+
+        handler.process()
+
+        self.assertEqual(BuildStatus.FULLYBUILT, self.build.status)
+        spr = self.build.source_package_release
+        self.assertEqual("bar", spr.name)
+        self.assertIsNone(spr.source_package_recipe_build)
+        self.assertEqual(self.build, spr.source_package_git_build)
+        self.assertFalse(os.path.exists(handler.upload_path))
