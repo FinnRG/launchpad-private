@@ -2254,12 +2254,12 @@ class IPersonSpecialRestricted(Interface):
             required=True,
         ),
     )
-    @export_write_operation()
+    @export_factory_operation(IRegisteredAuthenticator, [])
     @operation_for_version("devel")
     def completeWebAuthnRegistration(response, name):
         """Finish registering a new FIDO2/WebAuthn authenticator.
 
-        :return: The ID of the newly registered authenticator.
+        :return: The newly registered `IRegisteredAuthenticator`.
         """
 
     @operation_parameters(

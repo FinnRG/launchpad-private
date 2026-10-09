@@ -5,7 +5,9 @@
 
 import json
 from datetime import timedelta
+from unittest.mock import patch
 
+from lazr.restfulclient.resource import Entry
 from testtools.matchers import Equals, Is, MatchesStructure
 from zope.component import getUtility
 from zope.security.interfaces import Unauthorized
@@ -21,6 +23,7 @@ from lp.testing import (
     ANONYMOUS,
     TestCaseWithFactory,
     api_url,
+    launchpadlib_for,
     login_person,
     person_logged_in,
 )
@@ -37,13 +40,10 @@ class TestPersonWebAuthnRegistration(TestCaseWithFactory):
 
         options = person.beginWebAuthnRegistration()
         response = DummyAuthenticator().create(options, get_origin())
-        authenticator_id = person.completeWebAuthnRegistration(
+        authenticator = person.completeWebAuthnRegistration(
             json.dumps(response), "My key"
         )
 
-        authenticator = getUtility(IRegisteredAuthenticatorSet).getByID(
-            authenticator_id
-        )
         self.assertEqual(person, authenticator.owner)
         self.assertEqual("My key", authenticator.name)
 
@@ -53,15 +53,12 @@ class TestPersonWebAuthnRegistration(TestCaseWithFactory):
 
         options = person.beginWebAuthnRegistration()
         response = DummyAuthenticator().create(options, get_origin())
-        authenticator_id = person.completeWebAuthnRegistration(
+        authenticator = person.completeWebAuthnRegistration(
             json.dumps(response), "My key"
         )
 
-        person.revokeWebAuthnRegistration(authenticator_id)
+        person.revokeWebAuthnRegistration(authenticator.id)
 
-        authenticator = getUtility(IRegisteredAuthenticatorSet).getByID(
-            authenticator_id
-        )
         self.assertTrue(authenticator.is_revoked)
         self.assertEqual(person, authenticator.revoked_by)
 
@@ -320,14 +317,43 @@ class TestPersonWebAuthnWebService(TestCaseWithFactory):
             name="My key",
         )
 
-        self.assertEqual(200, complete_response.status, complete_response.body)
-        authenticator_id = complete_response.jsonBody()
+        self.assertEqual(201, complete_response.status, complete_response.body)
+        authenticator_response = self.webservice.get(
+            complete_response.getHeader("Location")
+        )
+        self.assertEqual(200, authenticator_response.status)
+        entry = authenticator_response.jsonBody()
         with person_logged_in(self.person):
             authenticator = getUtility(IRegisteredAuthenticatorSet).getByID(
-                authenticator_id
+                entry["id"]
             )
+            self.assertEndsWith(entry["self_link"], api_url(authenticator))
             self.assertEqual(self.person, authenticator.owner)
             self.assertEqual("My key", authenticator.name)
+
+    def test_completeWebAuthnRegistration_returns_entry(self):
+        with person_logged_in(self.person):
+            authenticator = self.factory.makeRegisteredAuthenticator(
+                owner=self.person, name="My key"
+            )
+            authenticator_id = authenticator.id
+            authenticator_url = api_url(authenticator)
+        launchpad = launchpadlib_for("test", person=self.person)
+        person = launchpad.load(launchpad.me.self_link)
+
+        with patch(
+            "lp.registry.model.person.complete_registration",
+            return_value=authenticator,
+        ) as ceremony:
+            entry = person.completeWebAuthnRegistration(
+                response="{}", name="My key"
+            )
+
+        ceremony.assert_called_once()
+        self.assertIsInstance(entry, Entry)
+        self.assertEqual(authenticator_id, entry.id)
+        self.assertEqual("My key", entry.name)
+        self.assertEndsWith(entry.self_link, authenticator_url)
 
     def test_completeWebAuthnRegistration_malformed_json(self):
         response = self.webservice.named_post(
