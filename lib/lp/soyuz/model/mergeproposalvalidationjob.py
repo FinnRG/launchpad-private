@@ -38,6 +38,7 @@ from lp.services.features.scopes import (
     MultiScopeHandler,
     TeamScope,
 )
+from lp.services.job.model.job import Job
 from lp.services.webapp import canonical_url
 from lp.soyuz.enums import ArchivePurpose
 from lp.soyuz.interfaces.archive import IArchiveSet
@@ -168,7 +169,16 @@ class CreateValidationArchiveJob(BranchMergeProposalJobDerived):
             branch_merge_proposal=merge_proposal,
             job_type=cls.class_job_type,
         ):
-            if job.metadata["commit_sha1"] == commit:
+            if job.metadata["commit_sha1"] != commit:
+                continue
+            if (
+                job.job.status in Job.PENDING_STATUSES
+                or not store.find(
+                    MergeProposalValidation,
+                    branch_merge_proposal=merge_proposal,
+                    commit_sha1=commit,
+                ).is_empty()
+            ):
                 return cls(job)
         return cls._create(
             merge_proposal,

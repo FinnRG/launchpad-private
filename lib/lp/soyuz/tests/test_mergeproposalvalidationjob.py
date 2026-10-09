@@ -13,16 +13,19 @@ from zope.security.proxy import removeSecurityProxy
 
 from lp.app.enums import InformationType
 from lp.buildmaster.interfaces.processor import IProcessorSet
-from lp.code.enums import BranchMergeProposalStatus
+from lp.code.enums import BranchMergeProposalStatus, GitObjectType
 from lp.code.interfaces.revisionstatus import IRevisionStatusReportSet
 from lp.code.model.branchmergeproposaljob import (
     BranchMergeProposalJob,
     BranchMergeProposalJobSource,
 )
+from lp.code.tests.helpers import GitHostingFixture
 from lp.registry.interfaces.pocket import PackagePublishingPocket
 from lp.services.database.interfaces import IStore
 from lp.services.features.testing import FeatureFixture
 from lp.services.identity.interfaces.account import AccountStatus
+from lp.services.job.interfaces.job import JobStatus
+from lp.services.job.runner import JobRunner
 from lp.services.job.tests import block_on_job
 from lp.soyuz.enums import ArchivePurpose, ArchiveStatus
 from lp.soyuz.model.mergeproposalvalidation import MergeProposalValidation
@@ -86,6 +89,20 @@ class TestCreateValidationArchiveJob(
     ValidationArchiveJobTestMixin, TestCaseWithFactory
 ):
     layer = DatabaseFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        self.useFixture(GitHostingFixture())
+
+    def updateRef(self, git_ref, commit_sha1):
+        git_ref.repository.createOrUpdateRefs(
+            {
+                git_ref.path: {
+                    "sha1": commit_sha1,
+                    "type": GitObjectType.COMMIT,
+                }
+            }
+        )
 
     def test_needs_review_queues_job(self):
         proposal = self.makeProposal()
@@ -171,6 +188,95 @@ class TestCreateValidationArchiveJob(
             .count(),
         )
 
+    def test_review_again_after_job_completed_without_validation(self):
+        proposal = self.makeProposal()
+        commit_sha1 = proposal.source_git_commit_sha1
+        [original] = self.getJobs(proposal)
+        proposal.setAsWorkInProgress()
+        JobRunner([CreateValidationArchiveJob(original)]).runAll()
+        self.assertEqual(JobStatus.COMPLETED, original.job.status)
+        self.assertTrue(
+            IStore(MergeProposalValidation)
+            .find(MergeProposalValidation, branch_merge_proposal=proposal)
+            .is_empty()
+        )
+        proposal.requestReview()
+        jobs = self.getJobs(proposal)
+        self.assertEqual(2, len(jobs))
+        [replacement] = [job for job in jobs if job.id != original.id]
+        self.assertEqual(JobStatus.WAITING, replacement.job.status)
+        self.assertEqual(commit_sha1, replacement.metadata["commit_sha1"])
+        proposal.setAsWorkInProgress()
+        proposal.requestReview()
+        self.assertEqual(2, len(self.getJobs(proposal)))
+        JobRunner([CreateValidationArchiveJob(replacement)]).runAll()
+        self.assertEqual(JobStatus.COMPLETED, replacement.job.status)
+        self.assertEqual(
+            1,
+            IStore(MergeProposalValidation)
+            .find(
+                MergeProposalValidation,
+                branch_merge_proposal=proposal,
+                commit_sha1=commit_sha1,
+            )
+            .count(),
+        )
+
+    def test_review_again_after_validation_does_not_queue(self):
+        proposal = self.makeProposal()
+        [job] = self.getJobs(proposal)
+        JobRunner([CreateValidationArchiveJob(job)]).runAll()
+        self.assertEqual(JobStatus.COMPLETED, job.job.status)
+        proposal.setAsWorkInProgress()
+        proposal.requestReview()
+        with dbuser("branchscanner"):
+            self.updateRef(self.source_ref, proposal.source_git_commit_sha1)
+        self.assertEqual([job], self.getJobs(proposal))
+        self.assertEqual(
+            1,
+            IStore(MergeProposalValidation)
+            .find(MergeProposalValidation, branch_merge_proposal=proposal)
+            .count(),
+        )
+
+    def test_running_job_is_reused(self):
+        proposal = self.makeProposal()
+        [job] = self.getJobs(proposal)
+        job.job.start()
+        self.assertEqual(
+            job, CreateValidationArchiveJob.create(proposal).context
+        )
+        self.assertEqual([job], self.getJobs(proposal))
+
+    def test_suspended_job_is_reused(self):
+        proposal = self.makeProposal()
+        [job] = self.getJobs(proposal)
+        job.job.suspend()
+        self.assertEqual(
+            job, CreateValidationArchiveJob.create(proposal).context
+        )
+        self.assertEqual([job], self.getJobs(proposal))
+        self.assertEqual(JobStatus.SUSPENDED, job.job.status)
+
+    def test_failed_job_without_validation_is_replaced(self):
+        proposal = self.makeProposal()
+        [original] = self.getJobs(proposal)
+        original.job.start()
+        original.job.fail()
+        proposal.setAsWorkInProgress()
+        proposal.requestReview()
+        jobs = self.getJobs(proposal)
+        self.assertEqual(2, len(jobs))
+        [replacement] = [job for job in jobs if job.id != original.id]
+        self.assertEqual(JobStatus.WAITING, replacement.job.status)
+        self.assertEqual(
+            original.metadata["commit_sha1"],
+            replacement.metadata["commit_sha1"],
+        )
+        self.assertEqual(
+            replacement, CreateValidationArchiveJob.create(proposal).context
+        )
+
     def test_closed_proposal_does_not_build(self):
         proposal = self.makeProposal()
         [job] = self.getJobs(proposal)
@@ -226,18 +332,90 @@ class TestCreateValidationArchiveJob(
             .find(MergeProposalValidation, branch_merge_proposal=proposal)
             .one()
         )
-        proposal.source_git_commit_sha1 = "b" * 40
-        CreateValidationArchiveJob.create(proposal).run()
+        commit_sha1 = "b" * 40
+        self.updateRef(self.source_ref, commit_sha1)
+        self.assertEqual(commit_sha1, proposal.source_git_commit_sha1)
+        self.assertEqual(
+            BranchMergeProposalStatus.NEEDS_REVIEW, proposal.queue_status
+        )
+        jobs = self.getJobs(proposal)
+        self.assertContentEqual(
+            [first.commit_sha1, commit_sha1],
+            [job.metadata["commit_sha1"] for job in jobs],
+        )
+        [job] = [
+            job for job in jobs if job.metadata["commit_sha1"] == commit_sha1
+        ]
+        CreateValidationArchiveJob(job).run()
         second = (
             IStore(MergeProposalValidation)
             .find(
                 MergeProposalValidation,
                 branch_merge_proposal=proposal,
-                commit_sha1="b" * 40,
+                commit_sha1=commit_sha1,
             )
             .one()
         )
         self.assertEqual(first.archive, second.archive)
+        reports = getUtility(IRevisionStatusReportSet).findByCommit(
+            proposal.source_git_repository, commit_sha1
+        )
+        [build] = [
+            report.source_package_git_build
+            for report in reports
+            if report.title == "source-build"
+        ]
+        self.assertEqual(commit_sha1, build.commit_sha1)
+        self.assertEqual(first.archive, build.archive)
+        self.assertIsNotNone(build.buildqueue_record)
+
+    def test_source_update_queues_as_branchscanner(self):
+        proposal = self.makeProposal()
+        original_commit = proposal.source_git_commit_sha1
+        with dbuser("branchscanner"):
+            self.updateRef(self.source_ref, "b" * 40)
+        self.assertContentEqual(
+            [original_commit, "b" * 40],
+            [job.metadata["commit_sha1"] for job in self.getJobs(proposal)],
+        )
+
+    def test_source_update_does_not_queue_for_wip(self):
+        proposal = self.factory.makeBranchMergeProposalForGit(
+            source_ref=self.source_ref,
+            target_ref=self.target_ref,
+            registrant=self.registrant,
+        )
+        self.updateRef(self.source_ref, "b" * 40)
+        self.assertEqual("b" * 40, proposal.source_git_commit_sha1)
+        self.assertEqual([], self.getJobs(proposal))
+
+    def test_source_update_does_not_queue_when_disabled(self):
+        proposal = self.makeProposal()
+        [job] = self.getJobs(proposal)
+        with FeatureFixture({}):
+            self.updateRef(self.source_ref, "b" * 40)
+        self.assertEqual("b" * 40, proposal.source_git_commit_sha1)
+        self.assertEqual([job], self.getJobs(proposal))
+
+    def test_target_update_does_not_queue_validation(self):
+        proposal = self.makeProposal()
+        [job] = self.getJobs(proposal)
+        self.updateRef(self.target_ref, "b" * 40)
+        self.assertEqual("b" * 40, proposal.target_git_commit_sha1)
+        self.assertEqual([job], self.getJobs(proposal))
+
+    def test_unrelated_source_ref_update_does_not_queue(self):
+        proposal = self.makeProposal()
+        [job] = self.getJobs(proposal)
+        [unrelated_ref] = self.factory.makeGitRefs(
+            repository=self.source_ref.repository,
+            paths=["refs/heads/unrelated"],
+        )
+        self.updateRef(unrelated_ref, "b" * 40)
+        self.assertEqual(
+            job.metadata["commit_sha1"], proposal.source_git_commit_sha1
+        )
+        self.assertEqual([job], self.getJobs(proposal))
 
     def test_deleted_archive_name_is_not_reused(self):
         proposal = self.makeProposal()
