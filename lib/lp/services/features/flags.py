@@ -114,6 +114,15 @@ flag_info = sorted(
             "",
         ),
         (
+            "soyuz.sourcepackagegitbuild.orig_proxy",
+            "boolean",
+            "Give source package Git builds builder proxy access, so that "
+            "workers can fetch orig tarballs.",
+            "disabled",
+            "Orig tarball fetching for source package Git builds",
+            "",
+        ),
+        (
             "hard_timeout",
             "float",
             "Sets the hard request timeout in milliseconds.",
