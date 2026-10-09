@@ -1710,8 +1710,7 @@ class Person(
             raise WebAuthnError(
                 "Invalid JSON in registration response."
             ) from error
-        authenticator = complete_registration(self, parsed_response, name)
-        return authenticator.id
+        return complete_registration(self, parsed_response, name)
 
     def revokeWebAuthnRegistration(self, authenticator_id):
         """See `IPerson`."""
