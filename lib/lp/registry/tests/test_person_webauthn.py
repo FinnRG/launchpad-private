@@ -16,7 +16,7 @@ from zope.security.proxy import removeSecurityProxy
 from lp.services.webapp.interfaces import OAuthPermission
 from lp.services.webapp.publisher import canonical_url
 from lp.services.webapp.servers import LaunchpadTestRequest
-from lp.services.webauthn.ceremony import WebAuthnError, get_origin
+from lp.services.webauthn.ceremony import get_origin
 from lp.services.webauthn.interfaces import IRegisteredAuthenticatorSet
 from lp.services.webauthn.tests.dummyauthenticator import DummyAuthenticator
 from lp.testing import (
@@ -57,7 +57,7 @@ class TestPersonWebAuthnRegistration(TestCaseWithFactory):
             json.dumps(response), "My key"
         )
 
-        person.revokeWebAuthnRegistration(authenticator.id)
+        authenticator.revoke(person)
 
         self.assertTrue(authenticator.is_revoked)
         self.assertEqual(person, authenticator.revoked_by)
@@ -65,14 +65,11 @@ class TestPersonWebAuthnRegistration(TestCaseWithFactory):
     def test_revoke_someone_elses_authenticator(self):
         owner = self.factory.makePerson()
         authenticator = self.factory.makeRegisteredAuthenticator(owner=owner)
-        authenticator_id = removeSecurityProxy(authenticator).id
         other_person = self.factory.makePerson()
         login_person(other_person)
 
         self.assertRaises(
-            WebAuthnError,
-            other_person.revokeWebAuthnRegistration,
-            authenticator_id,
+            Unauthorized, lambda: authenticator.revoke(other_person)
         )
 
     def test_admin_cannot_register_for_other_user(self):
@@ -87,17 +84,16 @@ class TestPersonWebAuthnRegistration(TestCaseWithFactory):
             Unauthorized, lambda: person.beginWebAuthnRegistration()
         )
 
-    def test_admin_cannot_revoke_for_other_user(self):
+    def test_admin_can_revoke_for_other_user(self):
         person = self.factory.makePerson()
         authenticator = self.factory.makeRegisteredAuthenticator(owner=person)
-        authenticator_id = removeSecurityProxy(authenticator).id
         admin = self.factory.makeAdministrator()
         login_person(admin)
 
-        self.assertRaises(
-            Unauthorized,
-            lambda: person.revokeWebAuthnRegistration(authenticator_id),
-        )
+        authenticator.revoke(admin)
+
+        self.assertTrue(authenticator.is_revoked)
+        self.assertEqual(admin, authenticator.revoked_by)
 
     def test_getRegisteredAuthenticators(self):
         person = self.factory.makePerson()
@@ -122,9 +118,7 @@ class TestPersonWebAuthnRegistration(TestCaseWithFactory):
         person = self.factory.makePerson()
         login_person(person, participation=LaunchpadTestRequest())
         authenticator = self.factory.makeRegisteredAuthenticator(owner=person)
-        person.revokeWebAuthnRegistration(
-            removeSecurityProxy(authenticator).id
-        )
+        authenticator.revoke(person)
 
         self.assertEqual(
             [authenticator], list(person.getRegisteredAuthenticators())
@@ -239,6 +233,28 @@ class TestPersonWebAuthnWebService(TestCaseWithFactory):
         self.assertNotIn("credential_id", entry)
         self.assertNotIn("sign_count", entry)
         self.assertNotIn("aaguid", entry)
+
+    def test_entry_admin(self):
+        with person_logged_in(self.person):
+            authenticator = self.factory.makeRegisteredAuthenticator(
+                owner=self.person
+            )
+            authenticator_url = api_url(authenticator)
+            admin = self.factory.makeAdministrator()
+        owner_response = self.webservice.get(authenticator_url)
+        webservice = webservice_for_person(
+            admin,
+            permission=OAuthPermission.WRITE_PRIVATE,
+            default_api_version="devel",
+        )
+
+        response = webservice.get(authenticator_url)
+
+        self.assertEqual(200, owner_response.status)
+        self.assertEqual(200, response.status)
+        self.assertEqual(owner_response.jsonBody(), response.jsonBody())
+        for field in ("public_key", "credential_id", "sign_count", "aaguid"):
+            self.assertNotIn(field, response.jsonBody())
 
     def test_entry_other_person(self):
         with person_logged_in(self.person):
@@ -412,18 +428,14 @@ class TestPersonWebAuthnWebService(TestCaseWithFactory):
             len(response.jsonBody()["publicKey"]["excludeCredentials"]),
         )
 
-    def test_revokeWebAuthnRegistration(self):
+    def test_entry_revoke(self):
         with person_logged_in(self.person):
             authenticator = self.factory.makeRegisteredAuthenticator(
                 owner=self.person
             )
-            authenticator_id = authenticator.id
+            authenticator_url = api_url(authenticator)
 
-        response = self.webservice.named_post(
-            self.person_url,
-            "revokeWebAuthnRegistration",
-            authenticator_id=authenticator_id,
-        )
+        response = self.webservice.named_post(authenticator_url, "revoke")
 
         self.assertEqual(200, response.status)
         with person_logged_in(self.person):
@@ -434,3 +446,37 @@ class TestPersonWebAuthnWebService(TestCaseWithFactory):
                     revoked_by=Equals(self.person),
                 ),
             )
+
+    def test_entry_revoke_other_person(self):
+        with person_logged_in(self.person):
+            authenticator = self.factory.makeRegisteredAuthenticator(
+                owner=self.person
+            )
+            authenticator_url = api_url(authenticator)
+        webservice = self._makeOtherWebService()
+
+        response = webservice.named_post(authenticator_url, "revoke")
+
+        self.assertEqual(401, response.status)
+        with person_logged_in(self.person):
+            self.assertFalse(authenticator.is_revoked)
+
+    def test_entry_revoke_admin(self):
+        with person_logged_in(self.person):
+            authenticator = self.factory.makeRegisteredAuthenticator(
+                owner=self.person
+            )
+            authenticator_url = api_url(authenticator)
+            admin = self.factory.makeAdministrator()
+        webservice = webservice_for_person(
+            admin,
+            permission=OAuthPermission.WRITE_PRIVATE,
+            default_api_version="devel",
+        )
+
+        response = webservice.named_post(authenticator_url, "revoke")
+
+        self.assertEqual(200, response.status)
+        with person_logged_in(self.person):
+            self.assertTrue(authenticator.is_revoked)
+            self.assertEqual(admin, authenticator.revoked_by)

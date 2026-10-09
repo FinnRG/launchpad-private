@@ -2263,20 +2263,12 @@ class IPersonSpecialRestricted(Interface):
         """
 
     @operation_parameters(
-        authenticator_id=Int(title=_("Authenticator ID"), required=True)
-    )
-    @export_write_operation()
-    @operation_for_version("devel")
-    def revokeWebAuthnRegistration(authenticator_id):
-        """Revoke one of this person's registered WebAuthn authenticators.
-
-        :param authenticator_id: The ID of a `RegisteredAuthenticator`
-            owned by this person.
-        """
-
-    @operation_parameters(
         consumer_key=TextLine(title=_("Consumer key"), required=True),
-        authenticator_id=Int(title=_("Authenticator ID"), required=True),
+        authenticator=Reference(
+            title=_("Authenticator"),
+            schema=IRegisteredAuthenticator,
+            required=True,
+        ),
         permission=Choice(
             title=_("Permission"),
             vocabulary=OAuthPermission,
@@ -2304,7 +2296,7 @@ class IPersonSpecialRestricted(Interface):
     @operation_for_version("devel")
     def issueHardwareBoundOAuthToken(
         consumer_key,
-        authenticator_id,
+        authenticator,
         permission,
         context=None,
         date_expires=None,

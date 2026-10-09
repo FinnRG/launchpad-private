@@ -38,12 +38,19 @@ from lp.services.webapp.interfaces import AccessLevel, OAuthPermission
 from lp.services.webapp.publisher import canonical_url
 from lp.services.webapp.servers import LaunchpadTestRequest
 from lp.services.webauthn.ceremony import (
+    WebAuthnError,
     begin_registration,
     complete_registration,
     get_origin,
 )
 from lp.services.webauthn.tests.dummyauthenticator import DummyAuthenticator
-from lp.testing import TestCaseWithFactory, api_url, login_person
+from lp.testing import (
+    TestCaseWithFactory,
+    api_url,
+    launchpadlib_for,
+    login_person,
+    person_logged_in,
+)
 from lp.testing.layers import DatabaseFunctionalLayer
 from lp.testing.pages import LaunchpadWebServiceCaller, webservice_for_person
 
@@ -463,7 +470,7 @@ class TestHardwareOAuthExchange(TestCaseWithFactory):
 
         result = self.person.issueHardwareBoundOAuthToken(
             self.consumer.key,
-            self.authenticator.id,
+            self.authenticator,
             OAuthPermission.WRITE_PRIVATE,
             context=product.name,
         )
@@ -478,7 +485,7 @@ class TestHardwareOAuthExchange(TestCaseWithFactory):
             "No such OAuth context: no-such-pillar",
             self.person.issueHardwareBoundOAuthToken,
             self.consumer.key,
-            self.authenticator.id,
+            self.authenticator,
             OAuthPermission.WRITE_PRIVATE,
             context="no-such-pillar",
         )
@@ -486,7 +493,7 @@ class TestHardwareOAuthExchange(TestCaseWithFactory):
     def test_person_issues_and_revokes_refresh_token(self):
         result = self.person.issueHardwareBoundOAuthToken(
             self.consumer.key,
-            self.authenticator.id,
+            self.authenticator,
             OAuthPermission.WRITE_PRIVATE,
         )
 
@@ -501,6 +508,18 @@ class TestHardwareOAuthExchange(TestCaseWithFactory):
             begin_token_exchange,
             result["oauth_token"],
             result["oauth_token_secret"],
+        )
+
+    def test_person_rejects_another_owners_authenticator(self):
+        authenticator = self.factory.makeRegisteredAuthenticator()
+
+        self.assertRaisesRegex(
+            WebAuthnError,
+            "This authenticator is not owned by %s." % self.person.name,
+            self.person.issueHardwareBoundOAuthToken,
+            self.consumer.key,
+            authenticator,
+            OAuthPermission.WRITE_PRIVATE,
         )
 
     def test_challenge_view_rejects_bad_credentials(self):
@@ -626,7 +645,7 @@ class TestHardwareOAuthExchange(TestCaseWithFactory):
     def test_oauth_context_must_be_retained(self):
         context = self.factory.makeProduct()
         other_context = self.factory.makeProduct()
-        authenticator_id = self.authenticator.id
+        authenticator = self.authenticator
         request = LaunchpadTestRequest()
         alsoProvides(request, IOAuthSignedRequest)
         request.setPrincipal(
@@ -649,7 +668,7 @@ class TestHardwareOAuthExchange(TestCaseWithFactory):
                     "must retain the caller's OAuth context",
                     person.issueHardwareBoundOAuthToken,
                     self.consumer.key,
-                    authenticator_id,
+                    authenticator,
                     OAuthPermission.WRITE_PRIVATE,
                     context=requested_context,
                 )
@@ -657,7 +676,7 @@ class TestHardwareOAuthExchange(TestCaseWithFactory):
 
         result = person.issueHardwareBoundOAuthToken(
             self.consumer.key,
-            authenticator_id,
+            authenticator,
             OAuthPermission.WRITE_PRIVATE,
             context=context.name,
         )
@@ -672,13 +691,116 @@ class TestHardwareOAuthExchange(TestCaseWithFactory):
             "Cannot issue an unauthorized OAuth refresh token.",
             self.person.issueHardwareBoundOAuthToken,
             self.consumer.key,
-            self.authenticator.id,
+            self.authenticator,
             OAuthPermission.UNAUTHORIZED,
         )
 
 
 class TestHardwareOAuthWebService(TestCaseWithFactory):
     layer = DatabaseFunctionalLayer
+
+    def test_issue_rejects_another_owners_authenticator(self):
+        owner = self.factory.makePerson()
+        with person_logged_in(owner):
+            authenticator = self.factory.makeRegisteredAuthenticator(
+                owner=owner
+            )
+            authenticator_url = api_url(authenticator)
+            person = self.factory.makePerson()
+            admin = self.factory.makeAdministrator()
+            admin_message = (
+                "This authenticator is not owned by %s." % admin.name
+            ).encode("utf-8")
+        for caller, status, message in (
+            (person, 401, b"launchpad.Edit"),
+            (admin, 400, admin_message),
+        ):
+            with self.subTest(status=status):
+                with person_logged_in(caller):
+                    person_url = api_url(caller)
+                webservice = webservice_for_person(
+                    caller,
+                    permission=OAuthPermission.WRITE_PRIVATE,
+                    default_api_version="devel",
+                )
+
+                response = webservice.named_post(
+                    person_url,
+                    "issueHardwareBoundOAuthToken",
+                    consumer_key="hardware-client",
+                    authenticator=authenticator_url,
+                    permission=OAuthPermission.WRITE_PRIVATE.title,
+                )
+
+                self.assertEqual(status, response.status)
+                self.assertIn(message, response.body)
+                with person_logged_in(caller):
+                    self.assertEqual(0, caller.oauth_refresh_tokens.count())
+        with person_logged_in(owner):
+            self.assertEqual(0, owner.oauth_refresh_tokens.count())
+            self.assertFalse(authenticator.is_revoked)
+
+    def test_launchpadlib_issue_and_revoke(self):
+        person = self.factory.makePerson()
+        with person_logged_in(person):
+            authenticator = self.factory.makeRegisteredAuthenticator(
+                owner=person
+            )
+            authenticator_url = api_url(authenticator)
+        launchpad = launchpadlib_for("hardware-client", person=person)
+        person_entry = launchpad.load(launchpad.me.self_link)
+        entry = launchpad.load(authenticator_url)
+        expiry = datetime.now(timezone.utc) + timedelta(days=7)
+
+        result = person_entry.issueHardwareBoundOAuthToken(
+            consumer_key="hardware-client",
+            authenticator=entry,
+            permission=OAuthPermission.WRITE_PRIVATE.title,
+            date_expires=expiry,
+        )
+
+        with person_logged_in(person):
+            [grant] = person.oauth_refresh_tokens
+            self.assertEqual(authenticator, grant.authenticator)
+            self.assertEqual(expiry, grant.date_expires)
+            self.assertEqual(result["oauth_token"], grant.key)
+            self.assertTrue(
+                removeSecurityProxy(grant).isSecretValid(
+                    result["oauth_token_secret"]
+                )
+            )
+
+        person_entry.revokeHardwareBoundOAuthToken(
+            token_key=result["oauth_token"]
+        )
+
+        with person_logged_in(person):
+            self.assertTrue(grant.is_revoked)
+            self.assertEqual(person, grant.revoked_by)
+
+    def test_launchpadlib_entry_revocation_cascades(self):
+        person = self.factory.makePerson()
+        with person_logged_in(person):
+            authenticator = self.factory.makeRegisteredAuthenticator(
+                owner=person
+            )
+            authenticator_url = api_url(authenticator)
+            consumer = self.factory.makeOAuthConsumer()
+            grant, _ = issue_refresh_token(
+                person, consumer, authenticator, AccessLevel.WRITE_PRIVATE
+            )
+            token, _ = grant.mintAccessToken()
+        launchpad = launchpadlib_for("hardware-client", person=person)
+        entry = launchpad.load(authenticator_url)
+
+        entry.revoke()
+
+        with person_logged_in(person):
+            self.assertTrue(authenticator.is_revoked)
+            self.assertEqual(person, authenticator.revoked_by)
+            self.assertTrue(grant.is_revoked)
+            self.assertEqual(person, grant.revoked_by)
+            self.assertTrue(token.is_expired)
 
     def test_browser_can_exchange_refresh_token_without_referer(self):
         person = self.factory.makePerson()
@@ -742,7 +864,7 @@ class TestHardwareOAuthWebService(TestCaseWithFactory):
             {
                 "ws.op": "issueHardwareBoundOAuthToken",
                 "consumer_key": "hardware-client",
-                "authenticator_id": removeSecurityProxy(authenticator).id,
+                "authenticator": api_url(removeSecurityProxy(authenticator)),
                 "permission": OAuthPermission.WRITE_PRIVATE.title,
             }
         )
@@ -766,7 +888,7 @@ class TestHardwareOAuthWebService(TestCaseWithFactory):
         person = self.factory.makePerson()
         person_url = api_url(person)
         authenticator = self.factory.makeRegisteredAuthenticator(owner=person)
-        authenticator_id = removeSecurityProxy(authenticator).id
+        authenticator_url = api_url(removeSecurityProxy(authenticator))
         for caller_permission in (
             OAuthPermission.READ_PUBLIC,
             OAuthPermission.READ_PRIVATE,
@@ -795,7 +917,7 @@ class TestHardwareOAuthWebService(TestCaseWithFactory):
                         person_url,
                         "issueHardwareBoundOAuthToken",
                         consumer_key="hardware-client",
-                        authenticator_id=authenticator_id,
+                        authenticator=authenticator_url,
                         permission=grant_permission.title,
                     )
                     allowed = caller_permission in (
@@ -830,7 +952,7 @@ class TestHardwareOAuthWebService(TestCaseWithFactory):
         person = self.factory.makePerson()
         person_url = api_url(person)
         authenticator = self.factory.makeRegisteredAuthenticator(owner=person)
-        authenticator_id = removeSecurityProxy(authenticator).id
+        authenticator_url = api_url(removeSecurityProxy(authenticator))
         token, secret = self.factory.makeOAuthAccessToken(
             owner=person, access_level=OAuthPermission.WRITE_PRIVATE
         )
@@ -848,7 +970,7 @@ class TestHardwareOAuthWebService(TestCaseWithFactory):
             person_url,
             "issueHardwareBoundOAuthToken",
             consumer_key="hardware-client",
-            authenticator_id=authenticator_id,
+            authenticator=authenticator_url,
             permission=OAuthPermission.WRITE_PRIVATE.title,
         )
 

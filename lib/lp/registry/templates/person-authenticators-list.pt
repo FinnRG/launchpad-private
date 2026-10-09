@@ -36,7 +36,7 @@
         <td>
           <button tal:condition="not: authenticator/date_revoked"
                   type="button" class="revoke-button"
-                  tal:attributes="data-auth-id authenticator/id;
+                  tal:attributes="data-auth-url authenticator/fmt:api_url;
                                   data-auth-name authenticator/name">
             Revoke
           </button>
