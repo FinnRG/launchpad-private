@@ -1712,36 +1712,21 @@ class Person(
             ) from error
         return complete_registration(self, parsed_response, name)
 
-    def revokeWebAuthnRegistration(self, authenticator_id):
-        """See `IPerson`."""
-        authenticator = getUtility(IRegisteredAuthenticatorSet).getByID(
-            authenticator_id
-        )
-        if authenticator is None:
-            raise WebAuthnError("No such registered authenticator.")
-        bare_authenticator = removeSecurityProxy(authenticator)
-        if bare_authenticator.owner != self:
-            raise WebAuthnError("No such registered authenticator.")
-        bare_authenticator.revoke(self)
-
     def issueHardwareBoundOAuthToken(
         self,
         consumer_key,
-        authenticator_id,
+        authenticator,
         permission,
         context=None,
         date_expires=None,
     ):
         """See `IPerson`."""
         request = get_current_browser_request()
-        authenticator = getUtility(IRegisteredAuthenticatorSet).getByID(
-            authenticator_id
-        )
-        if authenticator is None:
-            raise WebAuthnError("No such registered authenticator.")
         bare_authenticator = removeSecurityProxy(authenticator)
         if bare_authenticator.owner != self:
-            raise WebAuthnError("No such registered authenticator.")
+            raise WebAuthnError(
+                "This authenticator is not owned by %s." % self.name
+            )
         if permission == OAuthPermission.UNAUTHORIZED:
             raise HardwareTokenError(
                 "Cannot issue an unauthorized OAuth refresh token."

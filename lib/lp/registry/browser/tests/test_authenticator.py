@@ -5,10 +5,16 @@
 
 from unittest.mock import patch
 
+from bs4 import BeautifulSoup
 from zope.security.interfaces import Unauthorized
 
 from lp.services.webapp import canonical_url
-from lp.testing import BrowserTestCase, TestCaseWithFactory, person_logged_in
+from lp.testing import (
+    BrowserTestCase,
+    TestCaseWithFactory,
+    api_url,
+    person_logged_in,
+)
 from lp.testing.layers import DatabaseFunctionalLayer
 from lp.testing.views import create_initialized_view
 
@@ -104,6 +110,25 @@ class PersonRegisterAuthenticatorBrowserTestCase(BrowserTestCase):
     """Browser tests for the authenticator registration page."""
 
     layer = DatabaseFunctionalLayer
+
+    def test_revoke_button_uses_authenticator_api_url(self):
+        person = self.factory.makePerson()
+        with person_logged_in(person):
+            authenticator = self.factory.makeRegisteredAuthenticator(
+                owner=person
+            )
+            authenticator_url = api_url(authenticator)
+        url = canonical_url(
+            person, view_name="+register-authenticator-authenticators-list"
+        )
+
+        browser = self.getUserBrowser(url, user=person)
+
+        button = BeautifulSoup(browser.contents, "html.parser").find(
+            "button", class_="revoke-button"
+        )
+        self.assertEndsWith(button["data-auth-url"], authenticator_url)
+        self.assertNotIn("data-auth-id", button.attrs)
 
     def test_page_contains_registration_controls(self):
         """The page contains the necessary registration controls."""

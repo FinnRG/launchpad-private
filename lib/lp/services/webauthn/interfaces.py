@@ -8,7 +8,14 @@ __all__ = [
     "IRegisteredAuthenticatorSet",
 ]
 
-from lazr.restful.declarations import exported, exported_as_webservice_entry
+from lazr.restful.declarations import (
+    REQUEST_USER,
+    call_with,
+    export_write_operation,
+    exported,
+    exported_as_webservice_entry,
+    operation_for_version,
+)
 from lazr.restful.fields import Reference
 from zope.interface import Interface
 from zope.schema import Bool, Bytes, Datetime, Int, List, TextLine
@@ -176,6 +183,9 @@ class IRegisteredAuthenticator(Interface):
             support may continue to report zero.
         """
 
+    @call_with(revoked_by=REQUEST_USER)
+    @export_write_operation()
+    @operation_for_version("devel")
     def revoke(revoked_by):
         """Revoke this authenticator.
 
