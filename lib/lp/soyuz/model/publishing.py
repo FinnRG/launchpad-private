@@ -2129,6 +2129,13 @@ class PublishingSet:
                         ),
                         "position",
                     ),
+                    Alias(
+                        SQL(
+                            "count(*) OVER (PARTITION BY "
+                            "sourcepackagepublishinghistory.id)"
+                        ),
+                        "binary_names_total",
+                    ),
                 ),
                 where=And(join),
                 group_by=(
@@ -2141,18 +2148,24 @@ class PublishingSet:
         source_id = Column("source_id", ranked)
         binary_name = Column("binary_name", ranked)
         binary_id = Column("binary_id", ranked)
+        binary_names_total = Column("binary_names_total", ranked)
         clauses = (
             [] if limit is None else [Column("position", ranked) <= limit]
         )
         result_set = (
             IStore(SourcePackagePublishingHistory)
             .using(ranked)
-            .find((source_id, binary_name, binary_id), *clauses)
+            .find(
+                (source_id, binary_name, binary_id, binary_names_total),
+                *clauses,
+            )
             .order_by(source_id, binary_name)
         )
-        binaries = defaultdict(list)
-        for spph_id, name, bpph_id in result_set:
-            binaries[spph_id].append(
+        binaries = {}
+        for spph_id, name, bpph_id, total in result_set:
+            if spph_id not in binaries:
+                binaries[spph_id] = {"binaries": [], "total": total}
+            binaries[spph_id]["binaries"].append(
                 {
                     "binary_package_name": name,
                     "binary_publication_id": bpph_id,

@@ -873,6 +873,7 @@ class IArchiveSubscriberView(Interface):
             breaks ties. Bare strings are not accepted.
         :param include_binaries: Include unique active binary names and
             representative publication ids in each source's "binaries" list.
+            Include "binaries_total", the unique name count before limiting.
             Defaults to False. May be combined with `include_architectures`.
         :param include_architectures: Include "architecture_tag",
             "build_status" and "build_web_link" in each source's
@@ -888,8 +889,10 @@ class IArchiveSubscriberView(Interface):
             "source_package_version", "series", "pocket" and "status".
             Series is its name; pocket and status are readable titles.
             Requested binaries have "name" and "id", usable with
-            `getBinaryPackageDetails`. Unrequested enrichment keys are
-            omitted; requested enrichments with no matches are empty lists.
+            `getBinaryPackageDetails`. "binaries_total" uses the same active
+            binary filters and is zero when no names match. Unrequested
+            enrichment keys are omitted; requested enrichments with no
+            matches are empty lists.
             An empty archive returns page 1 with no sources and zero pages.
         :raises ValueError: If pagination or binary limits are invalid.
         :raises InvalidOrderBy: If the sort input is a bare string or a key

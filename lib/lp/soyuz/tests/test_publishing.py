@@ -1210,10 +1210,8 @@ class TestPublishingSourceEnrichments(TestCaseWithFactory):
         self.das = self.factory.makeDistroArchSeries(distroseries=self.series)
         self.publishing_set = getUtility(IPublishingSet)
 
-    def test_binaries_return_sorted_names_with_default_or_unlimited_limit(
-        self,
-    ):
-        """Object/id inputs return sorted names in one query for either cap."""
+    def test_binaries_count_all_names_with_default_or_unlimited_limit(self):
+        """Object/id inputs count all names in one query with either limit."""
         # Exceed the default 20-name cap by one. Zero-padded suffixes make
         # alphabetical ordering agree with the expected list below.
         names = ["binary-%02d" % index for index in range(21)]
@@ -1250,13 +1248,18 @@ class TestPublishingSourceEnrichments(TestCaseWithFactory):
                     result = self.publishing_set.getActiveBinariesForSources(
                         sources, **options
                     )
+                # Fetching the list and its total must not need separate
+                # queries, even when the list is capped.
                 self.assertThat(recorder, HasQueryCount(Equals(1)))
+                # The total is computed before the cap, so it remains 21
+                # whether 20 names or all 21 names are returned.
+                self.assertEqual(21, result[source_id]["total"])
                 # Exact equality checks both the selected names and order.
                 self.assertEqual(
                     expected_names,
                     [
                         binary["binary_package_name"]
-                        for binary in result[source_id]
+                        for binary in result[source_id]["binaries"]
                     ],
                 )
 
@@ -1306,8 +1309,9 @@ class TestPublishingSourceEnrichments(TestCaseWithFactory):
                     "binary_publication_id": matching.id,
                 }
             ],
-            result[source.id],
+            result[source.id]["binaries"],
         )
+        self.assertEqual(1, result[source.id]["total"])
 
     def test_binaries_include_copies_from_other_build_contexts(self):
         """Select copied publications despite their original build context."""
@@ -1355,8 +1359,9 @@ class TestPublishingSourceEnrichments(TestCaseWithFactory):
                     "binary_publication_id": copied_binary.id,
                 }
             ],
-            result[copied_source.id],
+            result[copied_source.id]["binaries"],
         )
+        self.assertEqual(1, result[copied_source.id]["total"])
 
     def test_empty_inputs_do_not_query(self):
         """Both batch helpers return empty mappings without database work."""

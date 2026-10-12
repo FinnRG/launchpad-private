@@ -1042,12 +1042,16 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             if include_architectures:
                 entry["architectures"] = architectures.get(source_id, [])
             if include_binaries:
+                source_binaries = binaries.get(
+                    source_id, {"binaries": [], "total": 0}
+                )
+                entry["binaries_total"] = source_binaries["total"]
                 entry["binaries"] = [
                     {
                         "name": binary["binary_package_name"],
                         "id": binary["binary_publication_id"],
                     }
-                    for binary in binaries.get(source_id, [])
+                    for binary in source_binaries["binaries"]
                 ]
             entries.append(entry)
         return {

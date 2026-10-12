@@ -1342,9 +1342,11 @@ class IPublishingSet(Interface):
         :param limit: Maximum unique names per source. Defaults to 20;
             None returns all matching names.
 
-        :return: a dict mapping each `SourcePackagePublishingHistory` id to a
-            list of dicts with keys 'binary_package_name' and
-            'binary_publication_id', sorted by name and capped at `limit`.
+        :return: A dict mapping each `SourcePackagePublishingHistory` id to a
+            dict with 'binaries' and 'total'. 'binaries' is a list of dicts
+            with keys 'binary_package_name' and 'binary_publication_id',
+            sorted by name and capped at `limit`. 'total' counts all matching
+            unique names before the limit, ignoring repeated architectures.
             The id is the newest active publication for that name in the
             source's archive, series and pocket. Sources with no active
             binaries are omitted; an empty input returns an empty dict.

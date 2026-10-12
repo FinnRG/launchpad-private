@@ -1406,7 +1406,10 @@ class TestSourcePackageList(PackageListingTestCase):
             response = ws.named_get(archive_url, "getSourcePackageList")
             self.assertEqual(200, response.status)
             source = response.jsonBody()["sources"][0]
+            # Unrequested enrichments must be absent, including the binary
+            # total, rather than appearing as empty lists or a zero count.
             self.assertNotIn("binaries", source)
+            self.assertNotIn("binaries_total", source)
             self.assertNotIn("architectures", source)
             # Even an attempted helper call caught by the implementation
             # would still be recorded by these mocks.
@@ -1467,8 +1470,10 @@ class TestSourcePackageList(PackageListingTestCase):
             }
             self.assertEqual({source_id, unmatched_id}, set(entries))
             # Unrequested keys must be omitted, not returned as empty lists.
+            # The binary list and its total are controlled by the same flag.
             for entry in entries.values():
                 self.assertEqual(include_binaries, "binaries" in entry)
+                self.assertEqual(include_binaries, "binaries_total" in entry)
                 self.assertEqual(
                     include_architectures, "architectures" in entry
                 )
@@ -1476,6 +1481,7 @@ class TestSourcePackageList(PackageListingTestCase):
             if include_binaries:
                 # Binary metadata stays available with architectures either
                 # enabled or disabled, and retains the publication id.
+                self.assertEqual(1, entry["binaries_total"])
                 self.assertEqual(
                     [{"name": source_name, "id": binary_id}],
                     entry["binaries"],
@@ -1551,6 +1557,8 @@ class TestSourcePackageList(PackageListingTestCase):
         self.assertEqual("Published", source["status"])
         # Binary enrichment must not implicitly enable architecture data.
         self.assertNotIn("architectures", source)
+        # Both unique binary names fit under the default per-source limit.
+        self.assertEqual(2, source["binaries_total"])
         entries = source["binaries"]
         self.assertEqual(
             ["foo-bin", "foo-dev"],
@@ -1561,8 +1569,8 @@ class TestSourcePackageList(PackageListingTestCase):
             [entry["id"] for entry in entries],
         )
 
-    def test_binaries_capped_per_source(self):
-        """Cap unique names per source and retain the newest publication id."""
+    def test_binaries_capped_per_source_with_uncapped_totals(self):
+        """Cap names, count all unique matches and keep the newest id."""
         with admin_logged_in():
             archive = self.factory.makeArchive()
             series = self.factory.makeDistroSeries(
@@ -1602,8 +1610,18 @@ class TestSourcePackageList(PackageListingTestCase):
                 second.id,
                 duplicate.id,
             )
+            # A source without binaries must still appear with an empty
+            # list and a zero total when binary enrichment is requested.
+            empty = self.factory.makeSourcePackagePublishingHistory(
+                archive=archive,
+                distroseries=series,
+                pocket=PackagePublishingPocket.RELEASE,
+                status=PackagePublishingStatus.PUBLISHED,
+            )
+            empty_id = empty.id
             archive_url = api_url(archive)
         ws = webservice_for_person(self.person, default_api_version="devel")
+        # Limit displayed names, not the total number of matching names.
         response = ws.named_get(
             archive_url,
             "getSourcePackageList",
@@ -1614,6 +1632,12 @@ class TestSourcePackageList(PackageListingTestCase):
         by_source = {
             source["id"]: source for source in response.jsonBody()["sources"]
         }
+        # Totals remain three despite truncation; the extra architecture
+        # must not inflate the first source's count to four.
+        self.assertEqual(3, by_source[first_id]["binaries_total"])
+        self.assertEqual(3, by_source[second_id]["binaries_total"])
+        self.assertEqual(0, by_source[empty_id]["binaries_total"])
+        self.assertEqual([], by_source[empty_id]["binaries"])
         # Alphabetical ordering keeps a-bin and b-bin. The duplicate a-bin
         # publication neither consumes another slot nor keeps the older id.
         self.assertEqual(
@@ -1656,6 +1680,9 @@ class TestSourcePackageList(PackageListingTestCase):
             archive_url, "getSourcePackageList", include_binaries=True
         )
         self.assertEqual(200, response.status)
+        self.assertEqual(
+            1, response.jsonBody()["sources"][0]["binaries_total"]
+        )
         self.assertEqual(
             ["active-bin"],
             [
