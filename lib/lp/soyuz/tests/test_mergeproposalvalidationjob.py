@@ -27,6 +27,8 @@ from lp.services.identity.interfaces.account import AccountStatus
 from lp.services.job.interfaces.job import JobStatus
 from lp.services.job.runner import JobRunner
 from lp.services.job.tests import block_on_job
+from lp.services.signing.enums import SigningKeyType
+from lp.services.signing.interfaces.signingkey import IArchiveSigningKeySet
 from lp.soyuz.enums import ArchivePurpose, ArchiveStatus
 from lp.soyuz.model.mergeproposalvalidation import MergeProposalValidation
 from lp.soyuz.model.mergeproposalvalidationjob import (
@@ -130,7 +132,10 @@ class TestCreateValidationArchiveJob(
     def test_run_creates_archive_and_queues_source_build(self):
         proposal = self.makeProposal()
         [job] = self.getJobs(proposal)
-        CreateValidationArchiveJob(job).run()
+        job = CreateValidationArchiveJob(job)
+        with dbuser(job.config.dbuser):
+            JobRunner([job]).runAll()
+        self.assertEqual(JobStatus.COMPLETED, job.job.status)
         run = (
             IStore(MergeProposalValidation)
             .find(MergeProposalValidation, branch_merge_proposal=proposal)
@@ -326,7 +331,10 @@ class TestCreateValidationArchiveJob(
     def test_new_commit_reuses_validation_archive(self):
         proposal = self.makeProposal()
         [job] = self.getJobs(proposal)
-        CreateValidationArchiveJob(job).run()
+        job = CreateValidationArchiveJob(job)
+        with dbuser(job.config.dbuser):
+            JobRunner([job]).runAll()
+        self.assertEqual(JobStatus.COMPLETED, job.job.status)
         first = (
             IStore(MergeProposalValidation)
             .find(MergeProposalValidation, branch_merge_proposal=proposal)
@@ -346,7 +354,10 @@ class TestCreateValidationArchiveJob(
         [job] = [
             job for job in jobs if job.metadata["commit_sha1"] == commit_sha1
         ]
-        CreateValidationArchiveJob(job).run()
+        job = CreateValidationArchiveJob(job)
+        with dbuser(job.config.dbuser):
+            JobRunner([job]).runAll()
+        self.assertEqual(JobStatus.COMPLETED, job.job.status)
         second = (
             IStore(MergeProposalValidation)
             .find(
@@ -420,7 +431,10 @@ class TestCreateValidationArchiveJob(
     def test_deleted_archive_name_is_not_reused(self):
         proposal = self.makeProposal()
         [job] = self.getJobs(proposal)
-        CreateValidationArchiveJob(job).run()
+        job = CreateValidationArchiveJob(job)
+        with dbuser(job.config.dbuser):
+            JobRunner([job]).runAll()
+        self.assertEqual(JobStatus.COMPLETED, job.job.status)
         first = (
             IStore(MergeProposalValidation)
             .find(MergeProposalValidation, branch_merge_proposal=proposal)
@@ -428,7 +442,10 @@ class TestCreateValidationArchiveJob(
         )
         first.archive.status = ArchiveStatus.DELETED
         proposal.source_git_commit_sha1 = "b" * 40
-        CreateValidationArchiveJob.create(proposal).run()
+        job = CreateValidationArchiveJob.create(proposal)
+        with dbuser(job.config.dbuser):
+            JobRunner([job]).runAll()
+        self.assertEqual(JobStatus.COMPLETED, job.job.status)
         second = (
             IStore(MergeProposalValidation)
             .find(
@@ -514,7 +531,10 @@ class TestCreateValidationArchiveJob(
             name="mp-%s" % proposal.id,
         )
         [job] = self.getJobs(proposal)
-        CreateValidationArchiveJob(job).run()
+        job = CreateValidationArchiveJob(job)
+        with dbuser(job.config.dbuser):
+            JobRunner([job]).runAll()
+        self.assertEqual(JobStatus.COMPLETED, job.job.status)
         run = (
             IStore(MergeProposalValidation)
             .find(MergeProposalValidation, branch_merge_proposal=proposal)
@@ -526,9 +546,29 @@ class TestCreateValidationArchiveJob(
     def test_runs_as_job_dbuser(self):
         proposal = self.makeProposal()
         [job] = self.getJobs(proposal)
-        job_id = job.id
-        with dbuser("mp-validation-job"):
-            CreateValidationArchiveJob.get(job_id).run()
+        job = CreateValidationArchiveJob(job)
+        with dbuser(job.config.dbuser):
+            JobRunner([job]).runAll()
+        self.assertEqual(JobStatus.COMPLETED, job.job.status)
+        self.assertEqual(
+            1,
+            IStore(MergeProposalValidation)
+            .find(MergeProposalValidation, branch_merge_proposal=proposal)
+            .count(),
+        )
+
+    def test_runs_as_job_dbuser_with_default_ppa(self):
+        self.factory.makeArchive(
+            owner=self.registrant,
+            distribution=self.series.distribution,
+            name="ppa",
+        )
+        proposal = self.makeProposal()
+        [job] = self.getJobs(proposal)
+        job = CreateValidationArchiveJob(job)
+        with dbuser(job.config.dbuser):
+            JobRunner([job]).runAll()
+        self.assertEqual(JobStatus.COMPLETED, job.job.status)
         self.assertEqual(
             1,
             IStore(MergeProposalValidation)
