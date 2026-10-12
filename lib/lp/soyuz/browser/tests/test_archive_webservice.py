@@ -1836,7 +1836,7 @@ class TestSourcePackageList(PackageListingTestCase):
             response = ws.named_get(
                 archive_url,
                 "getSourcePackageList",
-                include_inactive=True,
+                statuses=["Published", "Superseded", "Deleted"],
                 order_by=keys,
             )
             self.assertEqual(200, response.status)
@@ -1977,8 +1977,8 @@ class TestSourcePackageList(PackageListingTestCase):
             ).jsonBody()["total"],
         )
 
-    def test_inactive_publications_are_opt_in(self):
-        """Select active publications by default or include inactive ones."""
+    def test_statuses_control_selection(self):
+        """Select active, inactive or empty sets of publication statuses."""
         with admin_logged_in():
             archive = self.factory.makeArchive()
             series = self.factory.makeDistroSeries(
@@ -2000,19 +2000,38 @@ class TestSourcePackageList(PackageListingTestCase):
             [publications["Pending"], publications["Published"]],
             [entry["id"] for entry in result["sources"]],
         )
-        response = ws.named_get(
-            archive_url, "getSourcePackageList", include_inactive=True
-        )
-        self.assertEqual(200, response.status)
-        result = response.jsonBody()
-        self.assertEqual(len(publications), result["total"])
-        self.assertContentEqual(
-            list(publications.values()),
+        for statuses in (
+            ["Published"],
+            ["Superseded", "Deleted"],
+            list(publications),
+            [],
+        ):
+            response = ws.named_get(
+                archive_url, "getSourcePackageList", statuses=statuses
+            )
+            self.assertEqual(200, response.status)
+            result = response.jsonBody()
+            self.assertEqual(len(statuses), result["total"])
+            self.assertContentEqual(
+                [publications[status] for status in statuses],
+                [entry["id"] for entry in result["sources"]],
+            )
+        result = ws.named_get(
+            archive_url,
+            "getSourcePackageList",
+            statuses=["Superseded", "Deleted"],
+            page_size=1,
+            page=2,
+        ).jsonBody()
+        self.assertEqual(2, result["total"])
+        self.assertEqual(2, result["total_pages"])
+        self.assertEqual(
+            [min(publications["Superseded"], publications["Deleted"])],
             [entry["id"] for entry in result["sources"]],
         )
 
     def test_parameters_handle_empty_results_and_reject_invalid_values(self):
-        """Empty archives have no pages; invalid size and page values fail."""
+        """Empty archives have no pages; invalid limits and statuses fail."""
         archive_url = api_url(self.factory.makeArchive())
         ws = webservice_for_person(self.person, default_api_version="devel")
         result = ws.named_get(archive_url, "getSourcePackageList").jsonBody()
@@ -2023,6 +2042,8 @@ class TestSourcePackageList(PackageListingTestCase):
             {"page_size": 0},
             {"page_size": 101},
             {"binary_names_limit": 0},
+            {"statuses": ["Unknown"]},
+            {"statuses": ["Published", "Unknown"]},
         ):
             self.assertEqual(
                 400,

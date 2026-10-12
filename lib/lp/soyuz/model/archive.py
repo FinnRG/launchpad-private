@@ -899,7 +899,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         page_size=50,
         name=None,
         exact_match=False,
-        include_inactive=False,
+        statuses=None,
         ubuntu_change=None,
         signed_by=None,
         maintained_by=None,
@@ -919,13 +919,12 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             raise InvalidOrderBy("order_by must be a sequence of sort keys.")
         from lp.registry.model.distroseries import DistroSeries
 
-        clauses = [SourcePackagePublishingHistory.archive == self]
-        if not include_inactive:
-            clauses.append(
-                SourcePackagePublishingHistory.status.is_in(
-                    active_publishing_status
-                )
-            )
+        if statuses is None:
+            statuses = active_publishing_status
+        clauses = [
+            SourcePackagePublishingHistory.archive == self,
+            SourcePackagePublishingHistory.status.is_in(statuses),
+        ]
         if name is not None:
             clauses.extend(
                 [
