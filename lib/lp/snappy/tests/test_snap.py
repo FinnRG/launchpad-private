@@ -2071,6 +2071,51 @@ class TestSnapSBOMWebhook(TestCaseWithFactory):
         self.assertEqual(original_hook.id, hooks[0].id)
         self.assertTrue(hooks[0].active)
 
+    def test_creating_snap_with_fetch_service_creates_webhook(self):
+        snap = self.factory.makeSnap(use_fetch_service=True)
+
+        [hook] = self._getSBOMWebhooks(snap)
+        self.assertTrue(hook.active)
+        self.assertEqual(["snap:build:0.1::fullybuilt"], hook.event_types)
+        self.assertEqual("sbom-secret", hook.secret)
+
+    def test_creating_private_snap_with_fetch_service_creates_no_webhook(
+        self,
+    ):
+        # Only builds of public snaps are sent to the SBOM service.
+        snap = self.factory.makeSnap(private=True, use_fetch_service=True)
+
+        self.assertEqual([], self._getSBOMWebhooks(snap))
+
+    def test_enabling_fetch_service_on_private_snap_creates_no_webhook(self):
+        snap = self.factory.makeSnap(private=True)
+        naked_snap = removeSecurityProxy(snap)
+
+        with notify_modified(naked_snap, ["use_fetch_service"]):
+            naked_snap.use_fetch_service = True
+
+        self.assertEqual([], self._getSBOMWebhooks(snap))
+
+    def test_making_snap_private_deactivates_webhook(self):
+        snap = self.factory.makeSnap(use_fetch_service=True)
+
+        with admin_logged_in():
+            snap.information_type = InformationType.PROPRIETARY
+
+        [hook] = self._getSBOMWebhooks(snap)
+        self.assertFalse(hook.active)
+
+    def test_making_snap_public_reactivates_webhook(self):
+        snap = self.factory.makeSnap(use_fetch_service=True)
+        with admin_logged_in():
+            snap.information_type = InformationType.PROPRIETARY
+
+        with admin_logged_in():
+            snap.information_type = InformationType.PUBLIC
+
+        [hook] = self._getSBOMWebhooks(snap)
+        self.assertTrue(hook.active)
+
     def test_unrelated_field_change_does_not_affect_webhook(self):
         # Modifying an unrelated field doesn't create or touch the SBOM
         # webhook.
