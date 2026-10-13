@@ -1789,8 +1789,9 @@ class Distribution(
             # Note that in the source package case, we don't restrict
             # the search to the distribution release, making a best
             # effort to find a package.
-            publishing = (
-                IStore(SourcePackagePublishingHistory)
+            # Only existence matters.
+            is_published = (
+                not IStore(SourcePackagePublishingHistory)
                 .find(
                     SourcePackagePublishingHistory,
                     # We use an extra query to get the IDs instead of an
@@ -1807,10 +1808,9 @@ class Distribution(
                         included_publishing_statuses
                     ),
                 )
-                .order_by(Desc(SourcePackagePublishingHistory.id))
-                .first()
+                .is_empty()
             )
-            if publishing is not None:
+            if is_published:
                 return sourcepackagename
 
             # Look to see if there is an official source package branch.
