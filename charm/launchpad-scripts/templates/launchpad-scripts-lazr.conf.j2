@@ -43,3 +43,8 @@ servers: {{ memcache_servers }}
 cppa_subprojects: {{ cppa_subprojects }}
 {% endif %}
 
+[launchpad_job]
+{{- opt("concurrency", celery_workers_concurrency_launchpad_job) }}
+
+[launchpad_job_slow]
+{{- opt("concurrency", celery_workers_concurrency_launchpad_job_slow) }}

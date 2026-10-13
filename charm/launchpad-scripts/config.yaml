@@ -8,6 +8,18 @@ options:
     description: >
       Base64-encoded NaCl private key for decrypting Charmhub upload tokens.
     default:
+  celery_workers_concurrency_launchpad_job:
+    type: int
+    description: |
+      Number of child processes in the Celery worker pool for the launchpad_job
+      queue.
+    default:
+  celery_workers_concurrency_launchpad_job_slow:
+    type: int
+    description: |
+      Number of child processes in the Celery worker pool for the launchpad_job_slow
+      queue.
+    default:
   checkwatches_batch_query_threshold:
     type: int
     description: The batch query threshold for the checkwatches.
