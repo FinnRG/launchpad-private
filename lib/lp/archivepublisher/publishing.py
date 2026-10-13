@@ -351,10 +351,11 @@ class ByHash:
     def prune(self):
         """Remove all by-hash entries that we have not been told to add.
 
+        This includes entries for hashes that are no longer allowed.
         This also removes the by-hash directory itself if no entries remain.
         """
         prune_directory = True
-        for archive_hash in self._allowed_hashes:
+        for archive_hash in archive_hashes:
             hash_path = os.path.join(self.path, archive_hash.apt_name)
             if os.path.exists(hash_path):
                 prune_hash_directory = True

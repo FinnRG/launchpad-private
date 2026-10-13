@@ -693,6 +693,41 @@ class TestByHash(TestCaseWithFactory):
         by_hash.prune()
         self.assertThat(by_hash_path, ByHashHasContents([content]))
 
+    def test_prune_after_hash_change(self):
+        root = self.makeTemporaryDirectory()
+        content = b"abc\n"
+        sources_path = "dists/foo/main/source/Sources"
+        with open_for_writing(
+            os.path.join(root, sources_path), "wb"
+        ) as sources:
+            sources.write(content)
+        lfa = self.factory.makeLibraryFileAlias(content=content, db_only=True)
+        old_by_hash = ByHash(
+            root, "dists/foo/main/source", DevNullLogger(), ["sha256"]
+        )
+        old_by_hash.add("Sources", lfa, copy_from_path=sources_path)
+        by_hash = ByHash(
+            root, "dists/foo/main/source", DevNullLogger(), ["sha512"]
+        )
+        by_hash.add("Sources", lfa, copy_from_path=sources_path)
+        self.assertThat(by_hash.path, DirContains(["SHA256", "SHA512"]))
+        by_hash.prune()
+        self.assertThat(by_hash.path, DirContains(["SHA512"]))
+        digest_path = os.path.join(
+            by_hash.path, "SHA512", hashlib.sha512(content).hexdigest()
+        )
+        self.assertThat(digest_path, FileContainsBytes(content))
+
+    def test_prune_empty_after_hash_change(self):
+        root = self.makeTemporaryDirectory()
+        by_hash = ByHash(
+            root, "dists/foo/main/source", DevNullLogger(), ["sha512"]
+        )
+        with open_for_writing(os.path.join(by_hash.path, "SHA256/0"), "w"):
+            pass
+        by_hash.prune()
+        self.assertThat(by_hash.path, Not(PathExists()))
+
     def test_prune_empty(self):
         root = self.makeTemporaryDirectory()
         by_hash = ByHash(root, "dists/foo/main/source", DevNullLogger())
@@ -6096,6 +6131,44 @@ class TestAllowedHashesPublishing(TestPublisherBase):
         release = self.parseRelease(suite_path("Release"))
         self.assertNotIn("sha256", release)
         self.assertIn("sha512", release)
+
+    def test_by_hash_prunes_sha256_after_switch_to_sha512(self):
+        self.naked_series.publish_by_hash = True
+        self.naked_series.advertise_by_hash = True
+        self.naked_series.allowed_hashes = ["sha256"]
+        publisher = Publisher(
+            self.logger,
+            self.config,
+            self.disk_pool,
+            self.ubuntutest.main_archive,
+        )
+        self.getPubSource(filecontent=b"Source: foo\n")
+        self.runSteps(publisher, step_a=True, step_c=True, step_d=True)
+        suite_path = os.path.join(self.config.distsroot, "breezy-autotest")
+        by_hash_paths = [
+            dirpath
+            for dirpath, _, _ in os.walk(suite_path)
+            if os.path.basename(dirpath) == "by-hash"
+        ]
+        self.assertIn(os.path.join(suite_path, "by-hash"), by_hash_paths)
+        for by_hash_path in by_hash_paths:
+            self.assertThat(by_hash_path, DirContains(["SHA256"]))
+        with open(os.path.join(suite_path, "Release"), "rb") as release_file:
+            old_release = release_file.read()
+
+        self.naked_series.allowed_hashes = ["sha512"]
+        self.getPubSource(sourcename="baz", filecontent=b"Source: baz\n")
+        self.runSteps(publisher, step_a=True, step_c=True, step_d=True)
+
+        for by_hash_path in by_hash_paths:
+            self.assertThat(by_hash_path, DirContains(["SHA512"]))
+        old_release_path = os.path.join(
+            suite_path,
+            "by-hash",
+            "SHA512",
+            hashlib.sha512(old_release).hexdigest(),
+        )
+        self.assertThat(old_release_path, FileContainsBytes(old_release))
 
     def test_md5_allowed_hash_included(self):
         # allowed_hashes=["md5"] must include MD5 in the Release file.  The
