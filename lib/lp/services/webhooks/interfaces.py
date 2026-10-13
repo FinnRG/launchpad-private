@@ -67,7 +67,7 @@ WEBHOOK_EVENT_TYPES = {
     "oci-recipe:build:0.1": "OCI recipe build",
     "snap:build:0.1": "Snap build",
     # Snap build subscopes
-    "snap:build:0.1::fullybuilt": "Snap build fully built",
+    "snap:build:0.1::fullybuilt": "Only when a snap build is fully built",
     "craft-recipe:build:0.1": "Craft recipe build",
     "archive:source-package-upload:0.1": "Source package upload",
     "archive:source-package-upload:0.1::accepted": "Source package"
