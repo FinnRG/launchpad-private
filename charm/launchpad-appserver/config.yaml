@@ -160,6 +160,19 @@ options:
       the real client IP.  Enable only when the load balancer is configured
       to send PROXY protocol headers.
     default: false
+  sbom_webhook_secret:
+    type: string
+    description: >
+      Secret used to sign deliveries to the SBOM generation service's
+      webhook.
+    default:
+  sbom_webhook_url:
+    type: string
+    description: >
+      URL of the SBOM generation service's webhook.  If this and
+      sbom_webhook_secret are both set, Launchpad adds a webhook for this
+      URL to each snap recipe that uses the fetch service.
+    default:
   ssl_chain_required:
     type: boolean
     description: >
