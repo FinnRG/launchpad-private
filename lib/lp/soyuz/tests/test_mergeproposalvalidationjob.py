@@ -27,8 +27,6 @@ from lp.services.identity.interfaces.account import AccountStatus
 from lp.services.job.interfaces.job import JobStatus
 from lp.services.job.runner import JobRunner
 from lp.services.job.tests import block_on_job
-from lp.services.signing.enums import SigningKeyType
-from lp.services.signing.interfaces.signingkey import IArchiveSigningKeySet
 from lp.soyuz.enums import ArchivePurpose, ArchiveStatus
 from lp.soyuz.model.mergeproposalvalidation import MergeProposalValidation
 from lp.soyuz.model.mergeproposalvalidationjob import (
