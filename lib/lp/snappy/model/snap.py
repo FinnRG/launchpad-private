@@ -169,6 +169,7 @@ from lp.snappy.model.snapbase import SnapBase
 from lp.snappy.model.snapbuild import SnapBuild
 from lp.snappy.model.snapjob import SnapJob
 from lp.snappy.model.snapsubscription import SnapSubscription
+from lp.snappy.subscribers.snap import sync_sbom_webhook
 from lp.soyuz.interfaces.archive import ArchiveDisabled
 from lp.soyuz.interfaces.distroarchseries import IDistroArchSeries
 from lp.soyuz.model.archive import Archive, get_enabled_archive_filter
@@ -489,6 +490,7 @@ class Snap(StormBase, WebhookTargetMixin):
     def information_type(self, information_type):
         self._information_type = information_type
         self._reconcileAccess()
+        sync_sbom_webhook(self)
 
     @property
     def private(self):
@@ -1651,6 +1653,8 @@ class SnapSet:
                 p for p in snap.available_processors if p.build_by_default
             ]
         snap.setProcessors(processors)
+
+        sync_sbom_webhook(snap)
 
         return snap
 

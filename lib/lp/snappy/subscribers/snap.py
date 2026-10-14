@@ -32,7 +32,8 @@ def _get_sbom_webhook_config():
 
 
 def _sync_sbom_webhook(snap, delivery_url, secret):
-    """Ensure `snap` has an active SBOM webhook iff use_fetch_service is set.
+    """Ensure `snap` has an active SBOM webhook iff it is public and uses
+    the fetch service.
 
     Lets the external SBOM service receive fullybuilt events without
     needing launchpad.Edit on every snap, so this operates on the
@@ -58,7 +59,7 @@ def _sync_sbom_webhook(snap, delivery_url, secret):
         if removeSecurityProxy(hook).delivery_url == delivery_url
         and removeSecurityProxy(hook).registrant == janitor
     ]
-    if naked_snap.use_fetch_service:
+    if naked_snap.use_fetch_service and not naked_snap.private:
         if existing_hooks:
             for hook in existing_hooks:
                 if not hook.active:
@@ -81,22 +82,31 @@ def _sync_sbom_webhook(snap, delivery_url, secret):
                 hook.active = False
 
 
+def sync_sbom_webhook(snap):
+    """Bring the automatic SBOM webhook on `snap` up to date.
+
+    Does nothing if automatic SBOM webhooks aren't configured.  Errors are
+    logged as OOPSes rather than raised, so that they never block the snap
+    change that triggered the sync.
+    """
+    delivery_url, secret = _get_sbom_webhook_config()
+    if delivery_url is None:
+        return
+    try:
+        _sync_sbom_webhook(snap, delivery_url, secret)
+    except Exception:
+        getUtility(IErrorReportingUtility).raising(sys.exc_info())
+
+
 def snap_use_fetch_service_changed(snap, event):
     """Keep the automatic SBOM webhook subscription in sync.
 
     Registered as a subscriber to `IObjectModifiedEvent` on `ISnap`.
+    Creation and privacy changes are handled in the model, since they
+    don't reliably send this event.
     """
     if not event.edited_fields:
         return
     if "use_fetch_service" not in event.edited_fields:
         return
-    delivery_url, secret = _get_sbom_webhook_config()
-    if delivery_url is None:
-        # Automatic SBOM webhook management isn't configured; no-op.
-        return
-    try:
-        _sync_sbom_webhook(snap, delivery_url, secret)
-    except Exception:
-        # Never let a problem managing the automatic SBOM webhook block
-        # the user's use_fetch_service change; just log it and move on.
-        getUtility(IErrorReportingUtility).raising(sys.exc_info())
+    sync_sbom_webhook(snap)
