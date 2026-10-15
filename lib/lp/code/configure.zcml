@@ -1023,6 +1023,19 @@
      <allow interface="lp.code.interfaces.revisionstatus.IRevisionStatusArtifactSet" />
   </lp:securedutility>
 
+  <class class="lp.code.model.revisionstatuswatch.RevisionStatusWatch">
+    <require
+        permission="launchpad.Admin"
+        interface="lp.code.interfaces.revisionstatuswatch.IRevisionStatusWatch" />
+  </class>
+  <lp:securedutility
+      class="lp.code.model.revisionstatuswatch.RevisionStatusWatchSet"
+      provides="lp.code.interfaces.revisionstatuswatch.IRevisionStatusWatchSet">
+    <require
+        permission="launchpad.Admin"
+        interface="lp.code.interfaces.revisionstatuswatch.IRevisionStatusWatchSet" />
+  </lp:securedutility>
+
   <!-- Git repository access rules -->
 
   <class class="lp.code.model.gitrule.GitRule">

@@ -166,11 +166,22 @@ class RevisionStatusReport(StormBase):
         getUtility(IRevisionStatusArtifactSet).new(lfa, self, artifact_type)
 
     def transitionToNewResult(self, result):
-        if self.result == RevisionStatusResult.WAITING:
-            if result == RevisionStatusResult.RUNNING:
-                self.date_started == UTC_NOW
-        else:
+        if result == self.result:
+            return
+        if (
+            result == RevisionStatusResult.RUNNING
+            and self.date_started is None
+        ):
+            self.date_started = UTC_NOW
+        if result in (
+            RevisionStatusResult.SUCCEEDED,
+            RevisionStatusResult.FAILED,
+            RevisionStatusResult.SKIPPED,
+            RevisionStatusResult.CANCELLED,
+        ):
             self.date_finished = UTC_NOW
+        else:
+            self.date_finished = None
         self.result = result
 
     def update(

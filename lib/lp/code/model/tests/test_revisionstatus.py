@@ -6,7 +6,7 @@
 import hashlib
 import io
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from hashlib import sha1
 
 import requests
@@ -23,6 +23,7 @@ from testtools.matchers import (
 )
 from zope.component import getUtility
 from zope.security.interfaces import Unauthorized
+from zope.security.proxy import removeSecurityProxy
 
 from lp.app.enums import InformationType
 from lp.code.enums import RevisionStatusArtifactType, RevisionStatusResult
@@ -52,6 +53,51 @@ class TestRevisionStatusReport(
     SourcePackageGitBuildTestMixin, TestCaseWithFactory
 ):
     layer = DatabaseFunctionalLayer
+
+    def test_waiting_has_no_finish_time(self):
+        report = self.factory.makeRevisionStatusReport(
+            result=RevisionStatusResult.WAITING
+        )
+        self.assertIsNone(report.date_started)
+        self.assertIsNone(report.date_finished)
+
+    def test_running_sets_start_without_finish(self):
+        report = self.factory.makeRevisionStatusReport(
+            result=RevisionStatusResult.WAITING
+        )
+        report.transitionToNewResult(RevisionStatusResult.RUNNING)
+        Store.of(report).flush()
+        self.assertIsNotNone(report.date_started)
+        self.assertIsNone(report.date_finished)
+
+    def test_terminal_result_sets_finish_from_waiting(self):
+        report = self.factory.makeRevisionStatusReport(
+            result=RevisionStatusResult.WAITING
+        )
+        report.transitionToNewResult(RevisionStatusResult.SUCCEEDED)
+        Store.of(report).flush()
+        self.assertIsNotNone(report.date_finished)
+
+    def test_repeated_running_preserves_start(self):
+        report = self.factory.makeRevisionStatusReport(
+            result=RevisionStatusResult.RUNNING
+        )
+        started = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        removeSecurityProxy(report).date_started = started
+        report.transitionToNewResult(RevisionStatusResult.RUNNING)
+        Store.of(report).flush()
+        self.assertEqual(started, report.date_started)
+        self.assertIsNone(report.date_finished)
+
+    def test_repeated_terminal_result_preserves_finish(self):
+        report = self.factory.makeRevisionStatusReport(
+            result=RevisionStatusResult.SUCCEEDED
+        )
+        finished = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        removeSecurityProxy(report).date_finished = finished
+        report.transitionToNewResult(RevisionStatusResult.SUCCEEDED)
+        Store.of(report).flush()
+        self.assertEqual(finished, report.date_finished)
 
     def makeRevisionStatusArtifact(
         self, report, artifact_type=None, date_created=DEFAULT
