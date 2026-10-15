@@ -2196,11 +2196,25 @@ class BugTaskSet:
             importance = IBugTask["importance"].default
         target_keys = []
         bug_target_parents = set()
+        checked_packages = set()
         for target in targets:
             if validate_target:
+                # Target validation below only depends on distribution, so
+                # we avoid checking for each series.
+                check_source_package = True
+                if IDistributionSourcePackage.providedBy(
+                    target
+                ) or ISourcePackage.providedBy(target):
+                    package_key = (
+                        target.distribution.id,
+                        target.sourcepackagename.id,
+                    )
+                    check_source_package = package_key not in checked_packages
+                    checked_packages.add(package_key)
                 validate_new_target(
                     bug,
                     target,
+                    check_source_package=check_source_package,
                     check_ppa_source_package=check_ppa_source_package,
                     include_eol_distribution_package=include_eol_dist_package,
                 )

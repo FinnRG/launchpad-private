@@ -14,6 +14,7 @@ from lp.bugs.interfaces.bugnomination import (
     IBugNomination,
     IBugNominationSet,
 )
+from lp.bugs.interfaces.bugtask import IBugTaskSet, IllegalTarget
 from lp.registry.interfaces.archiveseries import IArchiveSeries
 from lp.registry.interfaces.archivesourcepackageseries import (
     IArchiveSourcePackageSeries,
@@ -22,6 +23,7 @@ from lp.services.features.testing import FeatureFixture
 from lp.soyuz.interfaces.archive import ARCHIVE_BUGS_FEATURE_FLAG
 from lp.soyuz.interfaces.publishing import PackagePublishingStatus
 from lp.testing import (
+    StormStatementRecorder,
     TestCaseWithFactory,
     celebrity_logged_in,
     login,
@@ -645,6 +647,84 @@ class TestCanApprove(TestCaseWithFactory):
         self.assertFalse(nomination.canApprove(self.factory.makePerson()))
         self.assertTrue(nomination.canApprove(package_perm.person))
         self.assertTrue(nomination.canApprove(comp_perm.person))
+
+    def createManyTasksRecording(self, bug, owner, targets):
+        """Call `createManyTasks`, returning the SPPH existence queries."""
+        with person_logged_in(owner):
+            with StormStatementRecorder() as recorder:
+                getUtility(IBugTaskSet).createManyTasks(bug, owner, targets)
+        return [
+            statement
+            for statement in recorder.statements
+            if "FROM SourcePackagePublishingHistory" in statement
+            and ".sourcepackagename =" in statement
+            and statement.rstrip().endswith("LIMIT 1")
+        ]
+
+    def publishInNewSeries(self, distro, spn, count=1):
+        series = [
+            self.factory.makeDistroSeries(distribution=distro)
+            for _ in range(count)
+        ]
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=series[0],
+            sourcepackagename=spn,
+            archive=distro.main_archive,
+        )
+        return series
+
+    def test_create_many_tasks_checks_package_publication_once(self):
+        # Targeting several series of one package checks that the package
+        # is published in the distribution only once.
+        distro = self.factory.makeDistribution()
+        spn = self.factory.makeSourcePackageName()
+        series = self.publishInNewSeries(distro, spn, 3)
+        bug = self.factory.makeBug(target=distro.getSourcePackage(spn))
+        targets = [s.getSourcePackage(spn) for s in series]
+        queries = self.createManyTasksRecording(bug, distro.owner, targets)
+        self.assertEqual(1, len(queries))
+
+    def test_create_many_tasks_checks_each_distribution_and_package(self):
+        # The check runs once for each distribution and package pair.
+        distro1 = self.factory.makeDistribution()
+        distro2 = self.factory.makeDistribution()
+        spn1 = self.factory.makeSourcePackageName()
+        spn2 = self.factory.makeSourcePackageName()
+        series1 = self.publishInNewSeries(distro1, spn1, 2)
+        self.factory.makeSourcePackagePublishingHistory(
+            distroseries=series1[0],
+            sourcepackagename=spn2,
+            archive=distro1.main_archive,
+        )
+        series2 = self.publishInNewSeries(distro2, spn1, 2)
+        bug = self.factory.makeBug(target=distro1.getSourcePackage(spn1))
+        targets = [
+            s.getSourcePackage(spn) for s in series1 for spn in (spn1, spn2)
+        ] + [s.getSourcePackage(spn1) for s in series2]
+        queries = self.createManyTasksRecording(
+            bug, self.factory.makePerson(), targets
+        )
+        self.assertEqual(3, len(queries))
+
+    def test_create_many_tasks_rejects_unpublished_package(self):
+        # A package that is not published still fails, even when other
+        # targets in the same call are valid.
+        distro = self.factory.makeDistribution()
+        published = self.factory.makeSourcePackageName()
+        unpublished = self.factory.makeSourcePackageName()
+        series = self.publishInNewSeries(distro, published, 2)
+        bug = self.factory.makeBug(target=distro)
+        targets = [s.getSourcePackage(published) for s in series] + [
+            series[0].getSourcePackage(unpublished)
+        ]
+        with person_logged_in(distro.owner):
+            self.assertRaises(
+                IllegalTarget,
+                getUtility(IBugTaskSet).createManyTasks,
+                bug,
+                distro.owner,
+                targets,
+            )
 
 
 class BugNominationSetTestCase(TestCaseWithFactory):
