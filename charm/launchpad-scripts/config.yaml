@@ -3,6 +3,26 @@ options:
     type: boolean
     description: Should the cron jobs and the celery services be active?
     default: true
+  autopkgtest_api_key:
+    type: string
+    description: API key for authenticating to autopkgtest.
+    default:
+  autopkgtest_connect_timeout:
+    type: int
+    description: Connection timeout for autopkgtest requests, in seconds.
+    default: 10
+  autopkgtest_read_timeout:
+    type: int
+    description: Read timeout for autopkgtest requests, in seconds.
+    default: 30
+  autopkgtest_results_url:
+    type: string
+    description: Base URL for autopkgtest results.
+    default: https://autopkgtest.ubuntu.com/results
+  autopkgtest_service_url:
+    type: string
+    description: Base URL for the autopkgtest service.
+    default: https://autopkgtest.ubuntu.com
   charmhub_secrets_private_key:
     type: string
     description: >

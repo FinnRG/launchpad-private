@@ -11,6 +11,12 @@
 [meta]
 extends: ../launchpad-db-lazr.conf
 
+[autopkgtest]
+{{- opt("service_url", autopkgtest_service_url) }}
+{{- opt("results_url", autopkgtest_results_url) }}
+{{- opt("connect_timeout", autopkgtest_connect_timeout) }}
+{{- opt("read_timeout", autopkgtest_read_timeout) }}
+
 [checkwatches]
 batch_query_threshold: {{ checkwatches_batch_query_threshold }}
 xmlrpc_url: http://{{ domain_xmlrpc_private }}:{{ port_xmlrpc }}/bugs
