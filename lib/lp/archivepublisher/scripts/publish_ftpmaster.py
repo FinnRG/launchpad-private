@@ -36,7 +36,6 @@ from lp.services.scripts.base import (
 from lp.services.utils import file_exists
 from lp.soyuz.enums import ArchivePurpose
 from lp.soyuz.model.distroarchseries import DistroArchSeries
-from lp.soyuz.scripts.custom_uploads_copier import CustomUploadsCopier
 
 
 def get_publishable_archives(distribution):
@@ -615,13 +614,6 @@ class PublishFTPMaster(LaunchpadCronScript):
             if len(suites_needing_indexes) != 0:
                 # This is a fresh series.
                 have_fresh_series = True
-                if series.previous_series is not None:
-                    copier = CustomUploadsCopier(
-                        series, PackagePublishingPocket.RELEASE
-                    )
-                    copier.copy(
-                        series.previous_series, PackagePublishingPocket.RELEASE
-                    )
                 self.createIndexes(distribution, suites_needing_indexes)
 
         return have_fresh_series
