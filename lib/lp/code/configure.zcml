@@ -256,6 +256,10 @@
     <allow interface="lp.code.interfaces.autopkgtest.IRequestAutopkgtestBackend" />
   </lp:securedutility>
 
+  <utility
+      factory="lp.code.autopkgtest.makeUbuntuAutopkgtestAdapter"
+      provides="lp.code.interfaces.autopkgtest.IAutopkgtestAdapter" />
+
   <class class="lp.code.model.branchmergeproposaljob.CodeReviewCommentEmailJob">
     <allow interface="lp.code.interfaces.branchmergeproposal.ICodeReviewCommentEmailJob" />
     <allow interface="lp.code.interfaces.branchmergeproposal.IBranchMergeProposalJob" />
