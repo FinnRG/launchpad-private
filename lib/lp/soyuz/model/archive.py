@@ -903,7 +903,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         ubuntu_change=None,
         signed_by=None,
         maintained_by=None,
-        distroseries=None,
+        distro_series=None,
         pocket=None,
         order_by=None,
         include_binaries=False,
@@ -937,9 +937,9 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                     ),
                 ]
             )
-        if distroseries is not None:
+        if distro_series is not None:
             clauses.append(
-                SourcePackagePublishingHistory.distroseries == distroseries
+                SourcePackagePublishingHistory.distroseries == distro_series
             )
         if pocket is not None:
             clauses.append(SourcePackagePublishingHistory.pocket == pocket)

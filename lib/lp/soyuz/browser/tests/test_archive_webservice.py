@@ -1971,7 +1971,7 @@ class TestSourcePackageList(PackageListingTestCase):
             # Reference parameters use API URLs rather than model objects.
             {"signed_by": signer_url},
             {"maintained_by": maintainer_url},
-            {"distroseries": series_url},
+            {"distro_series": series_url},
             {"pocket": "Updates"},
         ):
             response = ws.named_get(

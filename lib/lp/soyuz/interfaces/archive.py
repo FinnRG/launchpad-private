@@ -790,7 +790,7 @@ class IArchiveSubscriberView(Interface):
         maintained_by=Reference(
             IPerson, title=_("Maintained by"), required=False
         ),
-        distroseries=Reference(
+        distro_series=Reference(
             IDistroSeries, title=_("Series"), required=False
         ),
         pocket=Choice(
@@ -835,7 +835,7 @@ class IArchiveSubscriberView(Interface):
         ubuntu_change=None,
         signed_by=None,
         maintained_by=None,
-        distroseries=None,
+        distro_series=None,
         pocket=None,
         order_by=None,
         include_binaries=False,
@@ -862,7 +862,7 @@ class IArchiveSubscriberView(Interface):
             `SourcePackageRelease.signing_key_owner`.
         :param maintained_by: Optional `IPerson` filter matching
             `SourcePackageRelease.maintainer`.
-        :param distroseries: Optional `IDistroSeries` filter.
+        :param distro_series: Optional `IDistroSeries` filter.
         :param pocket: Optional `PackagePublishingPocket` filter.
         :param order_by: A sequence of sort keys: "source_package_name",
             "series", "pocket", "status", "date_created" or "date_published".
