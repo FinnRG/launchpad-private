@@ -906,7 +906,7 @@ class IArchiveSubscriberView(Interface):
     @export_read_operation()
     @operation_for_version("devel")
     def getBinaryPackageDetails(binary_id):
-        """Return a binary publication's description and artifacts as JSON.
+        """Return a binary publication's metadata and artifacts as JSON.
 
         Files include active releases of the same binary built from the
         same source release in this archive, series and pocket across
@@ -917,9 +917,9 @@ class IArchiveSubscriberView(Interface):
             this archive, such as an id from `getSourcePackageList`'s
             "binaries" entries.
         :return: A dict with "id", "binary_package_name",
-            "binary_package_version", "description" and "files". Each file
-            contains "filename", "size" in bytes and a webapp-proxied "url".
-            Duplicate file aliases are omitted.
+            "binary_package_version", "summary", "description" and "files".
+            Each file contains "filename", "size" in bytes and a
+            webapp-proxied "url". Duplicate file aliases are omitted.
         :raises NotFoundError: If the id is unknown or belongs to a
             publication outside this archive.
         """

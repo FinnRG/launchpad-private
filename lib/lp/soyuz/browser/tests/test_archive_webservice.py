@@ -2210,6 +2210,7 @@ class TestBinaryPackageDetails(PackageListingTestCase):
                     "id",
                     "binary_package_name",
                     "binary_package_version",
+                    "summary",
                     "description",
                     "files",
                 },
@@ -2245,6 +2246,7 @@ class TestBinaryPackageDetails(PackageListingTestCase):
             publication = self.factory.makeBinaryPackagePublishingHistory(
                 archive=archive
             )
+            summary = publication.binarypackagerelease.summary
             description = publication.binarypackagerelease.description
             library_file = self.factory.makeLibraryFileAlias(
                 filename="private.deb",
@@ -2272,6 +2274,7 @@ class TestBinaryPackageDetails(PackageListingTestCase):
         )
         self.assertEqual(200, response.status)
         details = response.jsonBody()
+        self.assertEqual(summary, details["summary"])
         self.assertEqual(description, details["description"])
         self.assertEqual(1, len(details["files"]))
         artifact = details["files"][0]
@@ -2287,6 +2290,10 @@ class TestBinaryPackageDetails(PackageListingTestCase):
             archive = self.factory.makeArchive()
             publication = self.factory.makeBinaryPackagePublishingHistory(
                 archive=archive
+            )
+            summary = "Short package summary"
+            removeSecurityProxy(publication.binarypackagerelease).summary = (
+                summary
             )
             # Attach a known artifact to the selected binary release.
             library_file = self.factory.makeLibraryFileAlias(
@@ -2316,6 +2323,7 @@ class TestBinaryPackageDetails(PackageListingTestCase):
         self.assertEqual(binary_id, details["id"])
         self.assertEqual(name, details["binary_package_name"])
         self.assertEqual(version, details["binary_package_version"])
+        self.assertEqual(summary, details["summary"])
         self.assertEqual(description, details["description"])
         # The 15-byte fixture determines the size; check the artifact URL
         # without downloading its contents.

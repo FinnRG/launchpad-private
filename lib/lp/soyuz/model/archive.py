@@ -1130,6 +1130,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             "id": publication.id,
             "binary_package_name": release.name,
             "binary_package_version": release.version,
+            "summary": release.summary,
             "description": release.description,
             "files": [
                 {
