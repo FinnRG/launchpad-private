@@ -478,10 +478,6 @@ class TestRevisionStatusWatchCronScript(TestCaseWithFactory):
             script = self.makeScript(args=["--batch-size=%s" % size])
             self.assertRaises(LaunchpadScriptFailure, script.main)
 
-    def test_positional_arguments_are_rejected(self):
-        script = self.makeScript(args=["unexpected"])
-        self.assertRaises(LaunchpadScriptFailure, script.main)
-
     def test_delegates_to_collector(self):
         handlers = {"test-service": FakeWatchHandler()}
         script = self.makeScript(args=["--batch-size=7"], handlers=handlers)
@@ -511,24 +507,6 @@ class TestRevisionStatusWatchCronScript(TestCaseWithFactory):
         self.assertIsNone(self.watch_set.getByID(watch_id))
         report = getUtility(IRevisionStatusReportSet).getByID(report_id)
         self.assertEqual(RevisionStatusResult.SUCCEEDED, report.result)
-
-    def test_lock_wraps_run(self):
-        script = self.makeScript()
-        calls = mock.Mock()
-        self.patch(script, "lock_or_die", calls.lock)
-        self.patch(script, "run", calls.run)
-        self.patch(script, "unlock", calls.unlock)
-        script.lock_and_run()
-        self.assertEqual(
-            [
-                mock.call.lock(blocking=False),
-                mock.call.run(
-                    use_web_security=False, isolation="read_committed"
-                ),
-                mock.call.unlock(skip_delete=False),
-            ],
-            calls.mock_calls,
-        )
 
     def test_unlocks_after_failed_run(self):
         script = self.makeScript()

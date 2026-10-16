@@ -16,7 +16,9 @@ from unittest import mock
 import transaction
 from storm.store import Store
 from testtools.matchers import Equals
-from zope.component import getUtility
+from zope.component import getSiteManager, getUtility
+from zope.interface import Interface
+from zope.interface.verify import verifyObject
 from zope.security.proxy import removeSecurityProxy
 
 from lp.app.errors import NotFoundError
@@ -55,8 +57,10 @@ from lp.soyuz.enums import (
     DistroArchSeriesFilterSense,
     PackageUploadStatus,
 )
+from lp.soyuz.event import BinaryPackagePublishedEvent
 from lp.soyuz.interfaces.binarypackagename import IBinaryPackageNameSet
 from lp.soyuz.interfaces.component import IComponentSet
+from lp.soyuz.interfaces.event import IBinaryPackagePublishedEvent
 from lp.soyuz.interfaces.publishing import (
     DeletionError,
     IBinaryPackagePublishingHistory,
@@ -771,6 +775,129 @@ class SoyuzTestPublisher:
                 ztm=transaction,
                 log=DevNullLogger(),
             )
+
+
+class TestBinaryPackagePublicationEvents(TestCaseWithFactory):
+    layer = DatabaseFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        self.events = []
+        site_manager = getSiteManager()
+        required = (
+            Interface,
+            IBinaryPackagePublishedEvent,
+        )
+        site_manager.registerHandler(self.recordPublication, required)
+        self.addCleanup(
+            site_manager.unregisterHandler, self.recordPublication, required
+        )
+
+    def recordPublication(self, publication, event):
+        self.events.append(
+            (publication, event, publication.status, publication.datepublished)
+        )
+
+    def makePublication(self):
+        return removeSecurityProxy(
+            self.factory.makeBinaryPackagePublishingHistory(
+                status=PackagePublishingStatus.PENDING
+            )
+        )
+
+    def test_event_interface(self):
+        publication = self.makePublication()
+        event = BinaryPackagePublishedEvent(publication)
+        self.assertTrue(verifyObject(IBinaryPackagePublishedEvent, event))
+        self.assertIs(publication, event.object)
+
+    def test_first_publication_notifies_after_updating_record(self):
+        publication = self.makePublication()
+        publication.setPublished()
+        self.assertEqual(1, len(self.events))
+        observed, event, status, published_at = self.events[0]
+        self.assertIs(publication, observed)
+        self.assertIs(publication, event.object)
+        self.assertEqual(PackagePublishingStatus.PUBLISHED, status)
+        self.assertIsNotNone(published_at)
+        self.assertEqual(publication.datepublished, published_at)
+
+    def test_repeated_publication_does_not_notify_again(self):
+        publication = self.makePublication()
+        publication.setPublished()
+        published_at = publication.datepublished
+        publication.setPublished()
+        self.assertEqual(1, len(self.events))
+        self.assertEqual(published_at, publication.datepublished)
+
+    def test_existing_publication_does_not_notify(self):
+        publication = self.makePublication()
+        publication.status = PackagePublishingStatus.PUBLISHED
+        published_at = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        publication.datepublished = published_at
+        publication.setPublished()
+        self.assertEqual([], self.events)
+        self.assertEqual(published_at, publication.datepublished)
+
+    def test_published_record_without_timestamp_notifies(self):
+        publication = self.makePublication()
+        publication.status = PackagePublishingStatus.PUBLISHED
+        publication.setPublished()
+        self.assertEqual(1, len(self.events))
+        self.assertIsNotNone(publication.datepublished)
+
+    def test_inactive_publications_do_not_notify(self):
+        for status in (
+            PackagePublishingStatus.SUPERSEDED,
+            PackagePublishingStatus.DELETED,
+            PackagePublishingStatus.OBSOLETE,
+        ):
+            publication = self.makePublication()
+            publication.status = status
+            publication.setPublished()
+            self.assertEqual(status, publication.status)
+            self.assertIsNone(publication.datepublished)
+        self.assertEqual([], self.events)
+
+    def test_source_publication_does_not_notify(self):
+        publication = self.factory.makeSourcePackagePublishingHistory(
+            status=PackagePublishingStatus.PENDING
+        )
+        publication.setPublished()
+        self.assertEqual(PackagePublishingStatus.PUBLISHED, publication.status)
+        self.assertIsNotNone(publication.datepublished)
+        self.assertEqual([], self.events)
+
+    def test_event_identifies_destination_archive(self):
+        publication = self.makePublication()
+        original_archive = publication.archive
+        destination = self.factory.makeArchive(
+            distribution=publication.distroseries.distribution,
+            purpose=ArchivePurpose.PPA,
+        )
+        publication.archive = destination
+        publication.copied_from_archive = original_archive
+        publication.setPublished()
+        event = self.events[0][1]
+        self.assertEqual(destination.id, event.object.archive.id)
+        self.assertEqual(
+            original_archive.id, event.object.copied_from_archive.id
+        )
+
+    def test_rollback_allows_notification_on_retry(self):
+        publication = self.makePublication()
+        store = Store.of(publication)
+        store.flush()
+        publication_id = publication.id
+        transaction.commit()
+        publication.setPublished()
+        self.assertEqual(1, len(self.events))
+        transaction.abort()
+        publication = store.get(BinaryPackagePublishingHistory, publication_id)
+        self.assertEqual(PackagePublishingStatus.PENDING, publication.status)
+        self.assertIsNone(publication.datepublished)
+        publication.setPublished()
+        self.assertEqual(2, len(self.events))
 
 
 class TestNativePublishingBase(TestCaseWithFactory, SoyuzTestPublisher):

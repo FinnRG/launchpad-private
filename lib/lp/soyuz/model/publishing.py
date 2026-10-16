@@ -37,6 +37,7 @@ from storm.properties import DateTime, Int, Unicode
 from storm.references import Reference
 from storm.store import Store
 from zope.component import getUtility
+from zope.event import notify
 from zope.interface import implementer
 from zope.security.proxy import isinstance as zope_isinstance
 from zope.security.proxy import removeSecurityProxy
@@ -72,6 +73,7 @@ from lp.soyuz.enums import (
     PackagePublishingStatus,
     PackageUploadStatus,
 )
+from lp.soyuz.event import BinaryPackagePublishedEvent
 from lp.soyuz.interfaces.binarypackagebuild import (
     BuildSetStatus,
     IBinaryPackageBuildSet,
@@ -934,6 +936,13 @@ class BinaryPackagePublishingHistory(StormBase, ArchivePublisherBase):
         self.dateremoved = dateremoved
         self._channel = channel
         self.copied_from_archive = copied_from_archive
+
+    def setPublished(self):
+        """Notify when this binary is first marked published."""
+        was_published = self.datepublished is not None
+        super().setPublished()
+        if not was_published and self.datepublished is not None:
+            notify(BinaryPackagePublishedEvent(self))
 
     @property
     def binarypackageformat(self):
