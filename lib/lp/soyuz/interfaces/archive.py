@@ -776,7 +776,7 @@ class IArchiveSubscriberView(Interface):
         page_size=Int(title=_("Page size"), min=1, max=100, required=False),
         name=TextLine(title=_("Source package name"), required=False),
         exact_match=Bool(title=_("Exact name match"), required=False),
-        statuses=List(
+        status=List(
             title=_("Publication statuses"),
             description=_(
                 "Return only these source publication statuses. Defaults "
@@ -831,7 +831,7 @@ class IArchiveSubscriberView(Interface):
         page_size=50,
         name=None,
         exact_match=False,
-        statuses=None,
+        status=None,
         ubuntu_change=None,
         signed_by=None,
         maintained_by=None,
@@ -851,7 +851,7 @@ class IArchiveSubscriberView(Interface):
             uses containment unless `exact_match` is True.
         :param exact_match: Match the complete source package name rather
             than a substring. Defaults to False.
-        :param statuses: A list of `PackagePublishingStatus` values, passed
+        :param status: A list of `PackagePublishingStatus` values, passed
             as strings such as "Published" or "Superseded" through the API.
             Omitted or None defaults to Pending and Published. An empty
             list matches no publications.

@@ -1863,7 +1863,7 @@ class TestSourcePackageList(PackageListingTestCase):
             response = ws.named_get(
                 archive_url,
                 "getSourcePackageList",
-                statuses=["Published", "Superseded", "Deleted"],
+                status=["Published", "Superseded", "Deleted"],
                 order_by=keys,
             )
             self.assertEqual(200, response.status)
@@ -2004,7 +2004,7 @@ class TestSourcePackageList(PackageListingTestCase):
             ).jsonBody()["total"],
         )
 
-    def test_statuses_control_selection(self):
+    def test_status_controls_selection(self):
         """Select active, inactive or empty sets of publication statuses."""
         with admin_logged_in():
             archive = self.factory.makeArchive()
@@ -2034,7 +2034,7 @@ class TestSourcePackageList(PackageListingTestCase):
             [],
         ):
             response = ws.named_get(
-                archive_url, "getSourcePackageList", statuses=statuses
+                archive_url, "getSourcePackageList", status=statuses
             )
             self.assertEqual(200, response.status)
             result = response.jsonBody()
@@ -2046,7 +2046,7 @@ class TestSourcePackageList(PackageListingTestCase):
         result = ws.named_get(
             archive_url,
             "getSourcePackageList",
-            statuses=["Superseded", "Deleted"],
+            status=["Superseded", "Deleted"],
             page_size=1,
             page=2,
         ).jsonBody()
@@ -2069,8 +2069,8 @@ class TestSourcePackageList(PackageListingTestCase):
             {"page_size": 0},
             {"page_size": 101},
             {"binary_names_limit": 0},
-            {"statuses": ["Unknown"]},
-            {"statuses": ["Published", "Unknown"]},
+            {"status": ["Unknown"]},
+            {"status": ["Published", "Unknown"]},
         ):
             self.assertEqual(
                 400,
