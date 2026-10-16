@@ -105,6 +105,7 @@ from lp.services.database.stormexpr import BulkUpdate
 from lp.services.features import getFeatureFlag
 from lp.services.gpg.interfaces import IGPGHandler
 from lp.services.job.interfaces.job import JobStatus
+from lp.services.librarian.browser import ProxiedLibraryFileAlias
 from lp.services.librarian.model import LibraryFileAlias, LibraryFileContent
 from lp.services.propertycache import cachedproperty, get_property_cache
 from lp.services.signing.enums import SigningKeyType
@@ -891,6 +892,255 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         return DecoratedResultSet(
             published_sources, pre_iter_hook=load_api_extra_objects
         )
+
+    def getSourcePackageList(
+        self,
+        page=1,
+        page_size=50,
+        name=None,
+        exact_match=False,
+        status=None,
+        ubuntu_change=None,
+        signed_by=None,
+        maintained_by=None,
+        distro_series=None,
+        pocket=None,
+        order_by=None,
+        include_binaries=False,
+        include_architectures=False,
+        binary_names_limit=20,
+    ):
+        """See `IArchive`."""
+        if page < 1 or not 1 <= page_size <= 100:
+            raise ValueError("page must be positive; page_size must be 1-100")
+        if not 1 <= binary_names_limit <= 100:
+            raise ValueError("binary_names_limit must be 1-100")
+        if isinstance(order_by, str):
+            raise InvalidOrderBy("order_by must be a sequence of sort keys.")
+        from lp.registry.model.distroseries import DistroSeries
+
+        if status is None:
+            status = active_publishing_status
+        clauses = [
+            SourcePackagePublishingHistory.archive == self,
+            SourcePackagePublishingHistory.status.is_in(status),
+        ]
+        if name is not None:
+            clauses.extend(
+                [
+                    SourcePackagePublishingHistory.sourcepackagename_id
+                    == SourcePackageName.id,
+                    (
+                        SourcePackageName.name == name
+                        if exact_match
+                        else SourcePackageName.name.contains_string(name)
+                    ),
+                ]
+            )
+        if distro_series is not None:
+            clauses.append(
+                SourcePackagePublishingHistory.distroseries == distro_series
+            )
+        if pocket is not None:
+            clauses.append(SourcePackagePublishingHistory.pocket == pocket)
+        if (
+            maintained_by is not None
+            or signed_by is not None
+            or ubuntu_change is not None
+        ):
+            clauses.append(
+                SourcePackagePublishingHistory.sourcepackagerelease_id
+                == SourcePackageRelease.id
+            )
+        if maintained_by is not None:
+            clauses.append(SourcePackageRelease.maintainer == maintained_by)
+        if signed_by is not None:
+            clauses.append(SourcePackageRelease.signing_key_owner == signed_by)
+        if ubuntu_change is not None:
+            ubuntu_version = Cast(
+                SourcePackageRelease.version, "text"
+            ).contains_string("ubuntu")
+            clauses.append(
+                ubuntu_version if ubuntu_change else Not(ubuntu_version)
+            )
+
+        expressions = {
+            "source_package_name": SourcePackageName.name,
+            "series": Func("debversion_sort_key", DistroSeries.version),
+            "pocket": _alphabetical_enum_order(
+                SourcePackagePublishingHistory.pocket, PackagePublishingPocket
+            ),
+            "status": _alphabetical_enum_order(
+                SourcePackagePublishingHistory.status, PackagePublishingStatus
+            ),
+            "date_created": SourcePackagePublishingHistory.datecreated,
+            "date_published": SourcePackagePublishingHistory.datepublished,
+        }
+        keys = order_by or ["-date_created"]
+        ordering = []
+        for key in keys:
+            if not isinstance(key, str):
+                raise InvalidOrderBy("Unrecognized order_by: %r" % (key,))
+            descending = key.startswith("-")
+            field = key[1:] if descending else key
+            if field not in expressions:
+                raise InvalidOrderBy("Unrecognized order_by: %r" % (key,))
+            expression = expressions[field]
+            ordering.append(
+                Desc(expression) if descending else Asc(expression)
+            )
+        ordering.append(Desc(SourcePackagePublishingHistory.id))
+
+        store = Store.of(self)
+        # The count needs filter joins, but not display-only relationships.
+        total = store.find(SourcePackagePublishingHistory.id, *clauses).count()
+        total_pages = (total + page_size - 1) // page_size
+        if page > max(1, total_pages):
+            raise NotFoundError("Source package page %s" % page)
+        offset = (page - 1) * page_size
+        # Scalar rows avoid the implicit work of SPPH entry serialization.
+        sources = list(
+            store.find(
+                (
+                    SourcePackagePublishingHistory.id,
+                    SourcePackageName.name,
+                    SourcePackageRelease.version,
+                    DistroSeries.name,
+                    SourcePackagePublishingHistory.pocket,
+                    SourcePackagePublishingHistory.status,
+                ),
+                *clauses,
+                SourcePackagePublishingHistory.sourcepackagename_id
+                == SourcePackageName.id,
+                SourcePackagePublishingHistory.sourcepackagerelease_id
+                == SourcePackageRelease.id,
+                SourcePackagePublishingHistory.distroseries_id
+                == DistroSeries.id,
+            ).order_by(*ordering)[offset : offset + page_size]
+        )
+        source_ids = [source[0] for source in sources]
+        binaries = {}
+        if include_binaries:
+            binaries = getUtility(IPublishingSet).getActiveBinariesForSources(
+                source_ids, limit=binary_names_limit
+            )
+        architectures = {}
+        if include_architectures:
+            architectures = getUtility(
+                IPublishingSet
+            ).getBuildArchitecturesForSources(source_ids)
+        entries = []
+        for source_id, source_name, version, series, pocket, status in sources:
+            entry = {
+                "id": source_id,
+                "source_package_name": source_name,
+                "source_package_version": version,
+                "series": series,
+                "pocket": pocket.title,
+                "status": status.title,
+            }
+            if include_architectures:
+                entry["architectures"] = architectures.get(source_id, [])
+            if include_binaries:
+                source_binaries = binaries.get(
+                    source_id, {"binaries": [], "total": 0}
+                )
+                entry["binaries_total"] = source_binaries["total"]
+                entry["binaries"] = [
+                    {
+                        "name": binary["binary_package_name"],
+                        "id": binary["binary_publication_id"],
+                    }
+                    for binary in source_binaries["binaries"]
+                ]
+            entries.append(entry)
+        return {
+            "total": total,
+            "total_pages": total_pages,
+            "page": page,
+            "page_size": page_size,
+            "sources": entries,
+        }
+
+    def getBinaryPackageDetails(self, binary_id):
+        """See `IArchive`."""
+        publication = getUtility(IPublishingSet).getByIdAndArchive(
+            binary_id, self, source=False
+        )
+        if publication is None:
+            raise NotFoundError(binary_id)
+        release = publication.binarypackagerelease
+        release_ids = [release.id]
+        # A visible binary copy may reference a build in a private archive.
+        if release.build is not None:
+            from lp.soyuz.model.distroarchseries import DistroArchSeries
+
+            release_ids = Select(
+                BinaryPackageRelease.id,
+                where=And(
+                    BinaryPackagePublishingHistory.archive == self,
+                    BinaryPackagePublishingHistory.pocket
+                    == publication.pocket,
+                    BinaryPackagePublishingHistory.status.is_in(
+                        active_publishing_status
+                    ),
+                    BinaryPackagePublishingHistory.binarypackagerelease_id
+                    == BinaryPackageRelease.id,
+                    BinaryPackageRelease.binarypackagename_id
+                    == release.binarypackagename_id,
+                    BinaryPackageRelease.build_id == BinaryPackageBuild.id,
+                    # Match source releases without dereferencing the build.
+                    BinaryPackageBuild.source_package_release_id
+                    == Select(
+                        BinaryPackageBuild.source_package_release_id,
+                        tables=[BinaryPackageBuild, BinaryPackageRelease],
+                        where=And(
+                            BinaryPackageBuild.id
+                            == BinaryPackageRelease.build_id,
+                            BinaryPackageRelease.id == release.id,
+                        ),
+                    ),
+                    BinaryPackagePublishingHistory.distroarchseries_id
+                    == DistroArchSeries.id,
+                    DistroArchSeries.distroseries_id
+                    == publication.distroarchseries.distroseries_id,
+                ),
+            )
+        files = list(
+            Store.of(self)
+            .find(
+                (LibraryFileAlias, LibraryFileContent.filesize),
+                Or(
+                    BinaryPackageFile.binarypackagerelease_id == release.id,
+                    BinaryPackageFile.binarypackagerelease_id.is_in(
+                        release_ids
+                    ),
+                ),
+                BinaryPackageFile.libraryfile_id == LibraryFileAlias.id,
+                LibraryFileAlias.content_id == LibraryFileContent.id,
+            )
+            .config(distinct=True)
+            .order_by(LibraryFileAlias.filename, LibraryFileAlias.id)
+        )
+        urls = [
+            ProxiedLibraryFileAlias(alias, self).http_url
+            for alias, size in files
+        ]
+        return {
+            "id": publication.id,
+            "binary_package_name": release.name,
+            "binary_package_version": release.version,
+            "summary": release.summary,
+            "description": release.description,
+            "files": [
+                {
+                    "filename": alias.filename,
+                    "size": size,
+                    "url": url,
+                }
+                for (alias, size), url in zip(files, urls)
+            ],
+        }
 
     def getPublishedSources(
         self,

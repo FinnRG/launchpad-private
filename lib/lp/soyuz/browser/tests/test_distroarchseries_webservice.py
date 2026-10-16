@@ -35,6 +35,18 @@ class TestDistroArchSeriesWebservice(TestCaseWithFactory):
 
     layer = LaunchpadFunctionalLayer
 
+    def test_distroseries_id_accessible_but_not_exported(self):
+        """The foreign key is readable in Python, but absent from API JSON."""
+        architecture = self.factory.makeDistroArchSeries()
+        series_id = architecture.distroseries.id
+        user = self.factory.makePerson()
+        with person_logged_in(user):
+            self.assertEqual(series_id, architecture.distroseries_id)
+            architecture_url = api_url(architecture)
+        ws = webservice_for_person(user, default_api_version="devel")
+        representation = self.getWebserviceJSON(ws, architecture_url)
+        self.assertNotIn("distroseries_id", representation)
+
     def test_distroseries_architectures_anonymous(self):
         """Test anonymous DistroArchSeries API Access."""
         distroseries = self.factory.makeDistroArchSeries().distroseries

@@ -1323,6 +1323,243 @@ class PublishingSetTests(TestCaseWithFactory):
         self.assertEqual(None, record)
 
 
+class TestPublishingSourceEnrichments(TestCaseWithFactory):
+    layer = DatabaseFunctionalLayer
+
+    def setUp(self):
+        """Create an archive and architecture for direct publishing queries."""
+        super().setUp()
+        login_admin()
+        self.archive = self.factory.makeArchive()
+        self.series = self.factory.makeDistroSeries(
+            distribution=self.archive.distribution
+        )
+        self.das = self.factory.makeDistroArchSeries(distroseries=self.series)
+        self.publishing_set = getUtility(IPublishingSet)
+
+    def test_binaries_count_all_names_with_default_or_unlimited_limit(self):
+        """Object/id inputs count all names in one query with either limit."""
+        # Exceed the default 20-name cap by one. Zero-padded suffixes make
+        # alphabetical ordering agree with the expected list below.
+        names = ["binary-%02d" % index for index in range(21)]
+        first = self.factory.makeBinaryPackagePublishingHistory(
+            archive=self.archive,
+            distroarchseries=self.das,
+            binarypackagename=names[0],
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        source = self.factory.makeSPPHForBPPH(first)
+        # Keep all names in the same source release and publication scope.
+        # Pending binaries are active too, including the name beyond the cap.
+        for name in names[1:]:
+            self.factory.makeBinaryPackagePublishingHistory(
+                archive=self.archive,
+                distroarchseries=self.das,
+                pocket=source.pocket,
+                source_package_release=source.sourcepackagerelease,
+                binarypackagename=name,
+                status=PackagePublishingStatus.PENDING,
+            )
+        source_id = source.id
+        # Flush fixture writes before recording so the query count measures
+        # the helper alone, not inserts triggered by Storm's autoflush.
+        Store.of(removeSecurityProxy(source)).flush()
+        # Both accepted input forms must produce the same source-id mapping.
+        for sources in ([source], [source_id]):
+            # Omitted limit uses the default cap; None returns all names.
+            for options, expected_names in (
+                ({}, names[:20]),
+                ({"limit": None}, names),
+            ):
+                with StormStatementRecorder() as recorder:
+                    result = self.publishing_set.getActiveBinariesForSources(
+                        sources, **options
+                    )
+                # Fetching the list and its total must not need separate
+                # queries, even when the list is capped.
+                self.assertThat(recorder, HasQueryCount(Equals(1)))
+                # The total is computed before the cap, so it remains 21
+                # whether 20 names or all 21 names are returned.
+                self.assertEqual(21, result[source_id]["total"])
+                # Exact equality checks both the selected names and order.
+                self.assertEqual(
+                    expected_names,
+                    [
+                        binary["binary_package_name"]
+                        for binary in result[source_id]["binaries"]
+                    ],
+                )
+
+    def test_binaries_match_source_archive_series_and_pocket(self):
+        """Exclude binaries published in another archive, series or pocket."""
+        matching = self.factory.makeBinaryPackagePublishingHistory(
+            archive=self.archive,
+            distroarchseries=self.das,
+            binarypackagename="matching",
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        source = self.factory.makeSPPHForBPPH(matching)
+        other_archive = self.factory.makeArchive(
+            distribution=self.archive.distribution
+        )
+        other_series = self.factory.makeDistroSeries(
+            distribution=self.archive.distribution
+        )
+        other_das = self.factory.makeDistroArchSeries(
+            distroseries=other_series
+        )
+        # Share the source release and vary one publication field at a time
+        # so each exclusion depends on archive, series or pocket filtering.
+        for archive, das, pocket, name in (
+            (other_archive, self.das, source.pocket, "other-archive"),
+            (self.archive, other_das, source.pocket, "other-series"),
+            (
+                self.archive,
+                self.das,
+                PackagePublishingPocket.UPDATES,
+                "other-pocket",
+            ),
+        ):
+            self.factory.makeBinaryPackagePublishingHistory(
+                archive=archive,
+                distroarchseries=das,
+                pocket=pocket,
+                source_package_release=source.sourcepackagerelease,
+                binarypackagename=name,
+                status=PackagePublishingStatus.PUBLISHED,
+            )
+        result = self.publishing_set.getActiveBinariesForSources([source.id])
+        self.assertEqual(
+            [
+                {
+                    "binary_package_name": "matching",
+                    "binary_publication_id": matching.id,
+                }
+            ],
+            result[source.id]["binaries"],
+        )
+        self.assertEqual(1, result[source.id]["total"])
+
+    def test_binaries_include_copies_from_other_build_contexts(self):
+        """Select copied publications despite their original build context."""
+        original = self.factory.makeBinaryPackagePublishingHistory(
+            archive=self.archive,
+            distroarchseries=self.das,
+            binarypackagename="copied",
+            architecturespecific=False,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        source = self.factory.makeSPPHForBPPH(original)
+        target_archive = self.factory.makeArchive(
+            distribution=self.archive.distribution
+        )
+        target_series = self.factory.makeDistroSeries(
+            distribution=self.archive.distribution
+        )
+        target_das = self.factory.makeDistroArchSeries(
+            distroseries=target_series
+        )
+        copied_source = self.factory.makeSourcePackagePublishingHistory(
+            archive=target_archive,
+            distroseries=target_series,
+            sourcepackagerelease=source.sourcepackagerelease,
+            pocket=source.pocket,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        # A copy reuses the binary release and its original build; only the
+        # publication belongs to the target archive and series.
+        copied_binary = self.factory.makeBinaryPackagePublishingHistory(
+            archive=target_archive,
+            distroarchseries=target_das,
+            binarypackagerelease=original.binarypackagerelease,
+            pocket=source.pocket,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        result = self.publishing_set.getActiveBinariesForSources(
+            [copied_source.id]
+        )
+        # Return the target publication id, not the original publication id.
+        self.assertEqual(
+            [
+                {
+                    "binary_package_name": "copied",
+                    "binary_publication_id": copied_binary.id,
+                }
+            ],
+            result[copied_source.id]["binaries"],
+        )
+        self.assertEqual(1, result[copied_source.id]["total"])
+
+    def test_empty_inputs_do_not_query(self):
+        """Both batch helpers return empty mappings without database work."""
+        # Empty batches must skip the joins used for non-empty inputs.
+        with StormStatementRecorder() as recorder:
+            self.assertEqual(
+                {}, self.publishing_set.getActiveBinariesForSources([])
+            )
+            self.assertEqual(
+                {}, self.publishing_set.getBuildArchitecturesForSources([])
+            )
+        self.assertThat(recorder, HasQueryCount(Equals(0)))
+
+    def test_architectures_select_newest_active_same_named_build(self):
+        """Ignore later inactive or differently named builds when selecting."""
+        name = self.factory.makeSourcePackageName(name="same-name")
+        first = self.factory.makeBinaryPackagePublishingHistory(
+            archive=self.archive,
+            distroarchseries=self.das,
+            sourcepackagename=name,
+            binarypackagename="same-name",
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        source = self.factory.makeSPPHForBPPH(first)
+        # A distinct binary version creates another publication for a new
+        # build of the same source release and architecture.
+        newest = self.factory.makeBinaryPackagePublishingHistory(
+            archive=self.archive,
+            distroarchseries=self.das,
+            pocket=source.pocket,
+            source_package_release=source.sourcepackagerelease,
+            binarypackagename="same-name",
+            version="2.0",
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(newest.build).status = BuildStatus.FULLYBUILT
+        # These builds have higher ids but fail the name or status filter;
+        # neither may displace the newest eligible build.
+        for binary_name, version, status in (
+            ("other-name", "3.0", PackagePublishingStatus.PUBLISHED),
+            ("same-name", "4.0", PackagePublishingStatus.SUPERSEDED),
+        ):
+            self.factory.makeBinaryPackagePublishingHistory(
+                archive=self.archive,
+                distroarchseries=self.das,
+                pocket=source.pocket,
+                source_package_release=source.sourcepackagerelease,
+                binarypackagename=binary_name,
+                version=version,
+                status=status,
+            )
+        for sources in ([source], [source.id]):
+            result = self.publishing_set.getBuildArchitecturesForSources(
+                sources
+            )
+            self.assertEqual(1, len(result[source.id]))
+            architecture = result[source.id][0]
+            self.assertEqual(
+                self.das.architecturetag, architecture["architecture_tag"]
+            )
+            self.assertEqual(
+                "Successfully built", architecture["build_status"]
+            )
+            # The URL identifies the selected build, not just its status.
+            self.assertTrue(
+                architecture["build_web_link"].endswith(
+                    "/+build/%d" % newest.build.id
+                )
+            )
+
+
 class TestPublishingSetLite(TestCaseWithFactory):
     layer = ZopelessDatabaseLayer
 
