@@ -691,11 +691,13 @@ class RequestAutopkgtestJob(BranchMergeProposalJobDerived):
     retry_error_types = (AutopkgtestRequestNotReady,)
 
     @classmethod
-    def create(cls, validation, publication):
+    def create(cls, validation, publication, attempt=0):
         from lp.soyuz.model.mergeproposalvalidation import (
             MergeProposalValidation,
         )
 
+        if attempt is not None and (type(attempt) is not int or attempt < 0):
+            raise ValueError("Attempt must be a nonnegative integer or None")
         source = publication.build.source_package_release
         git_build = source.source_package_git_build
         store = IPrimaryStore(MergeProposalValidation)
@@ -724,14 +726,28 @@ class RequestAutopkgtestJob(BranchMergeProposalJobDerived):
             branch_merge_proposal=validation.branch_merge_proposal,
             job_type=cls.class_job_type,
         )
-        for job in existing:
+        matching = [
+            job
+            for job in existing
             if all(
                 job.metadata.get(key) == value
                 for key, value in identity.items()
-            ):
+            )
+        ]
+        if attempt is None:
+            attempt = (
+                max(
+                    (job.metadata.get("attempt", 0) for job in matching),
+                    default=-1,
+                )
+                + 1
+            )
+        for job in matching:
+            if job.metadata.get("attempt", 0) == attempt:
                 return cls(job)
         metadata = dict(
             identity,
+            attempt=attempt,
             publication_id=publication.id,
             source_package_git_build_id=git_build.id,
             archive_id=publication.archive.id,
@@ -746,7 +762,48 @@ class RequestAutopkgtestJob(BranchMergeProposalJobDerived):
         )
         return cls._create(validation.branch_merge_proposal, metadata)
 
-    def run(self):
+    @classmethod
+    def retry(cls, job):
+        from lp.code.model.revisionstatus import RevisionStatusReport
+        from lp.code.scripts.revisionstatuswatch import FINAL_RESULTS
+        from lp.soyuz.model.mergeproposalvalidation import (
+            MergeProposalValidation,
+        )
+        from lp.soyuz.model.publishing import BinaryPackagePublishingHistory
+
+        metadata = job.metadata
+        state = metadata.get("autopkgtest")
+        store = IPrimaryStore(MergeProposalValidation)
+        report = (
+            None
+            if state is None
+            else store.get(RevisionStatusReport, state["report_id"])
+        )
+        if report is None or report.result not in FINAL_RESULTS:
+            raise ValueError(
+                "Only terminal autopkgtest reports can be retried"
+            )
+        validation = store.get(
+            MergeProposalValidation, metadata["validation_id"]
+        )
+        publication = store.get(
+            BinaryPackagePublishingHistory, metadata["publication_id"]
+        )
+        if validation is None or publication is None:
+            raise ValueError("The validation or publication no longer exists")
+        retry_job = cls.create(validation, publication, attempt=None)
+        if retry_job is not None:
+            retry_metadata = retry_job.metadata
+            retry_metadata["parameters"] = metadata["parameters"]
+            retry_job.context._json_data = json.dumps(retry_metadata)
+        return retry_job
+
+    def updateAutopkgtestState(self, state):
+        metadata = self.metadata
+        metadata["autopkgtest"] = state
+        self.context._json_data = json.dumps(metadata)
+
+    def getAutopkgtestContext(self):
         from lp.soyuz.model.mergeproposalvalidation import (
             MergeProposalValidation,
         )
@@ -802,13 +859,23 @@ class RequestAutopkgtestJob(BranchMergeProposalJobDerived):
             != metadata["distro_arch_series_id"]
             or source is None
             or source.id != metadata["source_package_release_id"]
+            or source.sourcepackagename.name != metadata["source_package_name"]
+            or str(source.version) != metadata["source_package_version"]
             or git_build is None
             or git_build.id != metadata["source_package_git_build_id"]
             or git_build.commit_sha1 != metadata["commit_sha1"]
             or git_build.git_repository != proposal.source_git_repository
         ):
             raise AutopkgtestRequestNotReady("Validation identity changed.")
+        return validation, publication
+
+    def run(self):
+        context = self.getAutopkgtestContext()
         backend = queryUtility(IRequestAutopkgtestBackend)
+        if context is None:
+            if backend is not None:
+                backend.cancelTests(self)
+            return
         if (
             not getFeatureFlag("autopkgtest.request.enabled")
             or backend is None

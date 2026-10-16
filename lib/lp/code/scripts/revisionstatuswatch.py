@@ -4,17 +4,19 @@
 """Collect external revision check results in short transactions."""
 
 __all__ = [
+    "FINAL_RESULTS",
     "RevisionStatusWatchCollector",
     "RevisionStatusWatchCronScript",
     "RevisionStatusWatchPollResult",
 ]
 
+import json
 import logging
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
 import transaction
-from zope.component import getUtility
+from zope.component import getUtility, queryUtility
 from zope.security.proxy import removeSecurityProxy
 
 from lp.code.enums import RevisionStatusResult
@@ -42,12 +44,18 @@ class RevisionStatusWatchPollResult:
     """
 
     def __init__(
-        self, result=None, url=None, result_summary=None, remote_ref=None
+        self,
+        result=None,
+        url=None,
+        result_summary=None,
+        remote_ref=None,
+        properties=None,
     ):
         self.result = result
         self.url = url
         self.result_summary = result_summary
         self.remote_ref = remote_ref
+        self.properties = properties
 
 
 class RevisionStatusWatchCollector:
@@ -122,6 +130,14 @@ class RevisionStatusWatchCollector:
         if watch.report.result in FINAL_RESULTS:
             watch.destroySelf()
             return None
+        handler = self.handlers.get(watch.remote_system)
+        is_active = getattr(handler, "isActive", None)
+        if is_active is not None and not is_active(
+            deepcopy(watch.remote_ref), watch.report_id
+        ):
+            watch.report.update(result=RevisionStatusResult.CANCELLED)
+            watch.destroySelf()
+            return None
         if watch.next_check is None or watch.next_check > now:
             return None
         return watch
@@ -192,10 +208,15 @@ class RevisionStatusWatchCollector:
                 and watch.report.result == RevisionStatusResult.RUNNING
             ):
                 result = None
+            properties = None
+            if poll_result.properties is not None:
+                properties = dict(watch.report.properties or {})
+                properties.update(poll_result.properties)
             watch.report.update(
                 result=result,
                 url=poll_result.url,
                 result_summary=poll_result.result_summary,
+                properties=properties,
             )
             if result in FINAL_RESULTS:
                 watch.destroySelf()
@@ -241,6 +262,10 @@ class RevisionStatusWatchCollector:
         ) + FINAL_RESULTS
         if poll_result.result not in allowed_results:
             raise ValueError("Handler returned an invalid revision status")
+        if poll_result.properties is not None:
+            if not isinstance(poll_result.properties, dict):
+                raise ValueError("Report properties must be a JSON object")
+            json.dumps(poll_result.properties, allow_nan=False)
 
 
 class RevisionStatusWatchCronScript(LaunchpadCronScript):
@@ -259,7 +284,13 @@ class RevisionStatusWatchCronScript(LaunchpadCronScript):
 
     def getHandlers(self):
         """Return handlers when supported external adapters are available."""
-        return {}
+        from lp.code.autopkgtest import AutopkgtestWatchHandler
+        from lp.code.interfaces.autopkgtest import IAutopkgtestAdapter
+
+        adapter = queryUtility(IAutopkgtestAdapter)
+        if adapter is None:
+            return {}
+        return {"autopkgtest": AutopkgtestWatchHandler(adapter)}
 
     def main(self):
         if self.args:

@@ -250,6 +250,12 @@
     <allow interface="lp.code.interfaces.autopkgtest.IRequestAutopkgtestJobSource" />
   </lp:securedutility>
 
+  <lp:securedutility
+      class="lp.code.model.autopkgtest.AutopkgtestRequestBackend"
+      provides="lp.code.interfaces.autopkgtest.IRequestAutopkgtestBackend">
+    <allow interface="lp.code.interfaces.autopkgtest.IRequestAutopkgtestBackend" />
+  </lp:securedutility>
+
   <class class="lp.code.model.branchmergeproposaljob.CodeReviewCommentEmailJob">
     <allow interface="lp.code.interfaces.branchmergeproposal.ICodeReviewCommentEmailJob" />
     <allow interface="lp.code.interfaces.branchmergeproposal.IBranchMergeProposalJob" />
