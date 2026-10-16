@@ -70,6 +70,8 @@ LPCONFIG=launchpad-scripts
 # Send email about new merge proposals, generating a diff first if needed
 * * * * * {{ code_dir }}/cronscripts/process-job-source.py IBranchMergeProposalJobSource -q --log-file=DEBUG:{{ logs_dir }}/process-job-source.IBranchMergeProposalJobSource.log
 
+*/5 * * * * {{ code_dir }}/cronscripts/update-revision-status-watches.py -q --log-file=INFO:{{ logs_dir }}/update-revision-status-watches.log
+
 # Per https://portal.admin.canonical.com/C48031
 */5 * * * * {{ code_dir }}/cronscripts/process-job-source.py IInitializeDistroSeriesJobSource -q --log-file=INFO:{{ logs_dir }}/process-job-source.IInitializeDistroSeriesJobSource.log
 
