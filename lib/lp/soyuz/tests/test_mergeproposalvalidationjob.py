@@ -124,8 +124,36 @@ class TestCreateValidationArchiveJob(
         )
         [job] = self.getJobs(proposal)
         self.assertEqual(
-            "True", job.metadata["parameters"]["autopkgtest-all-proposed"]
+            "true", job.metadata["parameters"]["autopkgtest-all-proposed"]
         )
+
+    def test_boolean_parameters_are_normalized(self):
+        for value, expected in (
+            ("TRUE", "true"),
+            ("tRuE", "true"),
+            ("FALSE", "false"),
+            ("FaLsE", "false"),
+        ):
+            with self.subTest(value=value):
+                [self.source_ref] = self.factory.makeGitRefs(
+                    target=self.target, owner=self.registrant
+                )
+                proposal = self.makeProposal(
+                    description=(
+                        "A change.\n\nActivate-Workflow: TrUe\n"
+                        "Autopkgtest-All-Proposed: %s\n"
+                        "Autopkgtest-Trigger: Package/1.0~Test" % value
+                    )
+                )
+                [job] = self.getJobs(proposal)
+                parameters = job.metadata["parameters"]
+                self.assertEqual("true", parameters["activate-workflow"])
+                self.assertEqual(
+                    expected, parameters["autopkgtest-all-proposed"]
+                )
+                self.assertEqual(
+                    "Package/1.0~Test", parameters["autopkgtest-trigger"]
+                )
 
     def test_run_creates_archive_and_queues_source_build(self):
         proposal = self.makeProposal()

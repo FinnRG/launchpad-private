@@ -12,6 +12,7 @@ from storm.store import Store
 from zope.component import getUtility
 from zope.security.proxy import removeSecurityProxy
 
+from lp.code.autopkgtest import AutopkgtestWatchHandler
 from lp.code.enums import RevisionStatusResult
 from lp.code.interfaces.revisionstatus import IRevisionStatusReportSet
 from lp.code.interfaces.revisionstatuswatch import IRevisionStatusWatchSet
@@ -123,6 +124,41 @@ class TestRevisionStatusWatchCollector(TestCaseWithFactory):
         self.assertIsNotNone(report.date_started)
         self.assertIsNone(report.date_finished)
         self.assertIsNotNone(self.getWatch(watch_id))
+
+    def test_result_properties_preserve_existing_fields_after_watch_deletion(
+        self,
+    ):
+        watch_id, report_id = self.makeWatch(
+            response=RevisionStatusWatchPollResult(
+                result=RevisionStatusResult.SUCCEEDED,
+                properties={"external": {"log_locator": "test-log"}},
+            )
+        )
+        self.getReport(report_id).properties = {"existing": "keep"}
+        self.collector.run()
+        self.assertIsNone(self.getWatch(watch_id))
+        self.assertEqual(
+            {"existing": "keep", "external": {"log_locator": "test-log"}},
+            self.getReport(report_id).properties,
+        )
+
+    def test_invalid_result_properties_are_polling_failures(self):
+        records = []
+        for properties in ([], {"not_json": object()}):
+            records.append(
+                self.makeWatch(
+                    response=RevisionStatusWatchPollResult(
+                        result=RevisionStatusResult.SUCCEEDED,
+                        properties=properties,
+                    )
+                )
+            )
+        self.collector.run()
+        for watch_id, report_id in records:
+            self.assertEqual(1, self.getWatch(watch_id).failure_count)
+            self.assertEqual(
+                RevisionStatusResult.WAITING, self.getReport(report_id).result
+            )
 
     def test_terminal_results_remove_watches_and_keep_reports(self):
         records = []
@@ -463,7 +499,9 @@ class TestRevisionStatusWatchCronScript(TestCaseWithFactory):
 
     def test_no_handlers_does_not_change_watches(self):
         watch_id, report_id = self.makeWatch()
-        self.assertRaises(LaunchpadScriptFailure, self.makeScript().main)
+        self.assertRaises(
+            LaunchpadScriptFailure, self.makeScript(handlers={}).main
+        )
         watch = self.watch_set.getByID(watch_id)
         self.assertIsNone(watch.lastchecked)
         self.assertEqual(0, watch.failure_count)
@@ -472,6 +510,18 @@ class TestRevisionStatusWatchCronScript(TestCaseWithFactory):
         )
         self.assertEqual(report_id, watch.report_id)
         self.assertEqual(RevisionStatusResult.WAITING, watch.report.result)
+
+    def test_default_handler_discovery_uses_registered_adapter(self):
+        adapter = mock.Mock()
+        self.patch(
+            revisionstatuswatch,
+            "queryUtility",
+            mock.Mock(return_value=adapter),
+        )
+        handlers = RevisionStatusWatchCronScript.getHandlers(self.makeScript())
+        self.assertEqual({"autopkgtest"}, set(handlers))
+        self.assertIsInstance(handlers["autopkgtest"], AutopkgtestWatchHandler)
+        self.assertIs(adapter, handlers["autopkgtest"].adapter)
 
     def test_batch_size_must_be_positive(self):
         for size in (0, -1):

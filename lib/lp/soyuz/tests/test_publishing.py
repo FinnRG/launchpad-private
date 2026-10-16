@@ -9,6 +9,7 @@ import operator
 import os
 import shutil
 import tempfile
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from unittest import mock
@@ -21,6 +22,7 @@ from zope.interface import Interface
 from zope.interface.verify import verifyObject
 from zope.security.proxy import removeSecurityProxy
 
+from lp.app.enums import InformationType
 from lp.app.errors import NotFoundError
 from lp.archivepublisher.artifactory import ArtifactoryPool
 from lp.archivepublisher.config import getPubConfig
@@ -34,6 +36,31 @@ from lp.archivepublisher.tests.artifactory_fixture import (
 )
 from lp.buildmaster.enums import BuildStatus
 from lp.buildmaster.interfaces.processor import IProcessorSet
+from lp.code.autopkgtest import (
+    AutopkgtestLookup,
+    AutopkgtestLookupStatus,
+    AutopkgtestReadiness,
+    AutopkgtestResult,
+    AutopkgtestStatus,
+    AutopkgtestWatchHandler,
+)
+from lp.code.enums import BranchMergeProposalStatus, RevisionStatusResult
+from lp.code.interfaces.autopkgtest import IRequestAutopkgtestBackend
+from lp.code.interfaces.branchmergeproposal import (
+    IBranchMergeProposalJobSource,
+)
+from lp.code.interfaces.revisionstatus import IRevisionStatusReportSet
+from lp.code.interfaces.revisionstatuswatch import IRevisionStatusWatchSet
+from lp.code.model.autopkgtest import AutopkgtestRequestBackend
+from lp.code.model.branchmergeproposaljob import (
+    AutopkgtestRequestNotReady,
+    BranchMergeProposalJob,
+    BranchMergeProposalJobSource,
+    BranchMergeProposalJobType,
+    RequestAutopkgtestJob,
+)
+from lp.code.scripts.revisionstatuswatch import RevisionStatusWatchCollector
+from lp.code.tests.test_autopkgtest import FakeAutopkgtestAdapter
 from lp.registry.interfaces.distribution import IDistributionSet
 from lp.registry.interfaces.person import IPersonSet
 from lp.registry.interfaces.pocket import PackagePublishingPocket
@@ -47,6 +74,7 @@ from lp.services.channels import channel_string_to_list
 from lp.services.config import config
 from lp.services.database.constants import UTC_NOW
 from lp.services.database.interfaces import IStore
+from lp.services.features.testing import FeatureFixture
 from lp.services.librarian.interfaces import ILibraryFileAliasSet
 from lp.services.log.logger import BufferLogger, DevNullLogger
 from lp.soyuz.enums import (
@@ -76,10 +104,12 @@ from lp.soyuz.model.distributionsourcepackagecache import (
 )
 from lp.soyuz.model.distroseriesdifferencejob import find_waiting_jobs
 from lp.soyuz.model.distroseriespackagecache import DistroSeriesPackageCache
+from lp.soyuz.model.mergeproposalvalidation import MergeProposalValidation
 from lp.soyuz.model.publishing import (
     BinaryPackagePublishingHistory,
     SourcePackagePublishingHistory,
 )
+from lp.soyuz.model.sourcepackagegitbuild import SourcePackageGitBuild
 from lp.testing import (
     StormStatementRecorder,
     TestCaseWithFactory,
@@ -898,6 +928,794 @@ class TestBinaryPackagePublicationEvents(TestCaseWithFactory):
         self.assertIsNone(publication.datepublished)
         publication.setPublished()
         self.assertEqual(2, len(self.events))
+
+
+class TestAutopkgtestPublication(TestCaseWithFactory):
+    layer = DatabaseFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        self.useFixture(
+            FeatureFixture({"autopkgtest.request.enabled": "true"})
+        )
+        self.schedule = mock.Mock()
+        self.patch(RequestAutopkgtestJob, "celeryRunOnCommit", self.schedule)
+        self.proposal = self.factory.makeBranchMergeProposalForGit()
+        removeSecurityProxy(self.proposal).source_git_commit_sha1 = "a" * 40
+        self.series = self.factory.makeDistroSeries()
+        self.arch = self.factory.makeDistroArchSeries(distroseries=self.series)
+        removeSecurityProxy(self.series).nominatedarchindep = self.arch
+        self.archive = self.factory.makeArchive(
+            distribution=self.series.distribution, purpose=ArchivePurpose.PPA
+        )
+        self.git_build = SourcePackageGitBuild.new(
+            self.proposal.source_git_repository,
+            self.proposal.source_git_commit_sha1,
+            self.archive,
+            self.series,
+            self.proposal.registrant,
+            "~ppa1",
+        )
+        self.source = self.factory.makeSourcePackageRelease(version="1.0~ppa1")
+        removeSecurityProxy(self.source).source_package_git_build = (
+            self.git_build
+        )
+        self.validation = MergeProposalValidation(
+            self.proposal,
+            self.git_build.commit_sha1,
+            self.archive,
+            {
+                "activate-workflow": "true",
+                "autopkgtest-all-proposed": "false",
+            },
+        )
+        IStore(MergeProposalValidation).add(self.validation)
+        self.publication = self.makePublication()
+
+    def makePublication(self, arch=None):
+        publication = removeSecurityProxy(
+            self.factory.makeBinaryPackagePublishingHistory(
+                archive=self.archive,
+                distroarchseries=self.arch if arch is None else arch,
+                source_package_release=self.source,
+                architecturespecific=True,
+                status=PackagePublishingStatus.PENDING,
+            )
+        )
+        removeSecurityProxy(publication.build).status = BuildStatus.FULLYBUILT
+        return publication
+
+    def getJobs(self):
+        return [
+            RequestAutopkgtestJob(job)
+            for job in IStore(BranchMergeProposalJob).find(
+                BranchMergeProposalJob,
+                job_type=BranchMergeProposalJobType.REQUEST_AUTOPKGTEST,
+            )
+        ]
+
+    def installBackend(self, backend=None):
+        if backend is None:
+            backend = mock.Mock()
+        site_manager = getSiteManager()
+        previous = site_manager.queryUtility(IRequestAutopkgtestBackend)
+        site_manager.registerUtility(backend, IRequestAutopkgtestBackend)
+        if previous is None:
+            self.addCleanup(
+                site_manager.unregisterUtility,
+                backend,
+                IRequestAutopkgtestBackend,
+            )
+        else:
+            self.addCleanup(
+                site_manager.registerUtility,
+                previous,
+                IRequestAutopkgtestBackend,
+            )
+        return backend
+
+    def test_matching_publication_saves_request_identity(self):
+        self.publication.setPublished()
+        job = self.getJobs()[0]
+        self.assertEqual(self.proposal.id, job.branch_merge_proposal.id)
+        self.assertEqual(self.validation.id, job.metadata["validation_id"])
+        self.assertEqual(
+            self.git_build.commit_sha1, job.metadata["commit_sha1"]
+        )
+        self.assertEqual(self.archive.id, job.metadata["archive_id"])
+        self.assertEqual(
+            self.source.id, job.metadata["source_package_release_id"]
+        )
+        self.assertEqual(self.arch.id, job.metadata["distro_arch_series_id"])
+        self.assertEqual("1.0~ppa1", job.metadata["source_package_version"])
+        self.assertEqual(
+            {"autopkgtest-all-proposed": "false"}, job.metadata["parameters"]
+        )
+        self.schedule.assert_called_once_with()
+
+    def test_only_autopkgtest_options_are_saved(self):
+        self.validation.parameters = {
+            "activate-workflow": "true",
+            "autopkgtest-all-proposed": "true",
+            "autopkgtest-trigger": "dependency/2.0~Test",
+            "autopkgtest-future-option": "retained",
+            "autopkgtest": "ignored",
+            "unrelated-option": "ignored",
+        }
+        self.publication.setPublished()
+        self.assertEqual(
+            {
+                "autopkgtest-all-proposed": "true",
+                "autopkgtest-trigger": "dependency/2.0~Test",
+                "autopkgtest-future-option": "retained",
+            },
+            self.getJobs()[0].metadata["parameters"],
+        )
+
+    def test_disabled_feature_does_not_queue(self):
+        self.useFixture(FeatureFixture({}))
+        self.publication.setPublished()
+        self.assertEqual([], self.getJobs())
+
+    def test_no_validation_does_not_queue(self):
+        IStore(MergeProposalValidation).remove(self.validation)
+        self.publication.setPublished()
+        self.assertEqual([], self.getJobs())
+
+    def test_cancelled_validation_does_not_queue(self):
+        self.validation.status = RevisionStatusResult.CANCELLED
+        self.publication.setPublished()
+        self.assertEqual([], self.getJobs())
+
+    def test_ambiguous_validations_do_not_queue(self):
+        IStore(MergeProposalValidation).add(
+            MergeProposalValidation(
+                self.proposal, self.git_build.commit_sha1, self.archive, {}
+            )
+        )
+        self.publication.setPublished()
+        self.assertEqual([], self.getJobs())
+
+    def test_wrong_commit_does_not_queue(self):
+        self.validation.commit_sha1 = "f" * 40
+        self.publication.setPublished()
+        self.assertEqual([], self.getJobs())
+
+    def test_finished_validation_does_not_queue(self):
+        self.validation.date_finished = datetime.now(timezone.utc)
+        self.publication.setPublished()
+        self.assertEqual([], self.getJobs())
+
+    def test_unrelated_source_repository_does_not_queue(self):
+        self.git_build.git_repository = self.factory.makeGitRepository()
+        self.publication.setPublished()
+        self.assertEqual([], self.getJobs())
+
+    def test_private_source_repository_does_not_queue(self):
+        removeSecurityProxy(
+            self.proposal.source_git_repository
+        ).information_type = InformationType.USERDATA
+        self.publication.setPublished()
+        self.assertEqual([], self.getJobs())
+
+    def test_private_target_repository_does_not_queue(self):
+        removeSecurityProxy(
+            self.proposal.target_git_repository
+        ).information_type = InformationType.USERDATA
+        self.publication.setPublished()
+        self.assertEqual([], self.getJobs())
+
+    def test_later_proposal_head_does_not_replace_built_commit(self):
+        removeSecurityProxy(self.proposal).source_git_commit_sha1 = "f" * 40
+        self.publication.setPublished()
+        self.assertEqual(
+            self.git_build.commit_sha1,
+            self.getJobs()[0].metadata["commit_sha1"],
+        )
+
+    def test_private_archive_does_not_queue(self):
+        removeSecurityProxy(self.archive).private = True
+        self.publication.setPublished()
+        self.assertEqual([], self.getJobs())
+
+    def test_non_ppa_does_not_queue(self):
+        self.publication.archive = self.series.distribution.main_archive
+        self.publication.setPublished()
+        self.assertEqual([], self.getJobs())
+
+    def test_missing_git_build_does_not_queue(self):
+        removeSecurityProxy(self.source).source_package_git_build = None
+        self.publication.setPublished()
+        self.assertEqual([], self.getJobs())
+
+    def test_closed_proposal_does_not_queue(self):
+        removeSecurityProxy(self.proposal).queue_status = (
+            BranchMergeProposalStatus.MERGED
+        )
+        self.publication.setPublished()
+        self.assertEqual([], self.getJobs())
+
+    def test_multiple_binaries_for_same_architecture_share_job(self):
+        self.publication.setPublished()
+        self.makePublication().setPublished()
+        self.assertEqual(1, len(self.getJobs()))
+        self.schedule.assert_called_once_with()
+
+    def test_distinct_architectures_get_distinct_jobs(self):
+        other_arch = self.factory.makeDistroArchSeries(
+            distroseries=self.series
+        )
+        self.publication.setPublished()
+        other_publication = self.makePublication(arch=other_arch)
+        self.assertEqual(other_arch, other_publication.distroarchseries)
+        other_publication.setPublished()
+        self.assertEqual(
+            {self.arch.id, other_arch.id},
+            {job.metadata["distro_arch_series_id"] for job in self.getJobs()},
+        )
+
+    def test_matching_uses_destination_archive(self):
+        destination = self.factory.makeArchive(
+            distribution=self.series.distribution, purpose=ArchivePurpose.PPA
+        )
+        self.publication.archive = destination
+        self.publication.copied_from_archive = self.archive
+        self.validation.archive = destination
+        self.publication.setPublished()
+        self.assertEqual(
+            destination.id, self.getJobs()[0].metadata["archive_id"]
+        )
+
+    def test_options_are_snapshotted(self):
+        self.publication.setPublished()
+        self.validation.parameters = {"autopkgtest-all-proposed": "true"}
+        self.assertEqual(
+            {"autopkgtest-all-proposed": "false"},
+            self.getJobs()[0].metadata["parameters"],
+        )
+
+    def test_missing_backend_is_retryable(self):
+        self.publication.setPublished()
+        job = self.getJobs()[0]
+        self.assertIn(AutopkgtestRequestNotReady, job.retry_error_types)
+        self.assertRaises(AutopkgtestRequestNotReady, job.run)
+
+    def test_job_delegates_to_separate_backend(self):
+        backend = self.installBackend()
+        self.publication.setPublished()
+        job = self.getJobs()[0]
+        job.run()
+        backend.requestTests.assert_called_once_with(job)
+
+    def test_cancelled_run_does_not_reach_backend(self):
+        backend = self.installBackend()
+        self.publication.setPublished()
+        self.validation.status = RevisionStatusResult.CANCELLED
+        self.getJobs()[0].run()
+        backend.requestTests.assert_not_called()
+
+    def test_job_source_preserves_interface_and_derivation(self):
+        self.assertTrue(
+            IBranchMergeProposalJobSource.providedBy(
+                BranchMergeProposalJobSource
+            )
+        )
+        self.publication.setPublished()
+        job = self.getJobs()[0]
+        source = removeSecurityProxy(getUtility(IBranchMergeProposalJobSource))
+        derived = source.get(job.id)
+        self.assertIsInstance(
+            removeSecurityProxy(derived), RequestAutopkgtestJob
+        )
+
+    def test_changed_commit_does_not_reach_backend(self):
+        backend = self.installBackend()
+        self.publication.setPublished()
+        self.validation.commit_sha1 = "f" * 40
+        self.assertRaises(AutopkgtestRequestNotReady, self.getJobs()[0].run)
+        backend.requestTests.assert_not_called()
+
+    def test_changed_source_build_does_not_reach_backend(self):
+        backend = self.installBackend()
+        self.publication.setPublished()
+        removeSecurityProxy(self.source).source_package_git_build = None
+        self.assertRaises(AutopkgtestRequestNotReady, self.getJobs()[0].run)
+        backend.requestTests.assert_not_called()
+
+    def test_withdrawn_publication_does_not_reach_backend(self):
+        backend = self.installBackend()
+        self.publication.setPublished()
+        self.publication.status = PackagePublishingStatus.DELETED
+        self.assertRaises(AutopkgtestRequestNotReady, self.getJobs()[0].run)
+        backend.requestTests.assert_not_called()
+
+    def test_disabled_execution_does_not_reach_backend(self):
+        backend = self.installBackend()
+        self.publication.setPublished()
+        self.useFixture(FeatureFixture({}))
+        self.assertRaises(AutopkgtestRequestNotReady, self.getJobs()[0].run)
+        backend.requestTests.assert_not_called()
+
+    def test_rollback_removes_saved_request_job(self):
+        store = Store.of(self.publication)
+        store.flush()
+        publication_id = self.publication.id
+        transaction.commit()
+        self.publication.setPublished()
+        self.assertEqual(1, len(self.getJobs()))
+        transaction.abort()
+        self.assertEqual([], self.getJobs())
+        publication = store.get(BinaryPackagePublishingHistory, publication_id)
+        publication.setPublished()
+        self.assertEqual(1, len(self.getJobs()))
+
+    def makeServiceJob(self, adapter=None):
+        adapter = FakeAutopkgtestAdapter() if adapter is None else adapter
+        backend = self.installBackend(AutopkgtestRequestBackend(adapter))
+        self.publication.setPublished()
+        return self.getJobs()[0], adapter, backend
+
+    def getRequestReport(self, job):
+        state = job.metadata["autopkgtest"]
+        return getUtility(IRevisionStatusReportSet).getByID(state["report_id"])
+
+    def getRequestWatches(self, job):
+        watch_set = removeSecurityProxy(getUtility(IRevisionStatusWatchSet))
+        watch = watch_set.findByReport(self.getRequestReport(job))
+        return [] if watch is None else [watch]
+
+    def collectRequest(self, adapter):
+        collector = RevisionStatusWatchCollector(
+            removeSecurityProxy(getUtility(IRevisionStatusWatchSet)),
+            {"autopkgtest": AutopkgtestWatchHandler(adapter)},
+        )
+        collector.run()
+
+    def test_unconfigured_adapter_leaves_waiting_report_without_watch(self):
+        self.publication.setPublished()
+        job = self.getJobs()[0]
+        self.assertRaises(AutopkgtestRequestNotReady, job.run)
+        report = self.getRequestReport(job)
+        self.assertEqual(RevisionStatusResult.WAITING, report.result)
+        self.assertEqual("package-validation", report.group_name)
+        self.assertEqual(self.git_build.id, report.source_package_git_build.id)
+        self.assertIsNone(report.date_finished)
+        self.assertEqual([], self.getRequestWatches(job))
+        self.assertEqual("prepared", job.metadata["autopkgtest"]["phase"])
+
+    def test_submission_creates_correlated_report_and_watch(self):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        state = job.metadata["autopkgtest"]
+        watch = self.getRequestWatches(job)[0]
+        self.assertEqual("accepted", state["phase"])
+        self.assertEqual(
+            "package-validation", self.getRequestReport(job).group_name
+        )
+        self.assertEqual("autopkgtest", watch.remote_system)
+        self.assertEqual(state["request"], watch.remote_ref["request"])
+        self.assertEqual(state["receipt"], watch.remote_ref["receipt"])
+        self.assertEqual(job.id, watch.remote_ref["job_id"])
+        self.assertEqual(
+            ["readiness", "submit"], [call[0] for call in adapter.calls]
+        )
+
+    def test_repeated_execution_does_not_resubmit_or_create_another_watch(
+        self,
+    ):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        job.run()
+        self.assertEqual(1, len(self.getRequestWatches(job)))
+        self.assertEqual(
+            1, len([call for call in adapter.calls if call[0] == "submit"])
+        )
+
+    def test_not_ready_does_not_submit(self):
+        job, adapter, backend = self.makeServiceJob()
+        adapter.readiness = AutopkgtestReadiness(False)
+        self.assertRaises(AutopkgtestRequestNotReady, job.run)
+        self.assertEqual("prepared", job.metadata["autopkgtest"]["phase"])
+        self.assertEqual([], self.getRequestWatches(job))
+        self.assertEqual(["readiness"], [call[0] for call in adapter.calls])
+
+    def test_unpublished_sibling_binary_prevents_submission(self):
+        job, adapter, backend = self.makeServiceJob()
+        self.makePublication()
+        self.assertRaises(AutopkgtestRequestNotReady, job.run)
+        self.assertEqual("prepared", job.metadata["autopkgtest"]["phase"])
+        self.assertEqual([], adapter.calls)
+
+    def test_unfinished_sibling_build_prevents_submission(self):
+        job, adapter, backend = self.makeServiceJob()
+        sibling = self.makePublication()
+        removeSecurityProxy(sibling.build).status = BuildStatus.BUILDING
+        self.assertRaises(AutopkgtestRequestNotReady, job.run)
+        self.assertEqual([], adapter.calls)
+
+    def test_failed_binary_build_returns_error_report(self):
+        job, adapter, backend = self.makeServiceJob()
+        removeSecurityProxy(self.publication.build).status = (
+            BuildStatus.FAILEDTOBUILD
+        )
+        job.run()
+        self.assertEqual(
+            RevisionStatusResult.FAILED, self.getRequestReport(job).result
+        )
+        self.assertIn(
+            "build failed", self.getRequestReport(job).result_summary
+        )
+        self.assertEqual("failed", job.metadata["autopkgtest"]["phase"])
+        self.assertEqual([], adapter.calls)
+
+    def test_failed_build_on_other_architecture_does_not_block_submission(
+        self,
+    ):
+        job, adapter, backend = self.makeServiceJob()
+        other_arch = self.factory.makeDistroArchSeries(
+            distroseries=self.series
+        )
+        other = self.makePublication(arch=other_arch)
+        removeSecurityProxy(other.build).status = BuildStatus.FAILEDTOBUILD
+        job.run()
+        self.assertEqual("accepted", job.metadata["autopkgtest"]["phase"])
+        self.assertEqual(1, len(self.getRequestWatches(job)))
+        self.assertEqual(
+            ["readiness", "submit"], [call[0] for call in adapter.calls]
+        )
+
+    def test_unfinished_build_on_other_architecture_does_not_block_submission(
+        self,
+    ):
+        job, adapter, backend = self.makeServiceJob()
+        other_arch = self.factory.makeDistroArchSeries(
+            distroseries=self.series
+        )
+        other = self.makePublication(arch=other_arch)
+        removeSecurityProxy(other.build).status = BuildStatus.BUILDING
+        job.run()
+        self.assertEqual("accepted", job.metadata["autopkgtest"]["phase"])
+        self.assertEqual(1, len(self.getRequestWatches(job)))
+        self.assertEqual(
+            ["readiness", "submit"], [call[0] for call in adapter.calls]
+        )
+
+    def test_request_records_expected_binaries_and_attempt_date(self):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        request = job.metadata["autopkgtest"]["request"]
+        self.assertIn(
+            self.publication.binarypackagerelease.binarypackagename.name,
+            request["expected_binary_packages"],
+        )
+        self.assertRegex(request["date_requested"], r"^[0-9]{8}_[0-9]{6}$")
+
+    def test_ineligible_source_gets_error_report(self):
+        job, adapter, backend = self.makeServiceJob()
+        adapter.readiness = AutopkgtestReadiness(False, False, "No tests")
+        job.run()
+        report = self.getRequestReport(job)
+        self.assertEqual(RevisionStatusResult.FAILED, report.result)
+        self.assertEqual("No tests", report.result_summary)
+        self.assertEqual([], self.getRequestWatches(job))
+
+    def test_timeout_reconciles_accepted_submission_without_resubmitting(self):
+        job, adapter, backend = self.makeServiceJob()
+        adapter.submission_error = TimeoutError()
+        self.assertRaises(AutopkgtestRequestNotReady, job.run)
+        self.assertEqual("submitting", job.metadata["autopkgtest"]["phase"])
+        adapter.lookup = AutopkgtestLookup(
+            AutopkgtestLookupStatus.ACCEPTED, adapter.receipt
+        )
+        job.run()
+        self.assertEqual("accepted", job.metadata["autopkgtest"]["phase"])
+        self.assertEqual(1, len(self.getRequestWatches(job)))
+        self.assertEqual(
+            1, len([call for call in adapter.calls if call[0] == "submit"])
+        )
+
+    def test_connection_error_requires_reconciliation_before_resubmitting(
+        self,
+    ):
+        job, adapter, backend = self.makeServiceJob()
+        adapter.submission_error = ConnectionError()
+        self.assertRaises(AutopkgtestRequestNotReady, job.run)
+        self.assertEqual("submitting", job.metadata["autopkgtest"]["phase"])
+        self.assertRaises(AutopkgtestRequestNotReady, job.run)
+        self.assertEqual([], self.getRequestWatches(job))
+        self.assertEqual(
+            ["readiness", "submit", "reconcile"],
+            [call[0] for call in adapter.calls],
+        )
+
+    def test_adapter_type_error_is_not_treated_as_temporary_unavailability(
+        self,
+    ):
+        job, adapter, backend = self.makeServiceJob()
+        adapter.submission_error = TypeError("Adapter programming error")
+        error = self.assertRaises(TypeError, job.run)
+        self.assertIs(adapter.submission_error, error)
+        self.assertEqual("submitting", job.metadata["autopkgtest"]["phase"])
+        self.assertEqual([], self.getRequestWatches(job))
+
+    def test_adapter_value_error_is_not_treated_as_temporary_unavailability(
+        self,
+    ):
+        job, adapter, backend = self.makeServiceJob()
+        adapter.submission_error = ValueError("Adapter programming error")
+        error = self.assertRaises(ValueError, job.run)
+        self.assertIs(adapter.submission_error, error)
+        self.assertEqual("submitting", job.metadata["autopkgtest"]["phase"])
+        self.assertEqual([], self.getRequestWatches(job))
+
+    def test_uncertain_submission_is_not_repeated(self):
+        job, adapter, backend = self.makeServiceJob()
+        adapter.submission_error = TimeoutError()
+        self.assertRaises(AutopkgtestRequestNotReady, job.run)
+        self.assertRaises(AutopkgtestRequestNotReady, job.run)
+        self.assertEqual([], self.getRequestWatches(job))
+        self.assertEqual(
+            ["readiness", "submit", "reconcile"],
+            [call[0] for call in adapter.calls],
+        )
+
+    def test_authoritative_absence_retries_with_same_request_key(self):
+        job, adapter, backend = self.makeServiceJob()
+        adapter.submission_error = TimeoutError()
+        self.assertRaises(AutopkgtestRequestNotReady, job.run)
+        adapter.submission_error = None
+        adapter.lookup = AutopkgtestLookup(AutopkgtestLookupStatus.ABSENT)
+        job.run()
+        keys = [
+            key for operation, key in adapter.calls if operation == "submit"
+        ]
+        self.assertEqual(2, len(keys))
+        self.assertEqual(keys[0], keys[1])
+        self.assertEqual(1, len(self.getRequestWatches(job)))
+
+    def test_uncertain_submission_retains_reconciliation_progress(self):
+        job, adapter, backend = self.makeServiceJob()
+        adapter.submission_error = TimeoutError()
+        self.assertRaises(AutopkgtestRequestNotReady, job.run)
+        progress = {"next_run": "next-directory", "scan_in_progress": True}
+        adapter.lookup = AutopkgtestLookup(
+            AutopkgtestLookupStatus.UNKNOWN, service_metadata=progress
+        )
+        self.assertRaises(AutopkgtestRequestNotReady, job.run)
+        self.assertEqual(
+            progress, job.metadata["autopkgtest"]["reconciliation"]
+        )
+        self.assertRaises(AutopkgtestRequestNotReady, job.run)
+        self.assertEqual([None, progress], adapter.reconciliation_metadata)
+        self.assertEqual("submitting", job.metadata["autopkgtest"]["phase"])
+        self.assertEqual([], self.getRequestWatches(job))
+        self.assertEqual(
+            1, len([call for call in adapter.calls if call[0] == "submit"])
+        )
+
+    def test_verified_result_updates_report_and_removes_watch(self):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        adapter.result_metadata = {
+            "duration_seconds": 123,
+            "log_url": "https://example.test/log",
+        }
+        self.collectRequest(adapter)
+        report = self.getRequestReport(job)
+        self.assertEqual(RevisionStatusResult.SUCCEEDED, report.result)
+        self.assertIsNotNone(report.date_finished)
+        self.assertEqual([], self.getRequestWatches(job))
+        self.assertEqual(
+            self.validation.id, report.properties["validation_id"]
+        )
+        self.assertEqual(
+            dict(adapter.receipt.service_metadata, **adapter.result_metadata),
+            report.properties["autopkgtest"]["service_metadata"],
+        )
+
+    def test_infrastructure_error_retries_without_failing_the_package(self):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        adapter.result_status = AutopkgtestStatus.INFRASTRUCTURE_ERROR
+        self.collectRequest(adapter)
+        watch = self.getRequestWatches(job)[0]
+        self.assertEqual(1, watch.failure_count)
+        self.assertEqual(RevisionStatusResult.WAITING, watch.report.result)
+
+    def test_wrong_result_identity_is_not_applied(self):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        adapter.result_override = AutopkgtestResult(
+            "wrong-request",
+            adapter.receipt.request_key,
+            adapter.receipt.request_fingerprint,
+            AutopkgtestStatus.PASSED,
+        )
+        self.collectRequest(adapter)
+        watch = self.getRequestWatches(job)[0]
+        self.assertEqual(RevisionStatusResult.WAITING, watch.report.result)
+        self.assertEqual(1, watch.failure_count)
+
+    def test_polling_preserves_updated_service_cursor(self):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        adapter.result_status = AutopkgtestStatus.PENDING
+        adapter.result_metadata = {"cursor": "next", "result_locator": "path"}
+        self.collectRequest(adapter)
+        metadata = self.getRequestWatches(job)[0].remote_ref["receipt"][
+            "service_metadata"
+        ]
+        self.assertEqual("next", metadata["cursor"])
+        self.assertEqual("path", metadata["result_locator"])
+
+    def test_cancelled_during_readiness_does_not_submit(self):
+        job, adapter, backend = self.makeServiceJob()
+
+        def cancel_validation(request):
+            self.validation.status = RevisionStatusResult.CANCELLED
+            transaction.commit()
+
+        adapter.on_readiness = cancel_validation
+        job.run()
+        self.assertEqual(
+            RevisionStatusResult.CANCELLED, self.getRequestReport(job).result
+        )
+        self.assertEqual([], self.getRequestWatches(job))
+        self.assertEqual(["readiness"], [call[0] for call in adapter.calls])
+
+    def test_cancelled_during_submission_retains_receipt_without_watch(self):
+        job, adapter, backend = self.makeServiceJob()
+
+        def close_proposal(request):
+            removeSecurityProxy(self.proposal).queue_status = (
+                BranchMergeProposalStatus.MERGED
+            )
+            transaction.commit()
+
+        adapter.on_submit = close_proposal
+        job.run()
+        state = job.metadata["autopkgtest"]
+        self.assertEqual("cancelled", state["phase"])
+        self.assertEqual(
+            adapter.receipt.request_id, state["receipt"]["request_id"]
+        )
+        self.assertEqual([], self.getRequestWatches(job))
+        self.assertEqual(
+            RevisionStatusResult.CANCELLED, self.getRequestReport(job).result
+        )
+
+    def test_competing_submission_generation_does_not_submit_twice(self):
+        job, adapter, backend = self.makeServiceJob()
+
+        def competing_submission(request):
+            state = job.metadata["autopkgtest"]
+            state["phase"] = "submitting"
+            state["generation"] = 1
+            job.updateAutopkgtestState(state)
+            transaction.commit()
+
+        adapter.on_readiness = competing_submission
+        self.assertRaises(AutopkgtestRequestNotReady, job.run)
+        self.assertEqual(["readiness"], [call[0] for call in adapter.calls])
+        self.assertEqual("submitting", job.metadata["autopkgtest"]["phase"])
+
+    def test_invalid_receipt_never_creates_a_watch(self):
+        job, adapter, backend = self.makeServiceJob()
+
+        def wrong_receipt(request):
+            adapter.receipt_override = replace(
+                adapter.receipt, request_key="wrong-key"
+            )
+
+        adapter.on_submit = wrong_receipt
+        self.assertRaises(AutopkgtestRequestNotReady, job.run)
+        self.assertEqual("submitting", job.metadata["autopkgtest"]["phase"])
+        self.assertEqual([], self.getRequestWatches(job))
+
+    def test_closed_proposal_cancels_watch_without_polling(self):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        removeSecurityProxy(self.proposal).queue_status = (
+            BranchMergeProposalStatus.REJECTED
+        )
+        self.collectRequest(adapter)
+        self.assertEqual([], self.getRequestWatches(job))
+        self.assertEqual(
+            RevisionStatusResult.CANCELLED, self.getRequestReport(job).result
+        )
+        self.assertEqual(
+            ["readiness", "submit"], [call[0] for call in adapter.calls]
+        )
+
+    def test_closed_during_poll_does_not_apply_the_remote_result(self):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+
+        def close_proposal(request):
+            removeSecurityProxy(self.proposal).queue_status = (
+                BranchMergeProposalStatus.REJECTED
+            )
+            transaction.commit()
+
+        adapter.on_poll = close_proposal
+        self.collectRequest(adapter)
+        self.assertEqual([], self.getRequestWatches(job))
+        self.assertEqual(
+            RevisionStatusResult.CANCELLED, self.getRequestReport(job).result
+        )
+
+    def test_explicit_retry_gets_new_attempt_key_and_saved_options(self):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        self.collectRequest(adapter)
+        self.validation.parameters = {"changed": True}
+        retry = RequestAutopkgtestJob.retry(job)
+        self.assertEqual(1, retry.metadata["attempt"])
+        self.assertEqual(
+            job.metadata["parameters"], retry.metadata["parameters"]
+        )
+        retry.run()
+        self.assertNotEqual(
+            job.metadata["autopkgtest"]["request"]["key"],
+            retry.metadata["autopkgtest"]["request"]["key"],
+        )
+        self.assertNotEqual(
+            job.metadata["autopkgtest"]["report_id"],
+            retry.metadata["autopkgtest"]["report_id"],
+        )
+        self.makePublication().setPublished()
+        self.assertEqual(2, len(self.getJobs()))
+
+    def test_unfinished_request_cannot_be_explicitly_retried(self):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        self.assertRaises(ValueError, RequestAutopkgtestJob.retry, job)
+        self.assertEqual(1, len(self.getJobs()))
+
+    def test_local_cancellation_cleans_watches_without_claiming_remote_stop(
+        self,
+    ):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        backend.cancelTests(job)
+        self.assertEqual([], self.getRequestWatches(job))
+        self.assertEqual(
+            RevisionStatusResult.CANCELLED, self.getRequestReport(job).result
+        )
+        self.assertNotIn("remote_cancellation", job.metadata["autopkgtest"])
+        self.assertEqual(
+            ["readiness", "submit"], [call[0] for call in adapter.calls]
+        )
+
+    def test_explicit_remote_cancellation_is_recorded_separately(self):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        backend.cancelTests(job)
+        response = backend.cancelRemoteTests(job)
+        self.assertTrue(response.acknowledged)
+        self.assertTrue(
+            job.metadata["autopkgtest"]["remote_cancellation"]["acknowledged"]
+        )
+        self.assertEqual("cancel", adapter.calls[-1][0])
+
+    def test_validation_cleanup_cancels_all_architecture_watches(self):
+        job, adapter, backend = self.makeServiceJob()
+        other_arch = self.factory.makeDistroArchSeries(
+            distroseries=self.series
+        )
+        self.makePublication(arch=other_arch).setPublished()
+        jobs = self.getJobs()
+        for request_job in jobs:
+            request_job.run()
+        self.validation.status = RevisionStatusResult.CANCELLED
+        backend.cancelForValidation(self.validation)
+        self.assertEqual(2, len(jobs))
+        for request_job in jobs:
+            self.assertEqual([], self.getRequestWatches(request_job))
+            self.assertEqual(
+                RevisionStatusResult.CANCELLED,
+                self.getRequestReport(request_job).result,
+            )
 
 
 class TestNativePublishingBase(TestCaseWithFactory, SoyuzTestPublisher):
