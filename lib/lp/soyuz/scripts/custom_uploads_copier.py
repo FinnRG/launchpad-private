@@ -3,8 +3,7 @@
 
 """Copy latest custom uploads into a distribution release series.
 
-Use this when initializing the installer and dist upgrader for a new release
-series based on the latest uploads from its preceding series.
+Use this for explicitly requested copies of custom uploads.
 """
 
 __all__ = [

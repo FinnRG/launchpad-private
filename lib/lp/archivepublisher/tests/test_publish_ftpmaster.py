@@ -43,6 +43,7 @@ from lp.soyuz.enums import (
     ArchivePurpose,
     PackagePublishingStatus,
     PackageUploadCustomFormat,
+    PackageUploadStatus,
 )
 from lp.soyuz.tests.test_publishing import SoyuzTestPublisher
 from lp.testing import TestCase, TestCaseWithFactory
@@ -1269,11 +1270,34 @@ class TestCreateDistroSeriesIndexes(TestCaseWithFactory, HelpersMixin):
         self.assertEqual([suite], kwargs["suites"])
         self.assertThat(kwargs["suites"][0], StartsWith(series.name))
 
-    def test_prepareFreshSeries_copies_custom_uploads(self):
+    def test_prepareFreshSeries_does_not_copy_custom_uploads(self):
         distro = self.makeDistroWithPublishDirectory()
         old_series = self.factory.makeDistroSeries(
-            distribution=distro, status=SeriesStatus.CURRENT
+            distribution=distro, status=SeriesStatus.FROZEN
         )
+        original_uploads = []
+        for status in PackageUploadStatus.items:
+            for custom_type in PackageUploadCustomFormat.items:
+                # Most custom uploads use NAME_VERSION_ARCH while
+                # ddtp tarball uses NAME_COMPONENT_VERSION
+                if custom_type == PackageUploadCustomFormat.DDTP_TARBALL:
+                    filename = "package-main_main_1.0.tar.gz"
+                else:
+                    filename = "package-%s_1.0_i386.tar.gz" % custom_type.name
+                upload = self.factory.makePackageUpload(
+                    distroseries=old_series,
+                    archive=old_series.main_archive,
+                    pocket=PackagePublishingPocket.RELEASE,
+                    status=status,
+                )
+                upload.addCustom(
+                    self.factory.makeLibraryFileAlias(filename=filename),
+                    custom_type,
+                )
+                original_uploads.append((upload.id, status))
+        # Setting the series to current here is not strictly required, but
+        # mirrors actual production execution
+        old_series.status = SeriesStatus.CURRENT
         new_series = self.factory.makeDistroSeries(
             distribution=distro,
             previous_series=old_series,
@@ -1282,23 +1306,24 @@ class TestCreateDistroSeriesIndexes(TestCaseWithFactory, HelpersMixin):
         self.factory.makeDistroArchSeries(
             distroseries=new_series, architecturetag="i386"
         )
-        custom_upload = self.factory.makeCustomPackageUpload(
-            distroseries=old_series,
-            custom_type=PackageUploadCustomFormat.DEBIAN_INSTALLER,
-            filename="debian-installer-images_1.0-20110805_i386.tar.gz",
-        )
         script = self.makeScript(distro)
         script.createIndexes = FakeMethod()
         script.setUp()
+
         have_fresh_series = script.prepareFreshSeries(distro)
+
         self.assertTrue(have_fresh_series)
-        [copied_upload] = new_series.getPackageUploads(
-            name="debian-installer-images", exact_match=False
+        self.assertEqual([], list(new_series.getPackageUploads()))
+        self.assertContentEqual(
+            original_uploads,
+            [
+                (upload.id, upload.status)
+                for upload in old_series.getPackageUploads()
+            ],
         )
-        [copied_custom] = copied_upload.customfiles
         self.assertEqual(
-            custom_upload.customfiles[0].libraryfilealias.filename,
-            copied_custom.libraryfilealias.filename,
+            [((distro, script.listSuitesNeedingIndexes(new_series)), {})],
+            script.createIndexes.calls,
         )
 
     def test_script_creates_indexes(self):
