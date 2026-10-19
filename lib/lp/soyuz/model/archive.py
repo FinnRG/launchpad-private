@@ -1070,12 +1070,12 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         if publication is None:
             raise NotFoundError(binary_id)
         release = publication.binarypackagerelease
-        release_ids = [release.id]
+        release_ids = {release.id}
         # A visible binary copy may reference a build in a private archive.
         if release.build is not None:
             from lp.soyuz.model.distroarchseries import DistroArchSeries
 
-            release_ids = Select(
+            sibling_release_ids = Select(
                 BinaryPackageRelease.id,
                 where=And(
                     BinaryPackagePublishingHistory.archive == self,
@@ -1106,15 +1106,19 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
                     == publication.distroarchseries.distroseries_id,
                 ),
             )
+            # Fetch sibling release IDs in a separate query instead of
+            # combining their subquery with the selected release ID using OR.
+            # This lets the file lookup use the
+            # `BinaryPackageFile.binarypackagerelease` index.
+            release_ids.update(
+                row[0] for row in Store.of(self).execute(sibling_release_ids)
+            )
         files = list(
             Store.of(self)
             .find(
                 (LibraryFileAlias, LibraryFileContent.filesize),
-                Or(
-                    BinaryPackageFile.binarypackagerelease_id == release.id,
-                    BinaryPackageFile.binarypackagerelease_id.is_in(
-                        release_ids
-                    ),
+                BinaryPackageFile.binarypackagerelease_id.is_in(
+                    sorted(release_ids)
                 ),
                 BinaryPackageFile.libraryfile_id == LibraryFileAlias.id,
                 LibraryFileAlias.content_id == LibraryFileContent.id,
