@@ -21,12 +21,19 @@ class IRequestAutopkgtestJob(IRunnableJob):
 
 class IRequestAutopkgtestJobSource(Interface):
     def create(validation, publication, attempt=0):
-        """Create or return a request; None allocates an explicit
-        new attempt.
+        """Create or return a request and its waiting report.
+
+        None allocates an explicit new attempt.  The caller owns the
+        transaction; submission state is created later by the worker.
         """
 
     def retry(job):
-        """Create a new attempt after its preceding report is terminal."""
+        """Create a new attempt after its preceding report is terminal.
+
+        :raises ValueError: if the attempt is not the latest, its report is
+            not terminal, or its validation or publication can no longer be
+            tested.
+        """
 
 
 class IRequestAutopkgtestBackend(Interface):
@@ -40,8 +47,8 @@ class IRequestAutopkgtestBackend(Interface):
         to download before submitting it to the test service.
 
         Save the service response needed to identify the submission on
-        retry, and create a revision status report and polling watch to
-        track its result. Raise AutopkgtestRequestNotReady when packages
+        retry, and update the attempt's report and create a polling watch
+        to track its result. Raise AutopkgtestRequestNotReady when packages
         or the test service are temporarily unavailable.
         """
 

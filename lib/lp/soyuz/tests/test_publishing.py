@@ -5,6 +5,7 @@
 
 import hashlib
 import io
+import json
 import operator
 import os
 import shutil
@@ -1031,6 +1032,13 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
         self.assertEqual(
             {"autopkgtest-all-proposed": "false"}, job.metadata["parameters"]
         )
+        report = self.getRequestReport(job)
+        self.assertEqual(RevisionStatusResult.WAITING, report.result)
+        self.assertEqual(
+            job.metadata["request_key"], report.properties["request_key"]
+        )
+        self.assertNotIn("autopkgtest", job.metadata)
+        self.assertEqual([], self.getRequestWatches(job))
         self.schedule.assert_called_once_with()
 
     def test_only_autopkgtest_options_are_saved(self):
@@ -1137,8 +1145,12 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
 
     def test_multiple_binaries_for_same_architecture_share_job(self):
         self.publication.setPublished()
+        report_id = self.getRequestReport(self.getJobs()[0]).id
         self.makePublication().setPublished()
         self.assertEqual(1, len(self.getJobs()))
+        self.assertEqual(
+            report_id, self.getRequestReport(self.getJobs()[0]).id
+        )
         self.schedule.assert_called_once_with()
 
     def test_distinct_architectures_get_distinct_jobs(self):
@@ -1243,8 +1255,12 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
         transaction.commit()
         self.publication.setPublished()
         self.assertEqual(1, len(self.getJobs()))
+        report_id = self.getRequestReport(self.getJobs()[0]).id
         transaction.abort()
         self.assertEqual([], self.getJobs())
+        self.assertIsNone(
+            getUtility(IRevisionStatusReportSet).getByID(report_id)
+        )
         publication = store.get(BinaryPackagePublishingHistory, publication_id)
         publication.setPublished()
         self.assertEqual(1, len(self.getJobs()))
@@ -1256,8 +1272,11 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
         return self.getJobs()[0], adapter, backend
 
     def getRequestReport(self, job):
-        state = job.metadata["autopkgtest"]
-        return getUtility(IRevisionStatusReportSet).getByID(state["report_id"])
+        metadata = job.metadata
+        report_id = metadata.get("report_id")
+        if report_id is None:
+            report_id = metadata["autopkgtest"]["report_id"]
+        return getUtility(IRevisionStatusReportSet).getByID(report_id)
 
     def getRequestWatches(self, job):
         watch_set = removeSecurityProxy(getUtility(IRevisionStatusWatchSet))
@@ -1270,6 +1289,43 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
             {"autopkgtest": AutopkgtestWatchHandler(adapter)},
         )
         collector.run()
+
+    def test_worker_creates_report_for_legacy_unprepared_job(self):
+        job, adapter, backend = self.makeServiceJob()
+        metadata = job.metadata
+        report = self.getRequestReport(job)
+        del metadata["report_id"]
+        del metadata["request_key"]
+        job.context._json_data = json.dumps(metadata)
+        IStore(report).remove(removeSecurityProxy(report))
+        job.run()
+        self.assertEqual("accepted", job.metadata["autopkgtest"]["phase"])
+        self.assertEqual(
+            job.metadata["report_id"],
+            job.metadata["autopkgtest"]["report_id"],
+        )
+
+    def test_worker_preserves_legacy_submission_identity(self):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        metadata = job.metadata
+        report_id = metadata.pop("report_id")
+        metadata.pop("request_key")
+        job.context._json_data = json.dumps(metadata)
+        job.run()
+        self.assertEqual(report_id, job.metadata["autopkgtest"]["report_id"])
+        self.assertEqual(
+            1, len([call for call in adapter.calls if call[0] == "submit"])
+        )
+
+    def test_cancellation_before_worker_cancels_waiting_report(self):
+        job, adapter, backend = self.makeServiceJob()
+        backend.cancelTests(job)
+        self.assertEqual(
+            RevisionStatusResult.CANCELLED, self.getRequestReport(job).result
+        )
+        job.run()
+        self.assertEqual([], adapter.calls)
 
     def test_unconfigured_adapter_leaves_waiting_report_without_watch(self):
         self.publication.setPublished()
@@ -1285,8 +1341,12 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
 
     def test_submission_creates_correlated_report_and_watch(self):
         job, adapter, backend = self.makeServiceJob()
+        report = self.getRequestReport(job)
+        request_key = job.metadata["request_key"]
         job.run()
         state = job.metadata["autopkgtest"]
+        self.assertEqual(report.id, state["report_id"])
+        self.assertEqual(request_key, state["request"]["key"])
         watch = self.getRequestWatches(job)[0]
         self.assertEqual("accepted", state["phase"])
         self.assertEqual(
@@ -1652,9 +1712,17 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
         retry = RequestAutopkgtestJob.retry(job)
         self.assertEqual(1, retry.metadata["attempt"])
         self.assertEqual(
+            RevisionStatusResult.WAITING, self.getRequestReport(retry).result
+        )
+        self.assertNotIn("autopkgtest", retry.metadata)
+        waiting_report_id = self.getRequestReport(retry).id
+        self.assertEqual(
             job.metadata["parameters"], retry.metadata["parameters"]
         )
         retry.run()
+        self.assertEqual(
+            waiting_report_id, retry.metadata["autopkgtest"]["report_id"]
+        )
         self.assertNotEqual(
             job.metadata["autopkgtest"]["request"]["key"],
             retry.metadata["autopkgtest"]["request"]["key"],
@@ -1670,6 +1738,48 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
         job, adapter, backend = self.makeServiceJob()
         job.run()
         self.assertRaises(ValueError, RequestAutopkgtestJob.retry, job)
+        self.assertEqual(1, len(self.getJobs()))
+
+    def test_retry_report_is_rolled_back_with_job(self):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        self.collectRequest(adapter)
+        retry = RequestAutopkgtestJob.retry(job)
+        report_id = self.getRequestReport(retry).id
+        transaction.abort()
+        self.assertEqual(1, len(self.getJobs()))
+        self.assertIsNone(
+            getUtility(IRevisionStatusReportSet).getByID(report_id)
+        )
+
+    def test_retry_of_cancelled_unsubmitted_attempt(self):
+        job, adapter, backend = self.makeServiceJob()
+        backend.cancelTests(job)
+        retry = RequestAutopkgtestJob.retry(job)
+        self.assertEqual(
+            RevisionStatusResult.WAITING, self.getRequestReport(retry).result
+        )
+        self.assertNotEqual(
+            job.metadata["request_key"], retry.metadata["request_key"]
+        )
+        retry.run()
+        self.assertEqual("accepted", retry.metadata["autopkgtest"]["phase"])
+
+    def test_retry_refuses_inactive_validation(self):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        self.collectRequest(adapter)
+        self.validation.status = RevisionStatusResult.CANCELLED
+        self.assertRaises(ValueError, RequestAutopkgtestJob.retry, job)
+        self.assertEqual(1, len(self.getJobs()))
+
+    def test_retry_refuses_unpublished_package(self):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        self.collectRequest(adapter)
+        self.publication.status = PackagePublishingStatus.SUPERSEDED
+        error = self.assertRaises(ValueError, RequestAutopkgtestJob.retry, job)
+        self.assertIn("not published", str(error))
         self.assertEqual(1, len(self.getJobs()))
 
     def test_local_cancellation_cleans_watches_without_claiming_remote_stop(
