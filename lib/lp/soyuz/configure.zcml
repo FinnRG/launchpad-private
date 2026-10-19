@@ -1163,6 +1163,11 @@
         factory=".model.livefsbuildbehaviour.LiveFSBuildBehaviour"
         permission="zope.Public"/>
 
+    <class class=".model.mergeproposalvalidation.MergeProposalValidation">
+        <require permission="launchpad.View"
+                 interface=".interfaces.mergeproposalvalidation.IMergeProposalValidation"/>
+    </class>
+
     <!-- SourcePackageGitBuild -->
     <class class=".model.sourcepackagegitbuild.SourcePackageGitBuild">
         <require

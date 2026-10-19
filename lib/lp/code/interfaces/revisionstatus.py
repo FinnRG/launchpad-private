@@ -337,6 +337,20 @@ class IRevisionStatusReportSet(Interface):
         and SHA.  This lookup does not grant access to the returned reports.
         """
 
+    def getLatestValidation(proposal):
+        """Return the proposal's latest recorded validation, if any."""
+
+    def getValidationChecks(validation):
+        """Return current reports, available history and incomplete checks."""
+
+    def getCommitChecks(repository, commit_sha1):
+        """Return selections for visible workflow runs and report groups.
+
+        LPCI uses the newest build for each architecture, retaining all of
+        that build's checks.  For reports without producer attempt identity,
+        the latest report for each group and title is current.
+        """
+
     def getByCIBuildAndTitle(ci_build, title):
         """Return the `RevisionStatusReport` for a given CI build and title."""
 

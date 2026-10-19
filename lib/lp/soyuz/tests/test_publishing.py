@@ -60,6 +60,7 @@ from lp.code.model.branchmergeproposaljob import (
     BranchMergeProposalJobType,
     RequestAutopkgtestJob,
 )
+from lp.code.model.revisionstatussummary import selectValidationChecks
 from lp.code.scripts.revisionstatuswatch import RevisionStatusWatchCollector
 from lp.code.tests.test_autopkgtest import FakeAutopkgtestAdapter
 from lp.registry.interfaces.distribution import IDistributionSet
@@ -1739,6 +1740,110 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
         job.run()
         self.assertRaises(ValueError, RequestAutopkgtestJob.retry, job)
         self.assertEqual(1, len(self.getJobs()))
+
+    def makeValidationBuildReports(self):
+        self.publication.pocket = self.git_build.pocket
+        binary_build = removeSecurityProxy(self.publication.build)
+        binary_build.pocket = self.git_build.pocket
+        getUtility(IRevisionStatusReportSet).new(
+            creator=self.validation.requester,
+            title="source-build",
+            git_repository=self.git_build.git_repository,
+            commit_sha1=self.git_build.commit_sha1,
+            source_package_git_build=self.git_build,
+            group_name="package-validation",
+            properties={"validation_id": self.validation.id},
+            result=RevisionStatusResult.SUCCEEDED,
+        )
+        MergeProposalValidation.updateBinaryBuildReport(self.publication.build)
+
+    def test_current_checks_select_retry_before_worker_and_keep_history(self):
+        job, adapter, backend = self.makeServiceJob()
+        self.makeValidationBuildReports()
+        job.run()
+        self.collectRequest(adapter)
+        selection = selectValidationChecks(self.validation)
+        self.assertEqual([], selection.issues)
+        self.assertEqual(RevisionStatusResult.SUCCEEDED, selection.result)
+        old_report = self.getRequestReport(job)
+        retry = RequestAutopkgtestJob.retry(job)
+        selection = selectValidationChecks(self.validation)
+        self.assertEqual(RevisionStatusResult.WAITING, selection.result)
+        self.assertIn(self.getRequestReport(retry), selection.current)
+        self.assertIn(old_report, selection.history)
+        self.assertNotIn(old_report, selection.current)
+        removeSecurityProxy(old_report).update(
+            result=RevisionStatusResult.FAILED
+        )
+        self.assertEqual(
+            RevisionStatusResult.WAITING,
+            selectValidationChecks(self.validation).result,
+        )
+        self.assertRaises(ValueError, RequestAutopkgtestJob.retry, job)
+        retry.run()
+        self.collectRequest(adapter)
+        self.assertEqual(
+            RevisionStatusResult.SUCCEEDED,
+            selectValidationChecks(self.validation).result,
+        )
+
+    def test_current_checks_missing_attempt_report_is_incomplete(self):
+        self.publication.setPublished()
+        report = removeSecurityProxy(self.getRequestReport(self.getJobs()[0]))
+        IStore(report).remove(report)
+        self.makeValidationBuildReports()
+        selection = selectValidationChecks(self.validation)
+        self.assertTrue(selection.issues)
+        self.assertEqual(RevisionStatusResult.WAITING, selection.result)
+
+    def test_current_checks_include_tests_of_arch_indep_publications(self):
+        other_arch = self.factory.makeDistroArchSeries(
+            distroseries=self.series
+        )
+        binary = removeSecurityProxy(self.publication.binarypackagerelease)
+        binary.architecturespecific = False
+        self.makeValidationBuildReports()
+        self.factory.makeBinaryPackagePublishingHistory(
+            binarypackagerelease=binary,
+            archive=self.archive,
+            distroarchseries=other_arch,
+            pocket=self.git_build.pocket,
+            status=PackagePublishingStatus.PENDING,
+        )
+        other_publication = (
+            IStore(BinaryPackagePublishingHistory)
+            .find(
+                BinaryPackagePublishingHistory,
+                binarypackagerelease=binary,
+                distroarchseries=other_arch,
+            )
+            .one()
+        )
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        self.collectRequest(adapter)
+        selection = selectValidationChecks(self.validation)
+        self.assertEqual(
+            [
+                "Autopkgtest report for %s is not available yet."
+                % other_arch.architecturetag
+            ],
+            selection.issues,
+        )
+        self.assertEqual(RevisionStatusResult.WAITING, selection.result)
+        other_publication.setPublished()
+        [other_job] = [
+            candidate
+            for candidate in self.getJobs()
+            if candidate.metadata["distro_arch_series_id"] == other_arch.id
+        ]
+        adapter.result_status = AutopkgtestStatus.FAILED
+        other_job.run()
+        self.collectRequest(adapter)
+        selection = selectValidationChecks(self.validation)
+        self.assertEqual([], selection.issues)
+        self.assertIn(self.getRequestReport(other_job), selection.current)
+        self.assertEqual(RevisionStatusResult.FAILED, selection.result)
 
     def test_retry_report_is_rolled_back_with_job(self):
         job, adapter, backend = self.makeServiceJob()

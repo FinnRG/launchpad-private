@@ -37,6 +37,10 @@
            lp.code.interfaces.event.IReviewerNominatedEvent"
       handler="lp.code.subscribers.branchmergeproposal.review_requested"/>
 
+  <class class="lp.code.revisionstatus.CheckSelection">
+    <allow attributes="current history issues validation result"/>
+  </class>
+
   <!-- CodeImportMachine -->
 
   <class class="lp.code.model.codeimportmachine.CodeImportMachine">
