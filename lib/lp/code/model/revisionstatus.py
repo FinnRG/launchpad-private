@@ -270,6 +270,12 @@ class RevisionStatusReportSet:
             source_package_git_build=source_package_git_build,
         )
         store.add(report)
+        if date_started is not None:
+            report.date_started = date_started
+        if date_finished is not None:
+            report.date_finished = date_finished
+        if log is not None:
+            report.setLog(log)
         return report
 
     def getByID(self, id):
