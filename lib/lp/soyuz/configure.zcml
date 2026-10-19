@@ -63,6 +63,28 @@
         handler="lp.soyuz.subscribers.archive.build_status_change_webhook"
     />
 
+    <!-- MergeProposalValidation reports -->
+    <subscriber
+        for="lp.soyuz.interfaces.sourcepackagegitbuild.ISourcePackageGitBuild
+            lazr.lifecycle.interfaces.IObjectModifiedEvent"
+        handler="lp.soyuz.subscribers.mergeproposalvalidation.source_build_status_changed"
+    />
+    <subscriber
+        for="lp.soyuz.interfaces.queue.IPackageUpload
+            lazr.lifecycle.interfaces.IObjectModifiedEvent"
+        handler="lp.soyuz.subscribers.mergeproposalvalidation.source_upload_status_changed"
+    />
+    <subscriber
+        for="lp.soyuz.interfaces.binarypackagebuild.IBinaryPackageBuild
+            lazr.lifecycle.interfaces.IObjectCreatedEvent"
+        handler="lp.soyuz.subscribers.mergeproposalvalidation.binary_build_created"
+    />
+    <subscriber
+        for="lp.soyuz.interfaces.binarypackagebuild.IBinaryPackageBuild
+            lazr.lifecycle.interfaces.IObjectModifiedEvent"
+        handler="lp.soyuz.subscribers.mergeproposalvalidation.binary_build_status_changed"
+    />
+
     <!-- DistroSeriesPackageCache -->
     <class
         class="lp.soyuz.model.distroseriespackagecache.DistroSeriesPackageCache">

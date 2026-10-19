@@ -292,12 +292,14 @@ class CreateValidationArchiveJob(BranchMergeProposalJobDerived):
             )
         )
         build.queueBuild()
+        store.flush()
         reports = getUtility(IRevisionStatusReportSet)
         common = {
             "creator": run.requester,
             "git_repository": merge_proposal.source_git_repository,
             "commit_sha1": run.commit_sha1,
             "group_name": "package-validation",
+            "properties": {"validation_id": run.id},
         }
         reports.new(
             title="archive",
@@ -311,3 +313,4 @@ class CreateValidationArchiveJob(BranchMergeProposalJobDerived):
             result=RevisionStatusResult.WAITING,
             **common,
         )
+        MergeProposalValidation.updateSourceBuildReport(build)

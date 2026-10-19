@@ -182,6 +182,10 @@ class TestCreateValidationArchiveJob(
         self.assertEqual(
             ["package-validation"] * 2, [r.group_name for r in reports]
         )
+        self.assertEqual(
+            [{"validation_id": run.id}] * 2,
+            [report.properties for report in reports],
+        )
         build = reports[1].source_package_git_build
         self.assertEqual(run.archive, build.archive)
         self.assertEqual(self.series, build.distroseries)

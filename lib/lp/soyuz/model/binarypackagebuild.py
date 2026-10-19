@@ -20,11 +20,13 @@ from operator import attrgetter, itemgetter
 import apt_pkg
 import six
 from debian.deb822 import PkgRelation
+from lazr.lifecycle.event import ObjectCreatedEvent
 from storm.expr import And, Count, Desc, Exists, Join, LeftJoin, Or, Select
 from storm.locals import Bool, DateTime, Int, Reference, Unicode
 from storm.store import EmptyResultSet, Store
 from storm.zope import IResultSet
 from zope.component import getUtility
+from zope.event import notify
 from zope.interface import implementer
 from zope.security.proxy import removeSecurityProxy
 
@@ -579,8 +581,16 @@ class BinaryPackageBuild(PackageBuildMixin, StormBase):
 
     def resetBuild(self):
         """See `IBuildFarmJob`."""
-        super().resetBuild()
-        self.virtualized = is_build_virtualized(self.archive, self.processor)
+        edited_fields = set()
+        with notify_modified(
+            self, edited_fields, snapshot_names=("status",)
+        ) as previous_obj:
+            super().resetBuild()
+            self.virtualized = is_build_virtualized(
+                self.archive, self.processor
+            )
+            if self.status != previous_obj.status:
+                edited_fields.add("status")
 
     @property
     def api_score(self):
@@ -982,6 +992,7 @@ class BinaryPackageBuildSet(SpecificBuildFarmJobSourceMixin):
             date_created=date_created,
         )
         IStore(build).flush()
+        notify(ObjectCreatedEvent(build))
         return build
 
     def getByID(self, id):
