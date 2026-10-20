@@ -327,10 +327,9 @@ class TestGitRefView(BrowserTestCase):
                 soupmatchers.Within(
                     soupmatchers.Tag("pending report title", "td"),
                     soupmatchers.Tag(
-                        "pending report link",
-                        "a",
+                        "pending report title",
+                        "span",
                         text=pending_report.title,
-                        attrs={"href": None},
                     ),
                 ),
             )
@@ -340,6 +339,65 @@ class TestGitRefView(BrowserTestCase):
             # should only see 2 entries with class 'status-reports-table'
             # on the page: reports_section[0] and reports_section[1]
             self.assertEqual(2, len(reports_section))
+
+    def test_revisionStatusReports_groups_are_not_limited_to_one_batch(self):
+        [ref] = self.factory.makeGitRefs()
+        log = self.makeCommitLog()
+        for index in range(7):
+            self.factory.makeRevisionStatusReport(
+                git_repository=ref.repository,
+                commit_sha1=log[0]["sha1"],
+                title="check-%03d" % index,
+                group_name="Other checks" if index < 5 else None,
+                result=RevisionStatusResult.SUCCEEDED,
+            )
+        self.hosting_fixture.getLog.result = list(log)
+        self.scanRef(ref, log[-1], blobs={".launchpad.yaml": ""})
+        view = create_initialized_view(
+            ref, "+index", principal=ref.repository.owner
+        )
+        with person_logged_in(ref.repository.owner):
+            contents = view.render()
+        [section] = find_tags_by_class(contents, "status-reports-table")
+        self.assertEqual(7, len(section.find_all("tr")))
+        self.assertIn("Other checks", str(section))
+        self.assertIn("CI checks", str(section))
+
+    def test_revisionStatusReports_history_is_limited(self):
+        [ref] = self.factory.makeGitRefs()
+        log = self.makeCommitLog()
+        for index in range(8):
+            self.factory.makeRevisionStatusReport(
+                git_repository=ref.repository,
+                commit_sha1=log[0]["sha1"],
+                title="test",
+                result_summary="attempt-%s" % index,
+                result=RevisionStatusResult.SUCCEEDED,
+            )
+        self.hosting_fixture.getLog.result = list(log)
+        self.scanRef(ref, log[-1], blobs={".launchpad.yaml": ""})
+        view = create_initialized_view(
+            ref, "+index", principal=ref.repository.owner
+        )
+        with person_logged_in(ref.repository.owner):
+            contents = view.render()
+        [section] = find_tags_by_class(contents, "status-reports-table")
+        [history] = find_tags_by_class(str(section), "validation-history")
+        self.assertEqual(5, len(history.find_all("tr")))
+        self.assertEqual(6, len(section.find_all("tr")))
+        self.assertIn(
+            "Only the 5 most recent reports are shown.", extract_text(history)
+        )
+        self.assertIn("attempt-7", extract_text(section))
+        self.assertNotIn("attempt-0", extract_text(section))
+        self.assertNotIn("attempt-1", extract_text(section))
+        self.assertEqual(
+            ["attempt-%s" % index for index in range(6, 1, -1)],
+            [
+                row.find_all("td")[2].span.text
+                for row in history.find_all("tr")
+            ],
+        )
 
     def test_revisionStatusReports_all_skipped(self):
         self.useFixture(FakeLogger())

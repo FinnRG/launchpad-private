@@ -167,6 +167,12 @@
         name="+index"/>
 
     <!-- No view needed -->
+    <browser:page
+        name="revisionstatus-macros"
+        for="*"
+        permission="zope.Public"
+        template="../templates/revisionstatus-macros.pt"/>
+
     <browser:pages
         for="lp.code.interfaces.branchmergeproposal.IBranchMergeProposal"
         permission="launchpad.View">
@@ -194,6 +200,9 @@
         <browser:page
             name="+pagelet-summary"
             template="../templates/branchmergeproposal-pagelet-summary.pt"/>
+        <browser:page
+            name="+pagelet-validation"
+            template="../templates/branchmergeproposal-pagelet-validation.pt"/>
         <browser:page
             name="++bug-links"
             template="../templates/branchmergeproposal-bug-links.pt"/>

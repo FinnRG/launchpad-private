@@ -297,6 +297,27 @@ class TestRevisionStatusReport(
             self.assertEqual(artifacts[-1], report.latest_log)
 
 
+class TestRevisionStatusReportSet(TestCaseWithFactory):
+    layer = LaunchpadFunctionalLayer
+
+    def test_new_keeps_dates_and_log(self):
+        started = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        finished = started + timedelta(seconds=90)
+        report = getUtility(IRevisionStatusReportSet).new(
+            creator=self.factory.makePerson(),
+            git_repository=self.factory.makeGitRepository(),
+            commit_sha1="a" * 40,
+            title="logged-check",
+            date_started=started,
+            date_finished=finished,
+            log=b"check output",
+        )
+        self.assertEqual(started, report.date_started)
+        self.assertEqual(finished, report.date_finished)
+        with person_logged_in(report.git_repository.owner):
+            self.assertIsNotNone(report.latest_log)
+
+
 class TestRevisionStatusReportWebservice(TestCaseWithFactory):
     layer = LaunchpadFunctionalLayer
 

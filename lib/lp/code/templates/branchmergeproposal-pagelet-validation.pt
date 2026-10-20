@@ -1,0 +1,25 @@
+<section xmlns:tal="http://xml.zope.org/namespaces/tal"
+         xmlns:metal="http://xml.zope.org/namespaces/metal"
+         tal:define="status view/validation_status"
+         tal:condition="status"
+         id="merge-proposal-validation" class="validation-panel">
+  <h2>Package validation
+    <img width="14" height="14"
+         tal:attributes="src status/icon; alt status/status" />
+    <span tal:content="status/status" />
+  </h2>
+  <tal:run define="run status/validation">
+    <p>
+      Commit <code tal:content="run/commit_sha1" />
+      <strong tal:condition="python:run.commit_sha1 != context.source_git_commit_sha1">
+        (not the current source tip)
+      </strong>
+      &#183; <a tal:attributes="href run/archive/fmt:url">Validation PPA</a>
+      &#183; <span tal:content="status/count" /> current checks
+      <tal:version condition="status/version">
+        &#183; version <span tal:content="status/version" />
+      </tal:version>
+    </p>
+    <div metal:use-macro="context/@@revisionstatus-macros/groups" />
+  </tal:run>
+</section>
