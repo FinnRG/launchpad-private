@@ -40,7 +40,6 @@ from lp.code.model.branchmergeproposaljob import (
 from lp.code.model.revisionstatus import RevisionStatusReport
 from lp.code.scripts.revisionstatuswatch import FINAL_RESULTS
 from lp.services.database.interfaces import IStore
-from lp.services.features import getFeatureFlag
 from lp.soyuz.enums import PackagePublishingStatus
 from lp.soyuz.model.binarypackagebuild import BinaryPackageBuild
 from lp.soyuz.model.publishing import BinaryPackagePublishingHistory
@@ -310,8 +309,6 @@ class AutopkgtestRequestBackend:
             self._cancelLocked(job, state)
             self.txn.commit()
             return False
-        if not getFeatureFlag("autopkgtest.request.enabled"):
-            raise AutopkgtestRequestNotReady("Autopkgtest requests disabled")
         state["phase"] = "submitting"
         state["generation"] = state.get("generation", 0) + 1
         job.updateAutopkgtestState(state)

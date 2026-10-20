@@ -80,7 +80,6 @@ from lp.services.config import config
 from lp.services.database.enumcol import DBEnum
 from lp.services.database.interfaces import IPrimaryStore, IStore
 from lp.services.database.stormbase import StormBase
-from lp.services.features import getFeatureFlag
 from lp.services.job.interfaces.job import JobStatus
 from lp.services.job.model.job import EnumeratedSubclass, Job
 from lp.services.job.runner import BaseRunnableJob, BaseRunnableJobSource
@@ -954,12 +953,9 @@ class RequestAutopkgtestJob(BranchMergeProposalJobDerived):
             if backend is not None:
                 backend.cancelTests(self)
             return
-        if (
-            not getFeatureFlag("autopkgtest.request.enabled")
-            or backend is None
-        ):
+        if backend is None:
             raise AutopkgtestRequestNotReady(
-                "Autopkgtest request execution is not configured or enabled."
+                "Autopkgtest request execution is not configured."
             )
         backend.requestTests(self)
 

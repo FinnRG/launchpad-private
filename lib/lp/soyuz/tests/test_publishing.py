@@ -937,9 +937,7 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
 
     def setUp(self):
         super().setUp()
-        self.useFixture(
-            FeatureFixture({"autopkgtest.request.enabled": "true"})
-        )
+        self.useFixture(FeatureFixture({}))
         self.schedule = mock.Mock()
         self.patch(RequestAutopkgtestJob, "celeryRunOnCommit", self.schedule)
         self.proposal = self.factory.makeBranchMergeProposalForGit()
@@ -1061,10 +1059,10 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
             self.getJobs()[0].metadata["parameters"],
         )
 
-    def test_disabled_feature_does_not_queue(self):
-        self.useFixture(FeatureFixture({}))
+    def test_publication_without_feature_controller_queues(self):
+        self.patch(features.per_thread, "features", None)
         self.publication.setPublished()
-        self.assertEqual([], self.getJobs())
+        self.assertEqual(1, len(self.getJobs()))
 
     def test_no_validation_does_not_queue(self):
         IStore(MergeProposalValidation).remove(self.validation)
@@ -1242,12 +1240,14 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
         self.assertRaises(AutopkgtestRequestNotReady, self.getJobs()[0].run)
         backend.requestTests.assert_not_called()
 
-    def test_disabled_execution_does_not_reach_backend(self):
-        backend = self.installBackend()
-        self.publication.setPublished()
-        self.useFixture(FeatureFixture({}))
-        self.assertRaises(AutopkgtestRequestNotReady, self.getJobs()[0].run)
-        backend.requestTests.assert_not_called()
+    def test_submission_without_feature_controller(self):
+        job, adapter, backend = self.makeServiceJob()
+        self.patch(features.per_thread, "features", None)
+        job.run()
+        self.assertEqual("accepted", job.metadata["autopkgtest"]["phase"])
+        self.assertEqual(
+            ["readiness", "submit"], [call[0] for call in adapter.calls]
+        )
 
     def test_rollback_removes_saved_request_job(self):
         store = Store.of(self.publication)
