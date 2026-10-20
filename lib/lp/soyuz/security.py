@@ -43,6 +43,9 @@ from lp.soyuz.interfaces.distroarchseries import IDistroArchSeries
 from lp.soyuz.interfaces.distroarchseriesfilter import IDistroArchSeriesFilter
 from lp.soyuz.interfaces.livefs import ILiveFS
 from lp.soyuz.interfaces.livefsbuild import ILiveFSBuild
+from lp.soyuz.interfaces.mergeproposalvalidation import (
+    IMergeProposalValidation,
+)
 from lp.soyuz.interfaces.packagecopyjob import IPlainPackageCopyJob
 from lp.soyuz.interfaces.packageset import IPackageset, IPackagesetSet
 from lp.soyuz.interfaces.publishing import (
@@ -734,3 +737,14 @@ class EditLiveFSBuild(AdminByBuilddAdmin):
 
 class AdminLiveFSBuild(AdminBuildRecord):
     usedfor = ILiveFSBuild
+
+
+class ViewMergeProposalValidation(DelegatedAuthorization):
+    """Anyone who can see the proposal and its archive can see the run."""
+
+    permission = "launchpad.View"
+    usedfor = IMergeProposalValidation
+
+    def iter_objects(self):
+        yield self.obj.branch_merge_proposal
+        yield self.obj.archive

@@ -914,11 +914,23 @@ class BranchMergeProposal(StormBase, BugLinkTargetMixin):
         if self.source_branch is not None:
             return True
 
-        reports = self.getStatusReports(self.source_git_commit_sha1)
-        if reports.is_empty():
+        from lp.code.model.revisionstatussummary import selectCommitChecks
+
+        selections = selectCommitChecks(
+            self.source_git_repository,
+            self.source_git_commit_sha1,
+            proposal=self,
+            include_history=False,
+        )
+        if not selections:
             return True
 
-        return reports.last().result == RevisionStatusResult.SUCCEEDED
+        return all(
+            selection.result
+            in (RevisionStatusResult.SUCCEEDED, RevisionStatusResult.SKIPPED)
+            for selection in selections
+            if selection.current or selection.issues
+        )
 
     def hasNoConflicts(self):
         """See `IBranchMergeProposal`."""

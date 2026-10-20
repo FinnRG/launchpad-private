@@ -10,8 +10,9 @@ from datetime import timezone
 
 from storm.databases.postgres import JSON
 from storm.expr import Cast
-from storm.locals import DateTime, Int, Reference, Unicode
+from storm.locals import DateTime, Desc, Int, Reference, Unicode
 from zope.component import getUtility
+from zope.interface import implementer
 from zope.security.proxy import removeSecurityProxy
 
 from lp.buildmaster.enums import BuildStatus
@@ -25,6 +26,9 @@ from lp.services.database.stormbase import StormBase
 from lp.services.database.stormexpr import JSONContains
 from lp.services.webapp.publisher import canonical_url
 from lp.soyuz.enums import PackageUploadStatus
+from lp.soyuz.interfaces.mergeproposalvalidation import (
+    IMergeProposalValidation,
+)
 from lp.soyuz.model.queue import PackageUpload, PackageUploadSource
 from lp.soyuz.model.sourcepackagerelease import SourcePackageRelease
 
@@ -44,6 +48,7 @@ _BUILD_RESULTS = {
 }
 
 
+@implementer(IMergeProposalValidation)
 class MergeProposalValidation(StormBase):
     """The durable link between a proposal, commit and validation archive."""
 
@@ -73,6 +78,16 @@ class MergeProposalValidation(StormBase):
         self.parameters = parameters
         self.status = RevisionStatusResult.RUNNING
         self.date_created = UTC_NOW
+
+    @classmethod
+    def getLatest(cls, proposal):
+        """Return the last recorded run, including finished runs."""
+        return (
+            IStore(cls)
+            .find(cls, branch_merge_proposal=proposal)
+            .order_by(Desc(cls.id))
+            .first()
+        )
 
     @classmethod
     def _getSourceBuildReport(cls, build):

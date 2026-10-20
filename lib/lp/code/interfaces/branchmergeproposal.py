@@ -642,7 +642,11 @@ class IBranchMergeProposalView(Interface):
         """
 
     def CIChecksPassed():
-        """Check if all CI checks have passed for the latest pushed commit."""
+        """Check if current CI checks passed for the latest pushed commit.
+
+        History-only groups do not affect the result, but incomplete checks
+        still prevent it from passing.
+        """
 
     def hasNoConflicts():
         """Check if the merge proposal has any conflicts."""

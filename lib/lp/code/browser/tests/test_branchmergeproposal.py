@@ -79,6 +79,7 @@ from lp.coop.answersbugs.visibility import (
 from lp.registry.enums import PersonVisibility, TeamMembershipPolicy
 from lp.services.compat import message_as_bytes
 from lp.services.database.constants import UTC_NOW
+from lp.services.database.interfaces import IStore
 from lp.services.features.testing import FeatureFixture
 from lp.services.job.interfaces.job import JobStatus
 from lp.services.librarian.interfaces.client import LibrarianServerError
@@ -88,11 +89,22 @@ from lp.services.utils import seconds_since_epoch
 from lp.services.webapp import canonical_url
 from lp.services.webapp.interfaces import BrowserNotificationLevel
 from lp.services.webapp.servers import LaunchpadTestRequest
+from lp.soyuz.interfaces.sourcepackagegitbuild import (
+    ISourcePackageGitBuildSource,
+)
+from lp.soyuz.model.mergeproposalvalidation import MergeProposalValidation
+from lp.soyuz.tests.test_mergeproposalvalidation import (
+    ValidationReportTestMixin,
+)
+from lp.soyuz.tests.test_sourcepackagegitbuild import (
+    SourcePackageGitBuildTestMixin,
+)
 from lp.testing import (
     BrowserTestCase,
     EventRecorder,
     TestCaseWithFactory,
     admin_logged_in,
+    anonymous_logged_in,
     feature_flags,
     login_person,
     monkey_patch,
@@ -112,6 +124,159 @@ from lp.testing.pages import (
     get_feedback_messages,
 )
 from lp.testing.views import create_initialized_view, create_view
+
+
+class TestMergeProposalValidationView(
+    ValidationReportTestMixin,
+    SourcePackageGitBuildTestMixin,
+    BrowserTestCase,
+):
+    layer = LaunchpadFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        self.useFixture(GitHostingFixture())
+        self.build = self.makeBuild()
+        self.run, self.report = self.makeValidation(self.build)
+        self.proposal = self.run.branch_merge_proposal
+
+    def renderValidation(self):
+        return create_initialized_view(
+            self.proposal, "+pagelet-validation"
+        ).render()
+
+    def test_Validation_recorded_commit_not_tip(self):
+        self.proposal.source_git_commit_sha1 = "b" * 40
+        contents = self.renderValidation()
+        self.assertIn(self.run.commit_sha1, contents)
+        self.assertIn("not the current source tip", contents)
+        self.assertIn("source build", contents)
+
+    def test_Validation_no_run_has_no_panel(self):
+        proposal = self.factory.makeBranchMergeProposalForGit()
+        contents = create_initialized_view(
+            proposal, "+pagelet-validation"
+        ).render()
+        self.assertNotIn("merge-proposal-validation", contents)
+
+    def test_Validation_empty_latest_run_is_neutral(self):
+        other = MergeProposalValidation(
+            self.proposal, "c" * 40, self.run.archive, {}
+        )
+        IStore(other).add(other)
+        contents = self.renderValidation()
+        self.assertIn("No checks have been reported", contents)
+        self.assertIn("missing or ambiguous", contents)
+        self.assertNotIn(">Succeeded<", contents)
+
+    def test_Validation_merged_with_deleted_ref_remains_visible(self):
+        removeSecurityProxy(self.proposal).markAsMerged()
+        self.proposal.source_git_repository.removeRefs(
+            [self.proposal.source_git_path]
+        )
+        self.assertIsNone(
+            self.proposal.source_git_repository.getRefByPath(
+                self.proposal.source_git_path
+            )
+        )
+        browser = self.getViewBrowser(self.proposal)
+        panel = find_tag_by_id(browser.contents, "merge-proposal-validation")
+        self.assertIsNotNone(panel)
+        self.assertIn(self.run.commit_sha1, extract_text(panel))
+
+    def test_Validation_escapes_summary(self):
+        removeSecurityProxy(self.report).update(
+            result_summary="<script>alert('bad')</script>"
+        )
+        contents = self.renderValidation()
+        self.assertIn("&lt;script&gt;", contents)
+        self.assertNotIn("<script>", contents)
+
+    def test_Validation_log_fallback(self):
+        removeSecurityProxy(self.report).url = None
+        self.factory.makeRevisionStatusArtifact(
+            report=self.report, content=b"source output"
+        )
+        contents = self.renderValidation()
+        self.assertIn(self.report.latest_log.download_url, contents)
+
+    def test_Validation_all_stored_results(self):
+        for result in RevisionStatusResult.items:
+            removeSecurityProxy(self.report).update(result=result)
+            self.assertIn(result.title, self.renderValidation())
+
+    def test_Validation_same_sha_rebuild_preserves_history(self):
+        build = getUtility(ISourcePackageGitBuildSource).new(
+            self.build.git_repository,
+            self.build.commit_sha1,
+            self.build.archive,
+            self.build.distroseries,
+            self.build.requester,
+            "~ppa2",
+        )
+        latest, _ = self.makeValidation(build)
+        latest.branch_merge_proposal = self.proposal
+        panel = extract_text(
+            find_tag_by_id(
+                self.renderValidation(), "merge-proposal-validation"
+            )
+        )
+        self.assertIn("Previous attempts and runs", panel)
+        self.assertIn("1 current checks", panel)
+
+    def test_Validation_history_shows_only_five_newest_reports(self):
+        reports = [
+            self.factory.makeRevisionStatusReport(
+                git_repository=self.build.git_repository,
+                commit_sha1=self.build.commit_sha1,
+                group_name="package-validation",
+                title="previous-attempt-%s" % index,
+                properties={"validation_id": self.run.id},
+                result=RevisionStatusResult.FAILED,
+            )
+            for index in range(7)
+        ]
+        build = getUtility(ISourcePackageGitBuildSource).new(
+            self.build.git_repository,
+            self.build.commit_sha1,
+            self.build.archive,
+            self.build.distroseries,
+            self.build.requester,
+            "~ppa2",
+        )
+        latest, _ = self.makeValidation(build)
+        latest.branch_merge_proposal = self.proposal
+        contents = self.renderValidation()
+        [history] = find_tags_by_class(contents, "validation-history")
+        self.assertEqual(5, len(history.find_all("tr")))
+        text = extract_text(history)
+        self.assertIn("Only the 5 most recent reports are shown.", text)
+        for report in reports[:2]:
+            self.assertNotIn(report.title, text)
+        self.assertEqual(
+            [report.title for report in reversed(reports[-5:])],
+            [link.text for link in history.select("td:nth-child(2) > span")],
+        )
+        self.assertIn("1 current checks", extract_text(contents))
+
+    def test_Validation_anonymous_and_section_order(self):
+        browser = self.getViewBrowser(self.proposal, no_login=True)
+        contents = browser.contents
+        self.assertLess(
+            contents.index('id="proposal-summary"'),
+            contents.index('id="merge-proposal-validation"'),
+        )
+        self.assertLess(
+            contents.index('id="merge-proposal-validation"'),
+            contents.index('id="votes-target"'),
+        )
+
+    def test_Validation_private_archive_is_not_shown(self):
+        removeSecurityProxy(self.run.archive).private = True
+        with anonymous_logged_in():
+            self.assertNotIn(
+                "merge-proposal-validation", self.renderValidation()
+            )
 
 
 class GitHostingClientMixin:
@@ -2256,10 +2421,9 @@ class TestBranchMergeProposalView(TestCaseWithFactory):
                 Within(
                     Tag("pending report title", "td"),
                     Tag(
-                        "pending report link",
-                        "a",
+                        "pending report title",
+                        "span",
                         text=pending_report.title,
-                        attrs={"href": None},
                     ),
                 ),
             )

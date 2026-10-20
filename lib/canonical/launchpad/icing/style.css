@@ -933,6 +933,42 @@ div.translation-help-links div {
     }
 
 
+/* === Merge proposal validation === */
+
+.validation-panel {
+    margin: 1em 0;
+    padding: 1em;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.validation-panel h2 {
+    margin-top: 0;
+}
+
+.revision-check-groups details {
+    margin: 0.6em 0;
+}
+
+.revision-check-groups summary {
+    cursor: pointer;
+    padding: 0.3em 0;
+}
+
+.validation-panel code,
+.validation-checks td {
+    overflow-wrap: anywhere;
+}
+
+.validation-checks {
+    width: 100%;
+}
+
+.validation-history {
+    border-top: 1px solid #ddd;
+    padding-top: 0.5em;
+}
+
 /* === Webhooks === */
 
 table.listing tr.webhook-delivery:hover {

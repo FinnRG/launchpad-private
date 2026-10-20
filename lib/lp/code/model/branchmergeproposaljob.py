@@ -25,6 +25,7 @@ __all__ = [
 import json
 from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import six
 from lazr.delegates import delegate_to
@@ -34,6 +35,7 @@ from storm.locals import Int, Reference, Unicode
 from storm.store import Store
 from zope.component import getUtility, queryUtility
 from zope.interface import implementer, provider
+from zope.security.proxy import removeSecurityProxy
 
 from lp.app.errors import NotFoundError
 from lp.code.adapters.branch import BranchMergeProposalDelta
@@ -65,6 +67,7 @@ from lp.code.interfaces.branchmergeproposal import (
     IUpdatePreviewDiffJobSource,
 )
 from lp.code.interfaces.revision import IRevisionSet
+from lp.code.interfaces.revisionstatus import IRevisionStatusReportSet
 from lp.code.mail.branch import RecipientReason
 from lp.code.mail.branchmergeproposal import BMPMailer
 from lp.code.mail.codereviewcomment import CodeReviewCommentMailer
@@ -77,7 +80,6 @@ from lp.services.config import config
 from lp.services.database.enumcol import DBEnum
 from lp.services.database.interfaces import IPrimaryStore, IStore
 from lp.services.database.stormbase import StormBase
-from lp.services.features import getFeatureFlag
 from lp.services.job.interfaces.job import JobStatus
 from lp.services.job.model.job import EnumeratedSubclass, Job
 from lp.services.job.runner import BaseRunnableJob, BaseRunnableJobSource
@@ -689,6 +691,7 @@ class RequestAutopkgtestJob(BranchMergeProposalJobDerived):
     class_job_type = BranchMergeProposalJobType.REQUEST_AUTOPKGTEST
     config = config.IBranchMergeProposalJobSource
     retry_error_types = (AutopkgtestRequestNotReady,)
+    max_retries = 25
 
     @classmethod
     def create(cls, validation, publication, attempt=0):
@@ -760,7 +763,52 @@ class RequestAutopkgtestJob(BranchMergeProposalJobDerived):
                 if key.startswith("autopkgtest-")
             },
         )
-        return cls._create(validation.branch_merge_proposal, metadata)
+        job = cls._create(validation.branch_merge_proposal, metadata)
+        job.getOrCreateRevisionStatusReport(validation, publication)
+        return job
+
+    def getOrCreateRevisionStatusReport(self, validation, publication):
+        """Create the attempt's waiting check in the caller's transaction."""
+        from lp.code.model.revisionstatus import RevisionStatusReport
+
+        metadata = self.metadata
+        report_id = metadata.get(
+            "report_id", (metadata.get("autopkgtest") or {}).get("report_id")
+        )
+        if report_id is not None:
+            report = IStore(RevisionStatusReport).get(
+                RevisionStatusReport, report_id
+            )
+            if report is None:
+                raise AutopkgtestRequestNotReady(
+                    "Autopkgtest report is missing"
+                )
+            return report
+        request_key = str(uuid4())
+        arch = publication.distroarchseries
+        source = publication.build.source_package_release
+        report = removeSecurityProxy(getUtility(IRevisionStatusReportSet)).new(
+            creator=validation.requester,
+            title="autopkgtest: %s (%s)"
+            % (metadata["source_package_name"], arch.architecturetag),
+            git_repository=self.branch_merge_proposal.source_git_repository,
+            commit_sha1=metadata["commit_sha1"],
+            result=RevisionStatusResult.WAITING,
+            distro_arch_series=arch,
+            group_name="package-validation",
+            source_package_git_build=source.source_package_git_build,
+            properties={
+                "validation_id": validation.id,
+                "request_job_id": self.id,
+                "request_key": request_key,
+                "attempt": metadata.get("attempt", 0),
+                "check_key": "autopkgtest/%s" % arch.architecturetag,
+            },
+        )
+        IStore(report).flush()
+        metadata.update(report_id=report.id, request_key=request_key)
+        self.context._json_data = json.dumps(metadata)
+        return report
 
     @classmethod
     def retry(cls, job):
@@ -772,12 +820,14 @@ class RequestAutopkgtestJob(BranchMergeProposalJobDerived):
         from lp.soyuz.model.publishing import BinaryPackagePublishingHistory
 
         metadata = job.metadata
-        state = metadata.get("autopkgtest")
+        report_id = metadata.get(
+            "report_id", (metadata.get("autopkgtest") or {}).get("report_id")
+        )
         store = IPrimaryStore(MergeProposalValidation)
         report = (
             None
-            if state is None
-            else store.get(RevisionStatusReport, state["report_id"])
+            if report_id is None
+            else store.get(RevisionStatusReport, report_id)
         )
         if report is None or report.result not in FINAL_RESULTS:
             raise ValueError(
@@ -791,6 +841,34 @@ class RequestAutopkgtestJob(BranchMergeProposalJobDerived):
         )
         if validation is None or publication is None:
             raise ValueError("The validation or publication no longer exists")
+        store.execute(
+            "SELECT id FROM MergeProposalValidation WHERE id = %s FOR UPDATE",
+            (validation.id,),
+        )
+        matching = store.find(
+            BranchMergeProposalJob,
+            branch_merge_proposal=validation.branch_merge_proposal,
+            job_type=cls.class_job_type,
+        )
+        if any(
+            candidate.metadata.get("validation_id") == validation.id
+            and candidate.metadata.get("source_package_release_id")
+            == metadata["source_package_release_id"]
+            and candidate.metadata.get("distro_arch_series_id")
+            == metadata["distro_arch_series_id"]
+            and candidate.metadata.get("attempt", 0)
+            > metadata.get("attempt", 0)
+            for candidate in matching
+        ):
+            raise ValueError(
+                "Only the latest autopkgtest attempt can be retried"
+            )
+        try:
+            context = job.getAutopkgtestContext()
+        except AutopkgtestRequestNotReady as error:
+            raise ValueError("Autopkgtests cannot be retried: %s" % error)
+        if context is None:
+            raise ValueError("The validation is no longer active")
         retry_job = cls.create(validation, publication, attempt=None)
         if retry_job is not None:
             retry_metadata = retry_job.metadata
@@ -876,12 +954,9 @@ class RequestAutopkgtestJob(BranchMergeProposalJobDerived):
             if backend is not None:
                 backend.cancelTests(self)
             return
-        if (
-            not getFeatureFlag("autopkgtest.request.enabled")
-            or backend is None
-        ):
+        if backend is None:
             raise AutopkgtestRequestNotReady(
-                "Autopkgtest request execution is not configured or enabled."
+                "Autopkgtest request execution is not configured."
             )
         backend.requestTests(self)
 

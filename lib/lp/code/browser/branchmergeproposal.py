@@ -82,6 +82,7 @@ from lp.code.interfaces.codereviewinlinecomment import (
 )
 from lp.code.interfaces.codereviewvote import ICodeReviewVoteReference
 from lp.code.interfaces.diff import IPreviewDiff
+from lp.code.interfaces.revisionstatus import IRevisionStatusReportSet
 from lp.registry.interfaces.person import IPersonSet
 from lp.services.comments.interfaces.conversation import (
     IComment,
@@ -707,6 +708,19 @@ class BranchMergeProposalView(
 
     schema = ClaimButton
     next_url = None
+
+    @cachedproperty
+    def validation_status(self):
+        if self.context.source_git_repository is None:
+            return None
+        validation = getUtility(IRevisionStatusReportSet).getLatestValidation(
+            self.context
+        )
+        if validation is None:
+            return None
+        if not check_permission("launchpad.View", validation):
+            return None
+        return self.getValidationStatus(validation)
 
     def initialize(self):
         super().initialize()

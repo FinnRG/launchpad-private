@@ -7,7 +7,6 @@ __all__ = ["AutopkgtestRequestBackend"]
 
 from copy import deepcopy
 from datetime import datetime, timezone
-from uuid import uuid4
 
 import transaction
 from zope.component import getUtility, queryUtility
@@ -31,7 +30,6 @@ from lp.code.interfaces.autopkgtest import (
     IAutopkgtestAdapter,
     IRequestAutopkgtestBackend,
 )
-from lp.code.interfaces.revisionstatus import IRevisionStatusReportSet
 from lp.code.interfaces.revisionstatuswatch import IRevisionStatusWatchSet
 from lp.code.model.branchmergeproposaljob import (
     AutopkgtestRequestNotReady,
@@ -42,7 +40,6 @@ from lp.code.model.branchmergeproposaljob import (
 from lp.code.model.revisionstatus import RevisionStatusReport
 from lp.code.scripts.revisionstatuswatch import FINAL_RESULTS
 from lp.services.database.interfaces import IStore
-from lp.services.features import getFeatureFlag
 from lp.soyuz.enums import PackagePublishingStatus
 from lp.soyuz.model.binarypackagebuild import BinaryPackageBuild
 from lp.soyuz.model.publishing import BinaryPackagePublishingHistory
@@ -169,12 +166,16 @@ class AutopkgtestRequestBackend:
                 self.txn.commit()
                 return None
             validation, publication = context
+            report = job.getOrCreateRevisionStatusReport(
+                validation, publication
+            )
+            if report.result in FINAL_RESULTS:
+                self.txn.commit()
+                return None
             metadata = job.metadata
-            source = publication.build.source_package_release
-            git_build = source.source_package_git_build
             arch = publication.distroarchseries
             request = AutopkgtestRequest(
-                key=str(uuid4()),
+                key=report.properties["request_key"],
                 validation_id=validation.id,
                 proposal_id=job.branch_merge_proposal.id,
                 archive_id=publication.archive.id,
@@ -197,27 +198,6 @@ class AutopkgtestRequestBackend:
                     "%Y%m%d_%H%M%S"
                 ),
             )
-            report_set = removeSecurityProxy(
-                getUtility(IRevisionStatusReportSet)
-            )
-            report = report_set.new(
-                creator=validation.requester,
-                title="autopkgtest: %s (%s)"
-                % (request.source_package_name, request.architecture),
-                git_repository=job.branch_merge_proposal.source_git_repository,
-                commit_sha1=request.commit_sha1,
-                result=RevisionStatusResult.WAITING,
-                distro_arch_series=arch,
-                group_name="package-validation",
-                source_package_git_build=git_build,
-                properties={
-                    "validation_id": validation.id,
-                    "request_job_id": job.id,
-                    "request_key": request.key,
-                    "attempt": metadata.get("attempt", 0),
-                },
-            )
-            IStore(report).flush()
             state = {
                 "schema_version": 1,
                 "phase": "prepared",
@@ -271,6 +251,10 @@ class AutopkgtestRequestBackend:
         state = self._lock(job)
         if state is not None:
             self._cancelLocked(job, state)
+        elif job.metadata.get("report_id") is not None:
+            report = self._getReport(job.metadata)
+            if report.result not in FINAL_RESULTS:
+                report.update(result=RevisionStatusResult.CANCELLED)
         self.txn.commit()
 
     def cancelForValidation(self, validation):
@@ -325,8 +309,6 @@ class AutopkgtestRequestBackend:
             self._cancelLocked(job, state)
             self.txn.commit()
             return False
-        if not getFeatureFlag("autopkgtest.request.enabled"):
-            raise AutopkgtestRequestNotReady("Autopkgtest requests disabled")
         state["phase"] = "submitting"
         state["generation"] = state.get("generation", 0) + 1
         job.updateAutopkgtestState(state)

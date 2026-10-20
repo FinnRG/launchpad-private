@@ -77,6 +77,11 @@
   </div>
 
   <div class="yui-g">
+    <tal:validation
+        replace="structure context/@@+pagelet-validation" />
+  </div>
+
+  <div class="yui-g">
     <div id="votes-target"
          tal:content="structure context/@@+votes" />
   </div>

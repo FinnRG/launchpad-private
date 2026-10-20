@@ -17,6 +17,7 @@ from storm.expr import Cast, Desc, Or, Select
 from storm.locals import And, DateTime, Int, Reference, Unicode
 from zope.component import getUtility
 from zope.interface import implementer
+from zope.security.proxy import removeSecurityProxy
 
 from lp.app.errors import NotFoundError
 from lp.code.enums import RevisionStatusArtifactType, RevisionStatusResult
@@ -35,6 +36,7 @@ from lp.services.database.stormexpr import JSONContains
 from lp.services.librarian.browser import ProxiedLibraryFileAlias
 from lp.services.librarian.interfaces import ILibraryFileAliasSet
 from lp.services.librarian.model import LibraryFileAlias
+from lp.services.webapp.authorization import check_permission
 
 
 @implementer(IRevisionStatusReport)
@@ -235,6 +237,28 @@ class RevisionStatusReport(StormBase):
 
 @implementer(IRevisionStatusReportSet)
 class RevisionStatusReportSet:
+    def getLatestValidation(self, proposal):
+        from lp.soyuz.model.mergeproposalvalidation import (
+            MergeProposalValidation,
+        )
+
+        return MergeProposalValidation.getLatest(proposal)
+
+    def getValidationChecks(self, validation):
+        from lp.code.model.revisionstatussummary import selectValidationChecks
+
+        return selectValidationChecks(removeSecurityProxy(validation))
+
+    def getCommitChecks(self, repository, commit_sha1):
+        from lp.code.model.revisionstatussummary import selectCommitChecks
+
+        return [
+            selection
+            for selection in selectCommitChecks(repository, commit_sha1)
+            if selection.validation is None
+            or check_permission("launchpad.View", selection.validation)
+        ]
+
     def new(
         self,
         creator,
@@ -270,6 +294,12 @@ class RevisionStatusReportSet:
             source_package_git_build=source_package_git_build,
         )
         store.add(report)
+        if date_started is not None:
+            report.date_started = date_started
+        if date_finished is not None:
+            report.date_finished = date_finished
+        if log is not None:
+            report.setLog(log)
         return report
 
     def getByID(self, id):

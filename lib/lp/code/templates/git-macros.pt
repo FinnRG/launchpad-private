@@ -225,29 +225,22 @@
         tal:define="
           commit_sha1 commit_info/sha1;
           status_result python:view.getOverallIcon(ref.repository, commit_sha1);
-          batchnav python:view.getStatusReports(commit_sha1);
-          batch python:batchnav.currentBatch()"
-        tal:condition="batch">
+          statuses python:view.getGroupedStatusReports(ref.repository, commit_sha1)"
+        tal:condition="statuses">
         <div class="treeCollapsed">
           <span class="icon" tal:replace="structure status_result" />
         </div>
-        <table class="listing" tal:condition="batch">
-          <tbody>
-            <tr tal:repeat="report batch">
-              <td class="icon" tal:content="structure report/image:icon" />
-              <td tal:define="url python: report.url if report.url is not None else path('report/latest_log/download_url | nothing')">
-                <a tal:attributes="href url" tal:content="report/title" />
-                <tal:ci_build condition="report/ci_build">
-                  (<a tal:attributes="href report/ci_build/fmt:url">build</a>)
-                </tal:ci_build>
-              </td>
-              <td tal:content="report/result_summary" />
-            </tr>
-          </tbody>
-        </table>
-        <div class="lower-batch-nav">
-          <tal:navigation
-            replace="structure batchnav/@@+navigation-links-lower" />
+        <div>
+          <div tal:repeat="status statuses">
+            <p tal:condition="status/validation"
+               tal:define="run status/validation">
+              Package validation for
+              <a tal:attributes="href run/branch_merge_proposal/fmt:url">
+                MP #<span tal:content="run/branch_merge_proposal/id" />
+              </a>, run <span tal:content="run/id" />
+            </p>
+            <div metal:use-macro="context/@@revisionstatus-macros/groups" />
+          </div>
         </div>
     </dd>
   </tal:status_reports>

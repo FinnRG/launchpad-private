@@ -13,7 +13,6 @@ from zope.security.proxy import removeSecurityProxy
 from lp.code.enums import BranchMergeProposalStatus, RevisionStatusResult
 from lp.code.interfaces.autopkgtest import IRequestAutopkgtestJobSource
 from lp.services.database.interfaces import IPrimaryStore
-from lp.services.features import getFeatureFlag
 from lp.soyuz.model.mergeproposalvalidation import MergeProposalValidation
 
 logger = logging.getLogger(__name__)
@@ -21,8 +20,6 @@ logger = logging.getLogger(__name__)
 
 def request_autopkgtests_on_publication(publication, event):
     """Save request work in the publishing transaction, without network I/O."""
-    if not getFeatureFlag("autopkgtest.request.enabled"):
-        return
     publication = removeSecurityProxy(publication)
     if not publication.archive.is_ppa or publication.archive.private:
         return

@@ -5,6 +5,7 @@
 
 import hashlib
 import io
+import json
 import operator
 import os
 import shutil
@@ -59,6 +60,7 @@ from lp.code.model.branchmergeproposaljob import (
     BranchMergeProposalJobType,
     RequestAutopkgtestJob,
 )
+from lp.code.model.revisionstatussummary import selectValidationChecks
 from lp.code.scripts.revisionstatuswatch import RevisionStatusWatchCollector
 from lp.code.tests.test_autopkgtest import FakeAutopkgtestAdapter
 from lp.registry.interfaces.distribution import IDistributionSet
@@ -70,11 +72,14 @@ from lp.registry.interfaces.sourcepackage import (
     SourcePackageUrgency,
 )
 from lp.registry.interfaces.sourcepackagename import ISourcePackageNameSet
+from lp.services import features
 from lp.services.channels import channel_string_to_list
 from lp.services.config import config
 from lp.services.database.constants import UTC_NOW
 from lp.services.database.interfaces import IStore
 from lp.services.features.testing import FeatureFixture
+from lp.services.job.interfaces.job import JobStatus
+from lp.services.job.runner import JobRunner
 from lp.services.librarian.interfaces import ILibraryFileAliasSet
 from lp.services.log.logger import BufferLogger, DevNullLogger
 from lp.soyuz.enums import (
@@ -935,9 +940,7 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
 
     def setUp(self):
         super().setUp()
-        self.useFixture(
-            FeatureFixture({"autopkgtest.request.enabled": "true"})
-        )
+        self.useFixture(FeatureFixture({}))
         self.schedule = mock.Mock()
         self.patch(RequestAutopkgtestJob, "celeryRunOnCommit", self.schedule)
         self.proposal = self.factory.makeBranchMergeProposalForGit()
@@ -1031,6 +1034,13 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
         self.assertEqual(
             {"autopkgtest-all-proposed": "false"}, job.metadata["parameters"]
         )
+        report = self.getRequestReport(job)
+        self.assertEqual(RevisionStatusResult.WAITING, report.result)
+        self.assertEqual(
+            job.metadata["request_key"], report.properties["request_key"]
+        )
+        self.assertNotIn("autopkgtest", job.metadata)
+        self.assertEqual([], self.getRequestWatches(job))
         self.schedule.assert_called_once_with()
 
     def test_only_autopkgtest_options_are_saved(self):
@@ -1052,10 +1062,10 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
             self.getJobs()[0].metadata["parameters"],
         )
 
-    def test_disabled_feature_does_not_queue(self):
-        self.useFixture(FeatureFixture({}))
+    def test_publication_without_feature_controller_queues(self):
+        self.patch(features.per_thread, "features", None)
         self.publication.setPublished()
-        self.assertEqual([], self.getJobs())
+        self.assertEqual(1, len(self.getJobs()))
 
     def test_no_validation_does_not_queue(self):
         IStore(MergeProposalValidation).remove(self.validation)
@@ -1137,8 +1147,12 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
 
     def test_multiple_binaries_for_same_architecture_share_job(self):
         self.publication.setPublished()
+        report_id = self.getRequestReport(self.getJobs()[0]).id
         self.makePublication().setPublished()
         self.assertEqual(1, len(self.getJobs()))
+        self.assertEqual(
+            report_id, self.getRequestReport(self.getJobs()[0]).id
+        )
         self.schedule.assert_called_once_with()
 
     def test_distinct_architectures_get_distinct_jobs(self):
@@ -1229,12 +1243,14 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
         self.assertRaises(AutopkgtestRequestNotReady, self.getJobs()[0].run)
         backend.requestTests.assert_not_called()
 
-    def test_disabled_execution_does_not_reach_backend(self):
-        backend = self.installBackend()
-        self.publication.setPublished()
-        self.useFixture(FeatureFixture({}))
-        self.assertRaises(AutopkgtestRequestNotReady, self.getJobs()[0].run)
-        backend.requestTests.assert_not_called()
+    def test_submission_without_feature_controller(self):
+        job, adapter, backend = self.makeServiceJob()
+        self.patch(features.per_thread, "features", None)
+        job.run()
+        self.assertEqual("accepted", job.metadata["autopkgtest"]["phase"])
+        self.assertEqual(
+            ["readiness", "submit"], [call[0] for call in adapter.calls]
+        )
 
     def test_rollback_removes_saved_request_job(self):
         store = Store.of(self.publication)
@@ -1243,8 +1259,12 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
         transaction.commit()
         self.publication.setPublished()
         self.assertEqual(1, len(self.getJobs()))
+        report_id = self.getRequestReport(self.getJobs()[0]).id
         transaction.abort()
         self.assertEqual([], self.getJobs())
+        self.assertIsNone(
+            getUtility(IRevisionStatusReportSet).getByID(report_id)
+        )
         publication = store.get(BinaryPackagePublishingHistory, publication_id)
         publication.setPublished()
         self.assertEqual(1, len(self.getJobs()))
@@ -1256,8 +1276,11 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
         return self.getJobs()[0], adapter, backend
 
     def getRequestReport(self, job):
-        state = job.metadata["autopkgtest"]
-        return getUtility(IRevisionStatusReportSet).getByID(state["report_id"])
+        metadata = job.metadata
+        report_id = metadata.get("report_id")
+        if report_id is None:
+            report_id = metadata["autopkgtest"]["report_id"]
+        return getUtility(IRevisionStatusReportSet).getByID(report_id)
 
     def getRequestWatches(self, job):
         watch_set = removeSecurityProxy(getUtility(IRevisionStatusWatchSet))
@@ -1270,6 +1293,43 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
             {"autopkgtest": AutopkgtestWatchHandler(adapter)},
         )
         collector.run()
+
+    def test_worker_creates_report_for_legacy_unprepared_job(self):
+        job, adapter, backend = self.makeServiceJob()
+        metadata = job.metadata
+        report = self.getRequestReport(job)
+        del metadata["report_id"]
+        del metadata["request_key"]
+        job.context._json_data = json.dumps(metadata)
+        IStore(report).remove(removeSecurityProxy(report))
+        job.run()
+        self.assertEqual("accepted", job.metadata["autopkgtest"]["phase"])
+        self.assertEqual(
+            job.metadata["report_id"],
+            job.metadata["autopkgtest"]["report_id"],
+        )
+
+    def test_worker_preserves_legacy_submission_identity(self):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        metadata = job.metadata
+        report_id = metadata.pop("report_id")
+        metadata.pop("request_key")
+        job.context._json_data = json.dumps(metadata)
+        job.run()
+        self.assertEqual(report_id, job.metadata["autopkgtest"]["report_id"])
+        self.assertEqual(
+            1, len([call for call in adapter.calls if call[0] == "submit"])
+        )
+
+    def test_cancellation_before_worker_cancels_waiting_report(self):
+        job, adapter, backend = self.makeServiceJob()
+        backend.cancelTests(job)
+        self.assertEqual(
+            RevisionStatusResult.CANCELLED, self.getRequestReport(job).result
+        )
+        job.run()
+        self.assertEqual([], adapter.calls)
 
     def test_unconfigured_adapter_leaves_waiting_report_without_watch(self):
         self.publication.setPublished()
@@ -1285,8 +1345,12 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
 
     def test_submission_creates_correlated_report_and_watch(self):
         job, adapter, backend = self.makeServiceJob()
+        report = self.getRequestReport(job)
+        request_key = job.metadata["request_key"]
         job.run()
         state = job.metadata["autopkgtest"]
+        self.assertEqual(report.id, state["report_id"])
+        self.assertEqual(request_key, state["request"]["key"])
         watch = self.getRequestWatches(job)[0]
         self.assertEqual("accepted", state["phase"])
         self.assertEqual(
@@ -1332,6 +1396,92 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
         removeSecurityProxy(sibling.build).status = BuildStatus.BUILDING
         self.assertRaises(AutopkgtestRequestNotReady, job.run)
         self.assertEqual([], adapter.calls)
+
+    def test_runner_retries_until_all_binaries_are_published(self):
+        job, adapter, backend = self.makeServiceJob()
+        sibling = self.makePublication()
+        request_key = job.metadata["request_key"]
+        before = datetime.now(timezone.utc)
+        JobRunner([job], BufferLogger()).runAll()
+        self.assertEqual(JobStatus.WAITING, job.status)
+        self.assertEqual(1, job.attempt_count)
+        self.assertGreaterEqual(job.scheduled_start, before + job.retry_delay)
+        self.assertLessEqual(
+            job.scheduled_start,
+            datetime.now(timezone.utc) + job.retry_delay,
+        )
+        self.assertIsNone(job.lease_expires)
+        self.assertEqual([], list(BranchMergeProposalJobSource.iterReady()))
+        self.assertEqual([], adapter.calls)
+        sibling.setPublished()
+        self.assertEqual(1, len(self.getJobs()))
+        job.scheduled_start = datetime.now(timezone.utc) - timedelta(seconds=1)
+        JobRunner.fromReady(
+            BranchMergeProposalJobSource, BufferLogger()
+        ).runAll()
+        self.assertEqual(JobStatus.COMPLETED, job.status)
+        self.assertEqual(2, job.attempt_count)
+        self.assertEqual(request_key, job.metadata["request_key"])
+        self.assertEqual(
+            [("readiness", request_key), ("submit", request_key)],
+            adapter.calls,
+        )
+        self.assertEqual(1, len(self.getRequestWatches(job)))
+
+    def test_runner_retries_until_archive_is_ready(self):
+        job, adapter, backend = self.makeServiceJob()
+        adapter.readiness = AutopkgtestReadiness(False)
+        JobRunner([job], BufferLogger()).runAll()
+        self.assertEqual(JobStatus.WAITING, job.status)
+        self.assertEqual(1, job.attempt_count)
+        self.assertEqual([], self.getRequestWatches(job))
+        adapter.readiness = AutopkgtestReadiness(True)
+        job.scheduled_start = datetime.now(timezone.utc) - timedelta(seconds=1)
+        JobRunner.fromReady(
+            BranchMergeProposalJobSource, BufferLogger()
+        ).runAll()
+        self.assertEqual(JobStatus.COMPLETED, job.status)
+        self.assertEqual(2, job.attempt_count)
+        self.assertEqual(
+            ["readiness", "readiness", "submit"],
+            [call[0] for call in adapter.calls],
+        )
+
+    def test_runner_stops_after_retry_budget_is_exhausted(self):
+        job, adapter, backend = self.makeServiceJob()
+        self.assertEqual(25, job.max_retries)
+        job.job.attempt_count = job.max_retries
+        adapter.readiness = AutopkgtestReadiness(False)
+        JobRunner([job], BufferLogger()).runAll()
+        self.assertEqual(JobStatus.FAILED, job.status)
+        self.assertEqual(26, job.attempt_count)
+        self.assertEqual([], self.getRequestWatches(job))
+        self.assertEqual(["readiness"], [call[0] for call in adapter.calls])
+
+    def test_runner_reconciles_uncertain_submission_on_retry(self):
+        job, adapter, backend = self.makeServiceJob()
+        adapter.submission_error = TimeoutError()
+        JobRunner([job], BufferLogger()).runAll()
+        self.assertEqual(JobStatus.WAITING, job.status)
+        job.scheduled_start = datetime.now(timezone.utc) - timedelta(seconds=1)
+        JobRunner.fromReady(
+            BranchMergeProposalJobSource, BufferLogger()
+        ).runAll()
+        self.assertEqual(JobStatus.WAITING, job.status)
+        adapter.lookup = AutopkgtestLookup(
+            AutopkgtestLookupStatus.ACCEPTED, adapter.receipt
+        )
+        job.scheduled_start = datetime.now(timezone.utc) - timedelta(seconds=1)
+        JobRunner.fromReady(
+            BranchMergeProposalJobSource, BufferLogger()
+        ).runAll()
+        self.assertEqual(JobStatus.COMPLETED, job.status)
+        self.assertEqual(3, job.attempt_count)
+        self.assertEqual(
+            ["readiness", "submit", "reconcile", "reconcile"],
+            [call[0] for call in adapter.calls],
+        )
+        self.assertEqual(1, len(self.getRequestWatches(job)))
 
     def test_failed_binary_build_returns_error_report(self):
         job, adapter, backend = self.makeServiceJob()
@@ -1652,9 +1802,17 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
         retry = RequestAutopkgtestJob.retry(job)
         self.assertEqual(1, retry.metadata["attempt"])
         self.assertEqual(
+            RevisionStatusResult.WAITING, self.getRequestReport(retry).result
+        )
+        self.assertNotIn("autopkgtest", retry.metadata)
+        waiting_report_id = self.getRequestReport(retry).id
+        self.assertEqual(
             job.metadata["parameters"], retry.metadata["parameters"]
         )
         retry.run()
+        self.assertEqual(
+            waiting_report_id, retry.metadata["autopkgtest"]["report_id"]
+        )
         self.assertNotEqual(
             job.metadata["autopkgtest"]["request"]["key"],
             retry.metadata["autopkgtest"]["request"]["key"],
@@ -1670,6 +1828,174 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
         job, adapter, backend = self.makeServiceJob()
         job.run()
         self.assertRaises(ValueError, RequestAutopkgtestJob.retry, job)
+        self.assertEqual(1, len(self.getJobs()))
+
+    def test_explicit_retry_waits_for_publication(self):
+        job, adapter, backend = self.makeServiceJob()
+        JobRunner([job], BufferLogger()).runAll()
+        self.collectRequest(adapter)
+        retry = RequestAutopkgtestJob.retry(job)
+        sibling = self.makePublication()
+        JobRunner([retry], BufferLogger()).runAll()
+        self.assertEqual(JobStatus.WAITING, retry.status)
+        self.assertEqual(1, retry.attempt_count)
+        sibling.setPublished()
+        self.assertEqual(2, len(self.getJobs()))
+        retry.scheduled_start = datetime.now(timezone.utc) - timedelta(
+            seconds=1
+        )
+        JobRunner.fromReady(RequestAutopkgtestJob, BufferLogger()).runAll()
+        self.assertEqual(JobStatus.COMPLETED, retry.status)
+        self.assertEqual(2, retry.attempt_count)
+        self.assertEqual(1, retry.metadata["attempt"])
+        self.assertEqual(
+            2, len([call for call in adapter.calls if call[0] == "submit"])
+        )
+
+    def makeValidationBuildReports(self):
+        self.publication.pocket = self.git_build.pocket
+        binary_build = removeSecurityProxy(self.publication.build)
+        binary_build.pocket = self.git_build.pocket
+        getUtility(IRevisionStatusReportSet).new(
+            creator=self.validation.requester,
+            title="source-build",
+            git_repository=self.git_build.git_repository,
+            commit_sha1=self.git_build.commit_sha1,
+            source_package_git_build=self.git_build,
+            group_name="package-validation",
+            properties={"validation_id": self.validation.id},
+            result=RevisionStatusResult.SUCCEEDED,
+        )
+        MergeProposalValidation.updateBinaryBuildReport(self.publication.build)
+
+    def test_current_checks_select_retry_before_worker_and_keep_history(self):
+        job, adapter, backend = self.makeServiceJob()
+        self.makeValidationBuildReports()
+        job.run()
+        self.collectRequest(adapter)
+        selection = selectValidationChecks(self.validation)
+        self.assertEqual([], selection.issues)
+        self.assertEqual(RevisionStatusResult.SUCCEEDED, selection.result)
+        old_report = self.getRequestReport(job)
+        retry = RequestAutopkgtestJob.retry(job)
+        selection = selectValidationChecks(self.validation)
+        self.assertEqual(RevisionStatusResult.WAITING, selection.result)
+        self.assertIn(self.getRequestReport(retry), selection.current)
+        self.assertIn(old_report, selection.history)
+        self.assertNotIn(old_report, selection.current)
+        removeSecurityProxy(old_report).update(
+            result=RevisionStatusResult.FAILED
+        )
+        self.assertEqual(
+            RevisionStatusResult.WAITING,
+            selectValidationChecks(self.validation).result,
+        )
+        self.assertRaises(ValueError, RequestAutopkgtestJob.retry, job)
+        retry.run()
+        self.collectRequest(adapter)
+        self.assertEqual(
+            RevisionStatusResult.SUCCEEDED,
+            selectValidationChecks(self.validation).result,
+        )
+
+    def test_current_checks_missing_attempt_report_is_incomplete(self):
+        self.publication.setPublished()
+        report = removeSecurityProxy(self.getRequestReport(self.getJobs()[0]))
+        IStore(report).remove(report)
+        self.makeValidationBuildReports()
+        selection = selectValidationChecks(self.validation)
+        self.assertTrue(selection.issues)
+        self.assertEqual(RevisionStatusResult.WAITING, selection.result)
+
+    def test_current_checks_include_tests_of_arch_indep_publications(self):
+        other_arch = self.factory.makeDistroArchSeries(
+            distroseries=self.series
+        )
+        binary = removeSecurityProxy(self.publication.binarypackagerelease)
+        binary.architecturespecific = False
+        self.makeValidationBuildReports()
+        self.factory.makeBinaryPackagePublishingHistory(
+            binarypackagerelease=binary,
+            archive=self.archive,
+            distroarchseries=other_arch,
+            pocket=self.git_build.pocket,
+            status=PackagePublishingStatus.PENDING,
+        )
+        other_publication = (
+            IStore(BinaryPackagePublishingHistory)
+            .find(
+                BinaryPackagePublishingHistory,
+                binarypackagerelease=binary,
+                distroarchseries=other_arch,
+            )
+            .one()
+        )
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        self.collectRequest(adapter)
+        selection = selectValidationChecks(self.validation)
+        self.assertEqual(
+            [
+                "Autopkgtest report for %s is not available yet."
+                % other_arch.architecturetag
+            ],
+            selection.issues,
+        )
+        self.assertEqual(RevisionStatusResult.WAITING, selection.result)
+        other_publication.setPublished()
+        [other_job] = [
+            candidate
+            for candidate in self.getJobs()
+            if candidate.metadata["distro_arch_series_id"] == other_arch.id
+        ]
+        adapter.result_status = AutopkgtestStatus.FAILED
+        other_job.run()
+        self.collectRequest(adapter)
+        selection = selectValidationChecks(self.validation)
+        self.assertEqual([], selection.issues)
+        self.assertIn(self.getRequestReport(other_job), selection.current)
+        self.assertEqual(RevisionStatusResult.FAILED, selection.result)
+
+    def test_retry_report_is_rolled_back_with_job(self):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        self.collectRequest(adapter)
+        retry = RequestAutopkgtestJob.retry(job)
+        report_id = self.getRequestReport(retry).id
+        transaction.abort()
+        self.assertEqual(1, len(self.getJobs()))
+        self.assertIsNone(
+            getUtility(IRevisionStatusReportSet).getByID(report_id)
+        )
+
+    def test_retry_of_cancelled_unsubmitted_attempt(self):
+        job, adapter, backend = self.makeServiceJob()
+        backend.cancelTests(job)
+        retry = RequestAutopkgtestJob.retry(job)
+        self.assertEqual(
+            RevisionStatusResult.WAITING, self.getRequestReport(retry).result
+        )
+        self.assertNotEqual(
+            job.metadata["request_key"], retry.metadata["request_key"]
+        )
+        retry.run()
+        self.assertEqual("accepted", retry.metadata["autopkgtest"]["phase"])
+
+    def test_retry_refuses_inactive_validation(self):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        self.collectRequest(adapter)
+        self.validation.status = RevisionStatusResult.CANCELLED
+        self.assertRaises(ValueError, RequestAutopkgtestJob.retry, job)
+        self.assertEqual(1, len(self.getJobs()))
+
+    def test_retry_refuses_unpublished_package(self):
+        job, adapter, backend = self.makeServiceJob()
+        job.run()
+        self.collectRequest(adapter)
+        self.publication.status = PackagePublishingStatus.SUPERSEDED
+        error = self.assertRaises(ValueError, RequestAutopkgtestJob.retry, job)
+        self.assertIn("not published", str(error))
         self.assertEqual(1, len(self.getJobs()))
 
     def test_local_cancellation_cleans_watches_without_claiming_remote_stop(

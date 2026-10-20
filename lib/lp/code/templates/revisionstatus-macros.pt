@@ -1,0 +1,68 @@
+<tal:root xmlns:tal="http://xml.zope.org/namespaces/tal"
+          xmlns:metal="http://xml.zope.org/namespaces/metal">
+  <table metal:define-macro="reports" class="listing validation-checks">
+    <tbody>
+      <tr tal:repeat="report reports">
+        <td class="icon" tal:content="structure report/image:icon" />
+        <td tal:define="url python:report.url or path('report/latest_log/download_url | nothing')">
+          <a tal:condition="url"
+             tal:attributes="href url" tal:content="report/title" />
+          <span tal:condition="not:url" tal:content="report/title" />
+          <tal:ci condition="python:view.canViewCheckBuild(report.ci_build)">
+            (<a tal:attributes="href report/ci_build/fmt:url">build</a>)
+          </tal:ci>
+          <tal:source condition="python:view.canViewCheckBuild(report.source_package_git_build)">
+            (<a tal:attributes="href report/source_package_git_build/fmt:url">source build</a>)
+          </tal:source>
+        </td>
+        <td>
+          <span tal:content="report/result_summary" />
+          <p tal:condition="history_mode|nothing">
+            Run <span tal:content="report/properties/validation_id|nothing" />,
+            commit <code tal:content="report/commit_sha1" />
+          </p>
+          <details tal:condition="report/date_started">
+            <summary>Timing</summary>
+            Started <span tal:replace="structure report/date_started/fmt:displaydatetitle" />.
+            <tal:finished condition="report/date_finished">
+              Finished <span tal:replace="structure report/date_finished/fmt:displaydatetitle" />.
+            </tal:finished>
+          </details>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <div metal:define-macro="groups" class="revision-check-groups">
+    <details tal:repeat="group status/groups"
+             tal:attributes="open group/open">
+      <summary>
+        <img width="14" height="14"
+             tal:attributes="src group/icon; alt group/status" />
+        <strong tal:content="group/title" />:
+        <span tal:content="group/status" />
+        (<span tal:content="group/passed" />/<span tal:content="group/count" /> passed)
+      </summary>
+      <tal:reports define="reports group/reports; history_mode python:False">
+        <table metal:use-macro="context/@@revisionstatus-macros/reports" />
+      </tal:reports>
+    </details>
+    <ul tal:condition="status/issues" class="validation-incomplete">
+      <li tal:repeat="issue status/issues" tal:content="issue" />
+    </ul>
+    <p tal:condition="python:not status['groups']">No checks have been reported.</p>
+    <details tal:condition="status/history" class="validation-history">
+      <summary>Previous attempts and runs
+        (<span tal:content="python:len(status['history'])" /> reports)
+      </summary>
+      <p tal:condition="status/history_truncated">
+        Only the 5 most recent reports are shown.
+      </p>
+      <p>Earlier results do not count towards the current status.
+        Binary retries update their existing report; earlier binary logs
+        may no longer be available.</p>
+      <tal:reports define="reports status/history; history_mode python:True">
+        <table metal:use-macro="context/@@revisionstatus-macros/reports" />
+      </tal:reports>
+    </details>
+  </div>
+</tal:root>
