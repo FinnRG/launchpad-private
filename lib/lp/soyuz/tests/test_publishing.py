@@ -1043,6 +1043,23 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
         self.assertEqual([], self.getRequestWatches(job))
         self.schedule.assert_called_once_with()
 
+    def test_publication_as_publish_distro_queues_request(self):
+        with dbuser("publish_distro"):
+            self.publication.setPublished()
+            transaction.commit()
+
+        self.assertEqual(
+            PackagePublishingStatus.PUBLISHED, self.publication.status
+        )
+        [job] = self.getJobs()
+        report = self.getRequestReport(job)
+        self.assertEqual(RevisionStatusResult.WAITING, report.result)
+        self.assertEqual(report.id, job.metadata["report_id"])
+        self.assertEqual(
+            report.properties["request_key"], job.metadata["request_key"]
+        )
+        self.schedule.assert_called_once_with()
+
     def test_only_autopkgtest_options_are_saved(self):
         self.validation.parameters = {
             "activate-workflow": "true",
