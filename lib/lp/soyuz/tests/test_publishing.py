@@ -72,11 +72,14 @@ from lp.registry.interfaces.sourcepackage import (
     SourcePackageUrgency,
 )
 from lp.registry.interfaces.sourcepackagename import ISourcePackageNameSet
+from lp.services import features
 from lp.services.channels import channel_string_to_list
 from lp.services.config import config
 from lp.services.database.constants import UTC_NOW
 from lp.services.database.interfaces import IStore
 from lp.services.features.testing import FeatureFixture
+from lp.services.job.interfaces.job import JobStatus
+from lp.services.job.runner import JobRunner
 from lp.services.librarian.interfaces import ILibraryFileAliasSet
 from lp.services.log.logger import BufferLogger, DevNullLogger
 from lp.soyuz.enums import (
@@ -1394,6 +1397,92 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
         self.assertRaises(AutopkgtestRequestNotReady, job.run)
         self.assertEqual([], adapter.calls)
 
+    def test_runner_retries_until_all_binaries_are_published(self):
+        job, adapter, backend = self.makeServiceJob()
+        sibling = self.makePublication()
+        request_key = job.metadata["request_key"]
+        before = datetime.now(timezone.utc)
+        JobRunner([job], BufferLogger()).runAll()
+        self.assertEqual(JobStatus.WAITING, job.status)
+        self.assertEqual(1, job.attempt_count)
+        self.assertGreaterEqual(job.scheduled_start, before + job.retry_delay)
+        self.assertLessEqual(
+            job.scheduled_start,
+            datetime.now(timezone.utc) + job.retry_delay,
+        )
+        self.assertIsNone(job.lease_expires)
+        self.assertEqual([], list(BranchMergeProposalJobSource.iterReady()))
+        self.assertEqual([], adapter.calls)
+        sibling.setPublished()
+        self.assertEqual(1, len(self.getJobs()))
+        job.scheduled_start = datetime.now(timezone.utc) - timedelta(seconds=1)
+        JobRunner.fromReady(
+            BranchMergeProposalJobSource, BufferLogger()
+        ).runAll()
+        self.assertEqual(JobStatus.COMPLETED, job.status)
+        self.assertEqual(2, job.attempt_count)
+        self.assertEqual(request_key, job.metadata["request_key"])
+        self.assertEqual(
+            [("readiness", request_key), ("submit", request_key)],
+            adapter.calls,
+        )
+        self.assertEqual(1, len(self.getRequestWatches(job)))
+
+    def test_runner_retries_until_archive_is_ready(self):
+        job, adapter, backend = self.makeServiceJob()
+        adapter.readiness = AutopkgtestReadiness(False)
+        JobRunner([job], BufferLogger()).runAll()
+        self.assertEqual(JobStatus.WAITING, job.status)
+        self.assertEqual(1, job.attempt_count)
+        self.assertEqual([], self.getRequestWatches(job))
+        adapter.readiness = AutopkgtestReadiness(True)
+        job.scheduled_start = datetime.now(timezone.utc) - timedelta(seconds=1)
+        JobRunner.fromReady(
+            BranchMergeProposalJobSource, BufferLogger()
+        ).runAll()
+        self.assertEqual(JobStatus.COMPLETED, job.status)
+        self.assertEqual(2, job.attempt_count)
+        self.assertEqual(
+            ["readiness", "readiness", "submit"],
+            [call[0] for call in adapter.calls],
+        )
+
+    def test_runner_stops_after_retry_budget_is_exhausted(self):
+        job, adapter, backend = self.makeServiceJob()
+        self.assertEqual(25, job.max_retries)
+        job.job.attempt_count = job.max_retries
+        adapter.readiness = AutopkgtestReadiness(False)
+        JobRunner([job], BufferLogger()).runAll()
+        self.assertEqual(JobStatus.FAILED, job.status)
+        self.assertEqual(26, job.attempt_count)
+        self.assertEqual([], self.getRequestWatches(job))
+        self.assertEqual(["readiness"], [call[0] for call in adapter.calls])
+
+    def test_runner_reconciles_uncertain_submission_on_retry(self):
+        job, adapter, backend = self.makeServiceJob()
+        adapter.submission_error = TimeoutError()
+        JobRunner([job], BufferLogger()).runAll()
+        self.assertEqual(JobStatus.WAITING, job.status)
+        job.scheduled_start = datetime.now(timezone.utc) - timedelta(seconds=1)
+        JobRunner.fromReady(
+            BranchMergeProposalJobSource, BufferLogger()
+        ).runAll()
+        self.assertEqual(JobStatus.WAITING, job.status)
+        adapter.lookup = AutopkgtestLookup(
+            AutopkgtestLookupStatus.ACCEPTED, adapter.receipt
+        )
+        job.scheduled_start = datetime.now(timezone.utc) - timedelta(seconds=1)
+        JobRunner.fromReady(
+            BranchMergeProposalJobSource, BufferLogger()
+        ).runAll()
+        self.assertEqual(JobStatus.COMPLETED, job.status)
+        self.assertEqual(3, job.attempt_count)
+        self.assertEqual(
+            ["readiness", "submit", "reconcile", "reconcile"],
+            [call[0] for call in adapter.calls],
+        )
+        self.assertEqual(1, len(self.getRequestWatches(job)))
+
     def test_failed_binary_build_returns_error_report(self):
         job, adapter, backend = self.makeServiceJob()
         removeSecurityProxy(self.publication.build).status = (
@@ -1740,6 +1829,28 @@ class TestAutopkgtestPublication(TestCaseWithFactory):
         job.run()
         self.assertRaises(ValueError, RequestAutopkgtestJob.retry, job)
         self.assertEqual(1, len(self.getJobs()))
+
+    def test_explicit_retry_waits_for_publication(self):
+        job, adapter, backend = self.makeServiceJob()
+        JobRunner([job], BufferLogger()).runAll()
+        self.collectRequest(adapter)
+        retry = RequestAutopkgtestJob.retry(job)
+        sibling = self.makePublication()
+        JobRunner([retry], BufferLogger()).runAll()
+        self.assertEqual(JobStatus.WAITING, retry.status)
+        self.assertEqual(1, retry.attempt_count)
+        sibling.setPublished()
+        self.assertEqual(2, len(self.getJobs()))
+        retry.scheduled_start = datetime.now(timezone.utc) - timedelta(
+            seconds=1
+        )
+        JobRunner.fromReady(RequestAutopkgtestJob, BufferLogger()).runAll()
+        self.assertEqual(JobStatus.COMPLETED, retry.status)
+        self.assertEqual(2, retry.attempt_count)
+        self.assertEqual(1, retry.metadata["attempt"])
+        self.assertEqual(
+            2, len([call for call in adapter.calls if call[0] == "submit"])
+        )
 
     def makeValidationBuildReports(self):
         self.publication.pocket = self.git_build.pocket

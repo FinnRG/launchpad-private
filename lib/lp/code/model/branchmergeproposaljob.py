@@ -691,6 +691,7 @@ class RequestAutopkgtestJob(BranchMergeProposalJobDerived):
     class_job_type = BranchMergeProposalJobType.REQUEST_AUTOPKGTEST
     config = config.IBranchMergeProposalJobSource
     retry_error_types = (AutopkgtestRequestNotReady,)
+    max_retries = 25
 
     @classmethod
     def create(cls, validation, publication, attempt=0):
