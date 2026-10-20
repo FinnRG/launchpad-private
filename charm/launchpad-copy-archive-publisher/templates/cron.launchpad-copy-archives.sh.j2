@@ -18,9 +18,7 @@ set -u
 #
 
 
-# Informational -- this *MUST* match the database.
-ARCHIVEROOT={{ base_dir }}/rebuild-test/ubuntu
-DISTSROOT=$ARCHIVEROOT/dists
+ARCHIVESDIR={{ archives_dir }}
 PRODUCTION_CONFIG=ftpmaster-publish
 
 if [ "$LPCONFIG" = "$PRODUCTION_CONFIG" ]; then
@@ -60,5 +58,9 @@ trap cleanup EXIT
 # Publish the packages to disk.
 {{ code_dir }}/scripts/publish-distro.py -vv --copy-archive -d $DISTRONAME
 
+# Copy archives are published to
+# <archives_dir>/<root_dir>/<distro>-<archive>/<distro>; see
+# `lp.archivepublisher.config.getPubConfig`.
 echo Removing uncompressed Packages and Sources files
-find ${DISTSROOT} \( -name "Packages" -o -name "Sources" \) -exec rm "{}" \;
+find "$ARCHIVESDIR" -path "$ARCHIVESDIR/*/$DISTRONAME-*/$DISTRONAME/dists/*" \
+    \( -name Packages -o -name Sources \) -type f -delete
