@@ -330,6 +330,13 @@ class IRevisionStatusReportSet(Interface):
     def findByCommit(repository, commit_sha1):
         """Returns all `RevisionStatusReport` for a repository and commit."""
 
+    def findByValidation(validation):
+        """Return reports matching a validation run's ID, repository and SHA.
+
+        Linked source builds must also match the run's archive, repository
+        and SHA.  This lookup does not grant access to the returned reports.
+        """
+
     def getByCIBuildAndTitle(ci_build, title):
         """Return the `RevisionStatusReport` for a given CI build and title."""
 

@@ -30,6 +30,7 @@ from lp.services.database.interfaces import IPrimaryStore
 from lp.services.database.stormbase import StormBase
 from lp.services.librarian.browser import ProxiedLibraryFileAlias
 from lp.services.privacy.interfaces import IObjectPrivacy
+from lp.services.webapp.snapshot import notify_modified
 from lp.soyuz.interfaces.sourcepackagegitbuild import (
     ISourcePackageGitBuild,
     ISourcePackageGitBuildSource,
@@ -186,6 +187,40 @@ class SourcePackageGitBuild(
 
     def notify(self, extra_info=None):
         pass
+
+    def resetBuild(self):
+        """See `IBuildFarmJob`."""
+        edited_fields = set()
+        with notify_modified(
+            self, edited_fields, snapshot_names=("status",)
+        ) as previous_obj:
+            super().resetBuild()
+            if self.status != previous_obj.status:
+                edited_fields.add("status")
+
+    def updateStatus(
+        self,
+        status,
+        builder=None,
+        worker_status=None,
+        date_started=None,
+        date_finished=None,
+        force_invalid_transition=False,
+    ):
+        edited_fields = set()
+        with notify_modified(
+            self, edited_fields, snapshot_names=("status",)
+        ) as previous_obj:
+            super().updateStatus(
+                status,
+                builder=builder,
+                worker_status=worker_status,
+                date_started=date_started,
+                date_finished=date_finished,
+                force_invalid_transition=force_invalid_transition,
+            )
+            if self.status != previous_obj.status:
+                edited_fields.add("status")
 
     @property
     def source_package_release(self):

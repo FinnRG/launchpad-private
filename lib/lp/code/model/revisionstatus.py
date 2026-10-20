@@ -8,11 +8,12 @@ __all__ = [
 ]
 
 import io
+import json
 import os
 from datetime import timezone
 
 from storm.databases.postgres import JSON
-from storm.expr import Desc
+from storm.expr import Cast, Desc, Or, Select
 from storm.locals import And, DateTime, Int, Reference, Unicode
 from zope.component import getUtility
 from zope.interface import implementer
@@ -30,6 +31,7 @@ from lp.services.database.enumcol import DBEnum
 from lp.services.database.interfaces import IStore
 from lp.services.database.sqlbase import convert_storm_clause_to_string
 from lp.services.database.stormbase import StormBase
+from lp.services.database.stormexpr import JSONContains
 from lp.services.librarian.browser import ProxiedLibraryFileAlias
 from lp.services.librarian.interfaces import ILibraryFileAliasSet
 from lp.services.librarian.model import LibraryFileAlias
@@ -304,6 +306,34 @@ class RevisionStatusReportSet:
             .find(RevisionStatusReport, ci_build=ci_build, title=title)
             .one()
         )
+
+    def findByValidation(self, validation):
+        """See `IRevisionStatusReportSet`."""
+        from lp.soyuz.model.sourcepackagegitbuild import SourcePackageGitBuild
+
+        store = IStore(RevisionStatusReport)
+        repository = validation.branch_merge_proposal.source_git_repository
+        builds = Select(
+            SourcePackageGitBuild.id,
+            where=And(
+                SourcePackageGitBuild.archive == validation.archive,
+                SourcePackageGitBuild.git_repository == repository,
+                SourcePackageGitBuild.commit_sha1 == validation.commit_sha1,
+            ),
+        )
+        return store.find(
+            RevisionStatusReport,
+            RevisionStatusReport.git_repository == repository,
+            RevisionStatusReport.commit_sha1 == validation.commit_sha1,
+            JSONContains(
+                RevisionStatusReport.properties,
+                Cast(json.dumps({"validation_id": validation.id}), "jsonb"),
+            ),
+            Or(
+                RevisionStatusReport.source_package_git_build_id == None,
+                RevisionStatusReport.source_package_git_build_id.is_in(builds),
+            ),
+        ).order_by(RevisionStatusReport.date_created, RevisionStatusReport.id)
 
     def deleteForRepository(self, repository):
         clauses = [

@@ -35,6 +35,10 @@ from lp.services.auth.enums import AccessTokenScope
 from lp.services.database.constants import DEFAULT, UTC_NOW
 from lp.services.osutils import write_file
 from lp.services.webapp.authorization import check_permission
+from lp.soyuz.interfaces.sourcepackagegitbuild import (
+    ISourcePackageGitBuildSource,
+)
+from lp.soyuz.model.mergeproposalvalidation import MergeProposalValidation
 from lp.soyuz.tests.test_sourcepackagegitbuild import (
     SourcePackageGitBuildTestMixin,
 )
@@ -237,6 +241,47 @@ class TestRevisionStatusReport(
         Store.of(report).autoreload(report)
         self.assertEqual("package-validation", report.group_name)
         self.assertEqual(build, report.source_package_git_build)
+
+    def test_findByValidation_checks_repository_commit_and_build(self):
+        build = self.makeBuild()
+        [source_ref] = self.factory.makeGitRefs(
+            repository=build.git_repository, sha1=build.commit_sha1
+        )
+        proposal = self.factory.makeBranchMergeProposalForGit(
+            source_ref=source_ref
+        )
+        run = MergeProposalValidation(
+            proposal, build.commit_sha1, build.archive, {}
+        )
+        Store.of(build).add(run)
+        Store.of(run).flush()
+        reports = getUtility(IRevisionStatusReportSet)
+        common = dict(
+            creator=build.requester,
+            title="source-build",
+            git_repository=build.git_repository,
+            commit_sha1=build.commit_sha1,
+            properties={"validation_id": run.id},
+        )
+        expected = reports.new(source_package_git_build=build, **common)
+        foreign_build = getUtility(ISourcePackageGitBuildSource).new(
+            build.git_repository,
+            build.commit_sha1,
+            self.factory.makeArchive(
+                distribution=build.distribution, owner=build.requester
+            ),
+            build.distroseries,
+            build.requester,
+            "~ppa2",
+        )
+        reports.new(source_package_git_build=foreign_build, **common)
+        for overrides in (
+            {"git_repository": self.factory.makeGitRepository()},
+            {"commit_sha1": "b" * 40},
+            {"properties": {"validation_id": run.id + 1}},
+        ):
+            reports.new(**dict(common, **overrides))
+        self.assertEqual([expected], list(reports.findByValidation(run)))
 
     def test_latest_log(self):
         report = self.factory.makeRevisionStatusReport()
