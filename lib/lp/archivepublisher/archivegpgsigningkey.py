@@ -503,7 +503,10 @@ class ArchiveGPGSigningKey(SignableArchive):
             return pub_key
         else:
             assert ISigningKey.providedBy(signing_key)
-            gpghandler.submitKey(removeSecurityProxy(signing_key).public_key)
+            if config.gpghandler.upload_keys:
+                gpghandler.submitKey(
+                    removeSecurityProxy(signing_key).public_key
+                )
             return signing_key
 
     def _storeSigningKey(self, pub_key):
@@ -526,7 +529,7 @@ class ArchiveGPGSigningKey(SignableArchive):
 
         * Export the secret key into the protected disk location (for
           locally-generated keys).
-        * Upload public key to the keyserver.
+        * Upload public key to the keyserver, if enabled in configuration.
         * Store the public GPGKey reference in the database (for
           locally-generated keys) and update the context
           archive.signing_key.
