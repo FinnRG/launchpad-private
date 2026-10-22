@@ -567,6 +567,40 @@ class TestArchiveGPGSigningKey(TestCaseWithFactory):
         self.assertIn(test_key, content)
 
     @defer.inlineCallbacks
+    def test_generateSigningKey_signing_service_upload_disabled(self):
+        # If keyserver uploads are disabled, a key generated on the signing
+        # service is stored in the database but not uploaded.
+        self.pushConfig("gpghandler", upload_keys=False)
+        self.useFixture(
+            FeatureFixture({PUBLISHER_GPG_USES_SIGNING_SERVICE: "on"})
+        )
+        signing_service_client = self.useFixture(
+            SigningServiceClientFixture(self.factory)
+        )
+        signing_service_client.generate.side_effect = None
+        test_key = test_pubkey_from_email("ftpmaster@canonical.com")
+        signing_service_client.generate.return_value = {
+            "fingerprint": "33C0A61893A5DC5EB325B29E415A12CAC2F30234",
+            "public-key": test_key,
+        }
+        archive = self.factory.makeArchive()
+        yield IArchiveGPGSigningKey(archive).generateSigningKey(
+            log=BufferLogger(), async_keyserver=True
+        )
+        self.assertEqual(
+            "33C0A61893A5DC5EB325B29E415A12CAC2F30234",
+            archive.signing_key_fingerprint,
+        )
+        client = self.useFixture(TReqFixture(reactor)).client
+        response = yield client.get(
+            getUtility(IGPGHandler).getURLForKeyInServer(
+                archive.signing_key_fingerprint, "get"
+            )
+        )
+        yield treq.content(response)
+        self.assertEqual(404, response.code)
+
+    @defer.inlineCallbacks
     def test_generateSigningKey_signing_service_non_default_ppa(self):
         # Generating a signing key on the signing service for a non-default
         # PPA generates one for the user's default PPA first and then

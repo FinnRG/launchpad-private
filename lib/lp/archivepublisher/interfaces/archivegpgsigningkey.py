@@ -109,7 +109,8 @@ class IArchiveGPGSigningKey(ISignableArchive):
         Default ppas get brand new keys via the following procedure.
 
          * Export the secret key in the configuration disk location;
-         * Upload the public key to the configuration keyserver;
+         * Upload the public key to the configuration keyserver, if
+           enabled in configuration;
          * Store a reference for the public key in GPGKey table, which
            is set as the context archive 'signing_key'.
 
