@@ -19,6 +19,11 @@ oval_data_root: {{ oval_data_root }}
 [artifactory]
 {{- opt("base_url", artifactory_base_url) }}
 
+[gpghandler]
+{{- opt("host", gpghandler_host) }}
+{{- opt("port", gpghandler_port) }}
+{{- opt("http_proxy", gpghandler_http_proxy) }}
+
 [personalpackagearchive]
 root: {{ ppa_archive_root }}
 private_root: {{ ppa_archive_private_root }}

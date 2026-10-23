@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from unittest import mock
 
 import gpgme
+import requests
 import responses
 import six
 from fixtures import Fixture, MockPatch
@@ -23,6 +24,7 @@ from lp.services.gpg.interfaces import (
     GPGKeyDoesNotExistOnServer,
     GPGKeyMismatchOnServer,
     GPGKeyTemporarilyNotFoundError,
+    GPGUploadFailure,
     IGPGHandler,
     get_gpg_home_directory,
     get_gpg_path,
@@ -524,6 +526,79 @@ class TestGPGHandler(TestCase):
         )
         self.assertEqual(1, signing_service_client.inject.call_count)
         self.assertEqual([], list(self.gpg_handler.localKeys()))
+
+    @mock.patch("lp.services.gpg.handler.urlfetch")
+    def test_submitKey_without_proxy(self, mock_urlfetch):
+        self.pushConfig(
+            "gpghandler",
+            host="keyserver.example.com",
+            port=11371,
+            http_proxy=None,
+        )
+        response = mock_urlfetch.return_value.__enter__.return_value
+        response.status_code = 200
+
+        self.gpg_handler.submitKey(b"test public key\n")
+
+        mock_urlfetch.assert_called_once_with(
+            "http://keyserver.example.com:11371/pks/add",
+            method="POST",
+            data="keytext=test+public+key%0A",
+            headers={
+                "Content-type": "application/x-www-form-urlencoded",
+                "Accept": "text/plain",
+            },
+            check_status=False,
+        )
+        mock_urlfetch.return_value.__exit__.assert_called_once()
+
+    @mock.patch("lp.services.gpg.handler.urlfetch")
+    def test_submitKey_with_proxy(self, mock_urlfetch):
+        proxy_url = "http://proxy.example.com:8080"
+        self.pushConfig("gpghandler", http_proxy=proxy_url)
+        response = mock_urlfetch.return_value.__enter__.return_value
+        response.status_code = 200
+
+        self.gpg_handler.submitKey(b"test public key")
+
+        _, kwargs = mock_urlfetch.call_args
+        self.assertEqual(
+            {"http": proxy_url, "https": proxy_url}, kwargs["proxies"]
+        )
+
+    @mock.patch("lp.services.gpg.handler.urlfetch")
+    def test_submitKey_connection_error(self, mock_urlfetch):
+        self.pushConfig("gpghandler", host="keyserver.example.com", port=80)
+        mock_urlfetch.side_effect = requests.ConnectionError("offline")
+
+        self.assertRaisesWithContent(
+            GPGUploadFailure,
+            "Could not reach keyserver at http://keyserver.example.com:80 "
+            "offline",
+            self.gpg_handler.submitKey,
+            b"test public key",
+        )
+
+    @mock.patch("lp.services.gpg.handler.urlfetch")
+    def test_submitKey_timeout(self, mock_urlfetch):
+        mock_urlfetch.side_effect = TimeoutError
+
+        self.assertRaises(
+            GPGUploadFailure, self.gpg_handler.submitKey, b"test public key"
+        )
+
+    @mock.patch("lp.services.gpg.handler.urlfetch")
+    def test_submitKey_rejected(self, mock_urlfetch):
+        response = mock_urlfetch.return_value.__enter__.return_value
+        response.status_code = 503
+
+        self.assertRaisesWithContent(
+            AssertionError,
+            "Keyserver POST failed",
+            self.gpg_handler.submitKey,
+            b"test public key",
+        )
+        mock_urlfetch.return_value.__exit__.assert_called_once()
 
     @mock.patch("lp.services.gpg.handler.urlfetch")
     def test_grabPage_without_proxy(self, mock_urlfetch):
