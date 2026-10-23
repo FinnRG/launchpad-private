@@ -18,6 +18,7 @@ from lp.registry.model.productseries import ProductSeries
 from lp.registry.model.sourcepackagename import SourcePackageName
 from lp.services.database.interfaces import IPrimaryStore, IStandbyStore
 from lp.services.looptuner import ITunableLoop, LoopTuner
+from lp.soyuz.model.archive import Archive
 
 # These two tuples must be in the same order. They specify the ID
 # columns to get from BugTask, and the classes that they correspond to.
@@ -28,6 +29,7 @@ target_columns = (
     BugTask.distroseries_id,
     BugTask.sourcepackagename_id,
     BugTask.ociproject_id,
+    BugTask.archive_id,
     BugTask.targetnamecache,
 )
 target_classes = (
@@ -37,6 +39,7 @@ target_classes = (
     DistroSeries,
     SourcePackageName,
     OCIProject,
+    Archive,
 )
 
 
@@ -103,15 +106,19 @@ class BugTaskTargetNameCachesTunableLoop:
             self.offset += 1
             # Resolve the IDs to objects, and get the actual IBugTarget.
             # If the ID is None, don't even try to get an object.
-            target_objects = (
+            target_objects = tuple(
                 (store.get(cls, id) if id is not None else None)
                 for cls, id in zip(target_classes, target_bits)
             )
 
-            # We don't need packagetype, channel and archive to get items from
-            # target_classes, as there is no ExternalPackage class or
-            # ArchiveSourcePackage class there.
-            target = bug_target_from_key(*target_objects, None, None, None)
+            # We don't need packagetype and channel to get items from
+            # target_classes, as there is no ExternalPackage class there
+            target = bug_target_from_key(
+                *target_objects[:-1],
+                packagetype=None,
+                channel=None,
+                archive=target_objects[-1],
+            )
             new_name = target.bugtargetdisplayname
             cached_names.discard(new_name)
             # If there are any outdated names cached, update them all in
