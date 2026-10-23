@@ -207,6 +207,7 @@ from lp.soyuz.model.packagediff import PackageDiff
 from lp.soyuz.model.publishing import (
     BinaryPackagePublishingHistory,
     SourcePackagePublishingHistory,
+    get_live_at_clauses,
 )
 from lp.soyuz.model.queue import PackageUpload, PackageUploadSource
 from lp.soyuz.model.section import Section
@@ -814,6 +815,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         packageset=None,
         maintainer_team=None,
         ubuntu_change=None,
+        live_at=None,
     ):
         """See `IArchive`."""
         # 'eager_load' and 'include_removed' arguments are always True
@@ -850,6 +852,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             maintainer_team=maintainer_team,
             ubuntu_change=ubuntu_change,
             ordered=ordered,
+            live_at=live_at,
         )
 
         def load_api_extra_objects(rows):
@@ -1171,9 +1174,29 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         maintainer_team=None,
         ubuntu_change=None,
         ordered=True,
+        live_at=None,
     ):
         """See `IArchive`."""
+        if pocket is not None:
+            try:
+                pocket = tuple(pocket)
+            except TypeError:
+                pocket = (pocket,)
         clauses = [SourcePackagePublishingHistory.archive == self]
+        if live_at is not None:
+            if status is not None:
+                raise IncompatibleArguments(
+                    "You cannot specify both 'live_at' and 'status'."
+                )
+            clauses.extend(
+                get_live_at_clauses(
+                    SourcePackagePublishingHistory,
+                    self,
+                    live_at,
+                    distroseries=distroseries,
+                    pocket=pocket,
+                )
+            )
 
         explicit_order_by = (
             order_by_date or order_by_date_ascending or bool(order_by)
@@ -1369,13 +1392,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             )
 
         if pocket is not None:
-            try:
-                pockets = tuple(pocket)
-            except TypeError:
-                pockets = (pocket,)
-            clauses.append(
-                SourcePackagePublishingHistory.pocket.is_in(pockets)
-            )
+            clauses.append(SourcePackagePublishingHistory.pocket.is_in(pocket))
 
         if created_since_date is not None:
             clauses.append(
@@ -1632,12 +1649,27 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         published_until=None,
         order_by=None,
         distroseries=None,
+        live_at=None,
     ):
         """Base clauses for binary publishing queries.
 
         Returns a list of 'clauses' (to be joined in the callsite).
         """
         clauses = [BinaryPackagePublishingHistory.archive == self]
+        if live_at is not None:
+            if status is not None:
+                raise IncompatibleArguments(
+                    "You cannot specify both 'live_at' and 'status'."
+                )
+            clauses.extend(
+                get_live_at_clauses(
+                    BinaryPackagePublishingHistory,
+                    self,
+                    live_at,
+                    distroseries=distroseries,
+                    pocket=pocket,
+                )
+            )
 
         if (
             order_by_date
@@ -1799,6 +1831,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         published_until=None,
         order_by=None,
         distroseries=None,
+        live_at=None,
     ):
         """See `IArchive`."""
         # Circular imports.
@@ -1823,6 +1856,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             published_until=published_until,
             order_by=order_by,
             distroseries=distroseries,
+            live_at=live_at,
         )
 
         result = (

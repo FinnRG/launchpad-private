@@ -522,7 +522,7 @@ class ISourcePackagePublishingHistoryPublic(IPublishingView):
     @operation_returns_collection_of(Interface)
     @export_read_operation()
     @operation_for_version("beta")
-    def getPublishedBinaries(active_binaries_only=True):
+    def getPublishedBinaries(active_binaries_only=True, live_at=None):
         """Return all resulted `IBinaryPackagePublishingHistory`.
 
         Follow the build record and return every binary publishing record
@@ -533,6 +533,8 @@ class ISourcePackagePublishingHistoryPublic(IPublishingView):
 
         :param active_binaries_only: If True, only return PUBLISHED or
             PENDING publishing records.
+        :param live_at: If given, return binaries in the published indexes
+            at this time instead of filtering by active status.
         :return: a list with all corresponding publishing records.
         """
 

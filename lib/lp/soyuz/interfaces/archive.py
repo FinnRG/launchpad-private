@@ -766,6 +766,7 @@ class IArchiveSubscriberView(Interface):
         packageset=None,
         maintainer_team=None,
         ubuntu_change=None,
+        live_at=None,
     ):
         """All `ISourcePackagePublishingHistory` target to this archive."""
         # It loads additional related objects only needed in the API call
@@ -947,6 +948,7 @@ class IArchiveSubscriberView(Interface):
         packageset=None,
         maintainer_team=None,
         ubuntu_change=None,
+        live_at=None,
     ):
         """All `ISourcePackagePublishingHistory` target to this archive.
 
@@ -955,6 +957,8 @@ class IArchiveSubscriberView(Interface):
                      Name can be a single string or a list of strings.
         :param version: source version filter (always exact match).
         :param status: `PackagePublishingStatus` filter, can be a sequence.
+        :param live_at: Return publications in the snapshot service's
+            indexes at this time. Cannot be combined with `status`.
         :param distroseries: `IDistroSeries` filter.
         :param pocket: `PackagePublishingPocket` filter.  This may be an
             iterable of more than one pocket or a single pocket.
@@ -1187,6 +1191,7 @@ class IArchiveSubscriberView(Interface):
         component_name=None,
         order_by=None,
         distroseries=None,
+        live_at=None,
     ):
         """All `IBinaryPackagePublishingHistory` target to this archive.
 
@@ -1194,6 +1199,8 @@ class IArchiveSubscriberView(Interface):
                       by 'exact_match' argument).
         :param version: binary version filter (always exact match).
         :param status: `PackagePublishingStatus` filter, can be a list.
+        :param live_at: Return publications in the snapshot service's
+            indexes at this time. Cannot be combined with `status`.
         :param distroarchseries: `IDistroArchSeries` filter, can be a list.
         :param pocket: `PackagePublishingPocket` filter.
         :param exact_match: either or not filter source names by exact
