@@ -40,6 +40,18 @@ options:
     type: string
     default:
     description: Domain for PPA buildd route.
+  gpghandler_host:
+    type: string
+    default:
+    description: Override the GPG keyserver host.
+  gpghandler_http_proxy:
+    type: string
+    default: ""
+    description: Proxy to be used for GPG keyserver requests.
+  gpghandler_port:
+    type: int
+    default:
+    description: Override the GPG keyserver port.
   logparser_max_parsed_lines:
     type: int
     default: 10000000

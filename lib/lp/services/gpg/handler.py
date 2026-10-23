@@ -504,26 +504,35 @@ class GPGHandler:
             config.gpghandler.port,
         )
 
-        conn = http.client.HTTPConnection(keyserver_http_url)
         params = urlencode({"keytext": content})
         headers = {
             "Content-type": "application/x-www-form-urlencoded",
             "Accept": "text/plain",
         }
+        kwargs = {}
+        if config.gpghandler.http_proxy:
+            kwargs["proxies"] = {
+                "http": config.gpghandler.http_proxy,
+                "https": config.gpghandler.http_proxy,
+            }
 
         try:
-            conn.request("POST", "/pks/add", params, headers)
+            with urlfetch(
+                "http://%s/pks/add" % keyserver_http_url,
+                method="POST",
+                data=params,
+                headers=headers,
+                check_status=False,
+                **kwargs,
+            ) as response:
+                assert (
+                    response.status_code == http.client.OK
+                ), "Keyserver POST failed"
         except OSError as err:
             raise GPGUploadFailure(
                 "Could not reach keyserver at http://%s %s"
                 % (keyserver_http_url, str(err))
             )
-
-        assert (
-            conn.getresponse().status == http.client.OK
-        ), "Keyserver POST failed"
-
-        conn.close()
 
     def uploadPublicKey(self, fingerprint, logger=None):
         """See IGPGHandler"""
