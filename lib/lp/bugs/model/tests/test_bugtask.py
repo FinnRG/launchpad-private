@@ -99,6 +99,7 @@ from lp.testing import (
     person_logged_in,
     set_feature_flag,
 )
+from lp.testing.dbuser import dbuser
 from lp.testing.fakemethod import FakeMethod
 from lp.testing.layers import CeleryJobLayer, DatabaseFunctionalLayer
 from lp.testing.matchers import HasQueryCount
@@ -4820,6 +4821,61 @@ class TestTargetNameCache(TestCase):
         self.assertEqual(
             upstream_task.bugtargetdisplayname, "Mozilla Thunderbird"
         )
+
+
+class TestArchiveTargetNameCache(TestCaseWithFactory):
+    layer = DatabaseFunctionalLayer
+
+    def assertTargetNameCachesUpdated(self, targets):
+        tasks = [self.factory.makeBugTask(target=target) for target in targets]
+        expected_names = [target.bugtargetdisplayname for target in targets]
+        for task in tasks:
+            removeSecurityProxy(task).targetnamecache = "Outdated target name"
+        transaction.commit()
+
+        with dbuser("targetnamecacheupdater"):
+            BugTaskTargetNameCacheUpdater(transaction, DevNullLogger()).run()
+
+        flush_database_caches()
+        self.assertEqual(
+            expected_names, [task.bugtargetdisplayname for task in tasks]
+        )
+
+    def test_archive(self):
+        self.assertTargetNameCachesUpdated([self.factory.makeArchive()])
+
+    def test_archive_source_package(self):
+        self.assertTargetNameCachesUpdated(
+            [self.factory.makeArchiveSourcePackage()]
+        )
+
+    def test_archive_series(self):
+        self.assertTargetNameCachesUpdated([self.factory.makeArchiveSeries()])
+
+    def test_archive_source_package_series(self):
+        self.assertTargetNameCachesUpdated(
+            [self.factory.makeArchiveSourcePackageSeries()]
+        )
+
+    def test_distinguishes_archives_and_distribution_targets(self):
+        series = self.factory.makeDistroSeries()
+        spn = self.factory.makeSourcePackageName()
+        archives = [
+            self.factory.makeArchive(distribution=series.distribution)
+            for _ in range(2)
+        ]
+        targets = [
+            self.factory.makeArchiveSourcePackageSeries(
+                archive=archive, distroseries=series, sourcepackagename=spn
+            )
+            for archive in archives
+        ]
+        targets.append(
+            self.factory.makeSourcePackage(
+                distroseries=series, sourcepackagename=spn
+            )
+        )
+        self.assertTargetNameCachesUpdated(targets)
 
 
 class TestBugTaskSortKey(TestCaseWithFactory):
