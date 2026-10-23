@@ -54,7 +54,8 @@ from lp.services.gpg.interfaces import (
 from lp.services.signing.enums import SigningKeyType
 from lp.services.signing.interfaces.signingkey import ISigningKeySet
 from lp.services.timeline.requesttimeline import get_request_timeline
-from lp.services.timeout import TimeoutError, urlfetch
+from lp.services.timeout import TimeoutError as LaunchpadTimeoutError
+from lp.services.timeout import urlfetch
 from lp.services.webapp import errorlog
 
 signing_only_param = """
@@ -528,7 +529,7 @@ class GPGHandler:
                 assert (
                     response.status_code == http.client.OK
                 ), "Keyserver POST failed"
-        except OSError as err:
+        except (OSError, LaunchpadTimeoutError) as err:
             raise GPGUploadFailure(
                 "Could not reach keyserver at http://%s %s"
                 % (keyserver_http_url, str(err))
@@ -595,7 +596,7 @@ class GPGHandler:
                 errorlog.globalErrorUtility.raising(sys.exc_info(), request)
                 raise GPGKeyTemporarilyNotFoundError(fingerprint)
             raise
-        except (TimeoutError, requests.RequestException):
+        except (LaunchpadTimeoutError, requests.RequestException):
             errorlog.globalErrorUtility.raising(sys.exc_info(), request)
             raise GPGKeyTemporarilyNotFoundError(fingerprint)
         finally:
