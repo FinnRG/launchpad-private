@@ -130,7 +130,7 @@ class ColumnSelect(Expr):
 @compile.when(ColumnSelect)
 def compile_columnselect(compile, expr, state):
     state.push("context", EXPR)
-    select = compile(expr.select)
+    select = compile(expr.select, state)
     state.pop()
     return "(%s)" % select
 
