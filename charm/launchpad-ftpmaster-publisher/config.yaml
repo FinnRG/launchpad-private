@@ -7,6 +7,18 @@ options:
     type: string
     description: Domain name for the published Ubuntu archive.
     default: "archive.ubuntu.test"
+  gpghandler_host:
+    type: string
+    default:
+    description: Override the GPG keyserver host.
+  gpghandler_http_proxy:
+    type: string
+    default: ""
+    description: Proxy to be used for GPG keyserver requests.
+  gpghandler_port:
+    type: int
+    default:
+    description: Override the GPG keyserver port.
   rsync_secrets:
     type: string
     description: Secrets for rsync
