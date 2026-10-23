@@ -515,7 +515,17 @@ class ISourcePackagePublishingHistoryPublic(IPublishingView):
     @operation_parameters(
         active_binaries_only=Bool(
             title=_("Only return active publications"), required=False
-        )
+        ),
+        live_at=Datetime(
+            title=_("Live at"),
+            description=_(
+                "Return binaries listed in this source's suite indexes at "
+                "this time, as served by the snapshot service. Overrides "
+                "active_binaries_only. If the suite has no recorded index "
+                "dates, the publication dates are used instead."
+            ),
+            required=False,
+        ),
     )
     # Really IBinaryPackagePublishingHistory, patched in
     # lp.soyuz.interfaces.webservice.

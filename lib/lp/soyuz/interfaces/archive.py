@@ -740,6 +740,16 @@ class IArchiveSubscriberView(Interface):
             ),
             required=False,
         ),
+        live_at=Datetime(
+            title=_("Live at"),
+            description=_(
+                "Return publications listed in the archive's indexes at "
+                "this time, as served by the snapshot service. Suites "
+                "without recorded index dates use the publication dates "
+                "instead. Cannot be combined with status."
+            ),
+            required=False,
+        ),
     )
     # Really ISourcePackagePublishingHistory, patched in
     # lp.soyuz.interfaces.webservice.
@@ -1165,6 +1175,16 @@ class IArchiveSubscriberView(Interface):
             IDistroSeries, title=_("Distro Series"), required=False
         ),
         component_name=TextLine(title=_("Component name"), required=False),
+        live_at=Datetime(
+            title=_("Live at"),
+            description=_(
+                "Return publications listed in the archive's indexes at "
+                "this time, as served by the snapshot service. Suites "
+                "without recorded index dates use the publication dates "
+                "instead. Cannot be combined with status."
+            ),
+            required=False,
+        ),
     )
     # Really IBinaryPackagePublishingHistory, patched in
     # lp.soyuz.interfaces.webservice.
