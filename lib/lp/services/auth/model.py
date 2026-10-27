@@ -29,6 +29,7 @@ from lp.services.auth.utils import create_access_token_secret
 from lp.services.database.constants import UTC_NOW
 from lp.services.database.interfaces import IPrimaryStore, IStore
 from lp.services.database.stormbase import StormBase
+from lp.services.webapp.authorization import check_permission
 from lp.services.webapp.interfaces import ILaunchBag
 
 
@@ -265,6 +266,13 @@ class AccessTokenTargetMixin:
 
     def getAccessTokens(self, visible_by_user=None, include_expired=False):
         """See `IAccessTokenTarget`."""
+        # This is callable by anyone who can view the target, so tokens must
+        # never be listed without restricting them to a user.
+        if visible_by_user is None:
+            raise Unauthorized(
+                "Personal access tokens may only be listed for a logged-in "
+                "user."
+            )
         return getUtility(IAccessTokenSet).findByTarget(
             self,
             visible_by_user=visible_by_user,
@@ -282,6 +290,14 @@ class AccessTokenTargetMixin:
             raise Unauthorized(
                 "Personal access tokens may only be issued for a logged-in "
                 "user."
+            )
+        if (
+            AccessTokenScope.REPOSITORY_PUSH in scopes
+            and not check_permission("launchpad.Edit", self)
+        ):
+            raise Unauthorized(
+                "Only people who can edit this target may issue personal "
+                "access tokens with the repository:push scope."
             )
         secret = create_access_token_secret()
         getUtility(IAccessTokenSet).new(

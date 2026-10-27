@@ -594,7 +594,58 @@ class TestAccessTokenTargetBase:
             self.target_url, "getAccessTokens", api_version="devel"
         )
         self.assertEqual(401, response.status)
-        self.assertIn(b"launchpad.Edit", response.body)
+
+    def test_getAccessTokens_viewer_sees_only_own(self):
+        requester = self._makePerson()
+        with person_logged_in(self.owner):
+            self.factory.makeAccessToken(
+                owner=self.owner, description="Owner", target=self.target
+            )
+        with person_logged_in(requester):
+            self.factory.makeAccessToken(
+                owner=requester, description="Mine", target=self.target
+            )
+        webservice = webservice_for_person(
+            requester, permission=OAuthPermission.WRITE_PUBLIC
+        )
+        response = webservice.named_get(
+            self.target_url, "getAccessTokens", api_version="devel"
+        )
+        self.assertEqual(200, response.status)
+        self.assertContentEqual(
+            ["Mine"],
+            [entry["description"] for entry in response.jsonBody()["entries"]],
+        )
+
+    def test_issueAccessToken_push_requires_edit(self):
+        requester = self._makePerson()
+        webservice = webservice_for_person(
+            requester,
+            permission=OAuthPermission.WRITE_PUBLIC,
+            default_api_version="devel",
+        )
+        response = webservice.named_post(
+            self.target_url,
+            "issueAccessToken",
+            description="Push token",
+            scopes=["repository:push"],
+        )
+        self.assertEqual(401, response.status)
+        response = webservice.named_post(
+            self.target_url,
+            "issueAccessToken",
+            description="Pull token",
+            scopes=["repository:pull"],
+        )
+        self.assertEqual(200, response.status)
+        response = self.webservice.named_post(
+            self.target_url,
+            "issueAccessToken",
+            description="Owner push token",
+            scopes=["repository:push"],
+            api_version="devel",
+        )
+        self.assertEqual(200, response.status)
 
     def test_getAccessTokens_query_count(self):
         def get_tokens():

@@ -294,10 +294,13 @@ class GitRepositoryEditMenu(NavigationMenu):
         text = "View activity"
         return Link("+activity", text, icon="info")
 
-    @enabled_with_permission("launchpad.Edit")
+    @enabled_with_permission("launchpad.View")
     def access_tokens(self):
         text = "Manage access tokens"
-        return Link("+access-tokens", text, icon="edit")
+        link = Link("+access-tokens", text, icon="edit")
+        if self.user is None:
+            link.enabled = False
+        return link
 
     @enabled_with_permission("launchpad.Edit")
     def webhooks(self):

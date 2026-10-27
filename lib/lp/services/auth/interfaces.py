@@ -7,7 +7,6 @@ __all__ = [
     "IAccessToken",
     "IAccessTokenSet",
     "IAccessTokenTarget",
-    "IAccessTokenTargetEdit",
     "IAccessTokenVerifiedRequest",
 ]
 
@@ -217,12 +216,6 @@ class IAccessTokenVerifiedRequest(Interface):
 class IAccessTokenTarget(Interface):
     """An object that can be a target for access tokens."""
 
-    # XXX ines-almeida 2023-09-08: We keep this class separated from
-    # `IAccessTokenTargetEdit` because we need them to have different
-    # permission settings. Once the `_issueMacaroon` logic is no longer needed,
-    # we might want to reconsider requiring `launchpad.Edit` permissions for
-    # the below endpoints.
-
     @operation_parameters(
         description=TextLine(
             title=_("A short description of the token."), required=True
@@ -252,13 +245,6 @@ class IAccessTokenTarget(Interface):
             records the hash of this secret and not the secret itself, so the
             caller must be careful to save this).
         """
-
-
-@exported_as_webservice_entry(as_of="beta")
-class IAccessTokenTargetEdit(Interface):
-    """An object that can be a target for access tokens that requires
-    launchpad.Edit permission.
-    """
 
     @call_with(visible_by_user=REQUEST_USER)
     @operation_returns_collection_of(IAccessToken)

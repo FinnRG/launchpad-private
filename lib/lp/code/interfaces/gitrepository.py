@@ -85,10 +85,7 @@ from lp.registry.interfaces.pocket import PackagePublishingPocket
 from lp.registry.interfaces.product import IProduct
 from lp.registry.interfaces.role import IPersonRoles
 from lp.services.auth.enums import AccessTokenScope
-from lp.services.auth.interfaces import (
-    IAccessTokenTarget,
-    IAccessTokenTargetEdit,
-)
+from lp.services.auth.interfaces import IAccessTokenTarget
 from lp.services.fields import InlineObject, PersonChoice, PublicPersonChoice
 from lp.services.webhooks.interfaces import IWebhookTarget
 from lp.soyuz.interfaces.archive import IArchive
@@ -1101,7 +1098,7 @@ class IGitRepositoryExpensiveRequest(Interface):
         that is not an admin or a registry expert."""
 
 
-class IGitRepositoryEdit(IWebhookTarget, IAccessTokenTargetEdit):
+class IGitRepositoryEdit(IWebhookTarget):
     """IGitRepository methods that require launchpad.Edit permission."""
 
     @mutator_for(IGitRepositoryView["name"])

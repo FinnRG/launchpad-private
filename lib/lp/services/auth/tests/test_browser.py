@@ -15,12 +15,13 @@ from testtools.matchers import (
     Not,
 )
 from zope.component import getUtility
+from zope.security.interfaces import Unauthorized
 from zope.security.proxy import removeSecurityProxy
 
 from lp.code.interfaces.gitrepository import IGitRepository
 from lp.services.webapp.interfaces import IPlacelessAuthUtility
 from lp.services.webapp.publisher import canonical_url
-from lp.testing import TestCaseWithFactory, login_person
+from lp.testing import ANONYMOUS, TestCaseWithFactory, login, login_person
 from lp.testing.layers import DatabaseFunctionalLayer
 from lp.testing.views import create_view
 
@@ -88,6 +89,30 @@ class TestAccessTokenViewBase:
         browser = self.getUserBrowser(target_url, user=self.owner)
         tokens_link = browser.getLink("Manage access tokens")
         self.assertEqual(expected_tokens_url, tokens_link.url)
+
+    def test_viewer_cannot_select_push_scope(self):
+        viewer = self.factory.makePerson()
+        login_person(viewer)
+        principal = getUtility(IPlacelessAuthUtility).getPrincipal(
+            viewer.account_id
+        )
+        view = create_view(
+            self.target,
+            "+access-tokens",
+            principal=principal,
+            current_request=True,
+        )
+        view.initialize()
+        scope_titles = [
+            term.token for term in view.widgets["scopes"].vocabulary
+        ]
+        self.assertNotIn("REPOSITORY_PUSH", scope_titles)
+        self.assertIn("REPOSITORY_PULL", scope_titles)
+
+    def test_anonymous_unauthorized(self):
+        login(ANONYMOUS)
+        view = create_view(self.target, "+access-tokens")
+        self.assertRaises(Unauthorized, view.initialize)
 
     def makeTokensAndMatchers(self, count, target=None):
         if target is None:
