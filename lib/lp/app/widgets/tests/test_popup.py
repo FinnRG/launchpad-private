@@ -14,6 +14,7 @@ from lp.app.widgets.popup import (
     PersonPickerWidget,
     VocabularyPickerWidget,
 )
+from lp.services.beautifulsoup import BeautifulSoup
 from lp.services.webapp.servers import LaunchpadTestRequest
 from lp.testing import TestCaseWithFactory
 from lp.testing.layers import DatabaseFunctionalLayer
@@ -163,6 +164,17 @@ class TestVocabularyPickerWidget(TestCaseWithFactory):
             "field.test_invalid_chars-ZmllbGQudGVzdF9pbnZhbGlkX2NoYXJzKw",
             picker_widget.input_id,
         )
+
+    def test_widget_input_with_invalid_html_chars(self):
+        field = ITest["test_invalid_chars+"].bind(self.context)
+        picker_widget = VocabularyPickerWidget(
+            field, self.vocabulary, self.request
+        )
+        input_element = BeautifulSoup(picker_widget.inputField()).find("input")
+        self.assertEqual(picker_widget.input_id, input_element["id"])
+        owner = self.context.teamowner
+        self.request.form[input_element["name"]] = owner.name
+        self.assertEqual(owner, picker_widget.getInputValue())
 
     def test_widget_suggestions(self):
         # The suggestions menu is shown when the input is invalid and there
