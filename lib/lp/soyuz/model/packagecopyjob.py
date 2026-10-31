@@ -804,11 +804,8 @@ class PlainPackageCopyJob(PackageCopyJobDerived):
             )
 
         # The package is free to go right in, so just copy it now.
-        ancestry = self.target_archive.getPublishedSources(
-            name=self.package_name,
-            distroseries=self.target_distroseries,
-            pocket=self.target_pocket,
-            exact_match=True,
+        ancestries = self.target_archive.getSourceAncestriesForDiffs(
+            self.package_name, self.target_distroseries
         )
         override = self.getSourceOverride()
         copy_policy = self.getPolicyImplementation()
@@ -835,21 +832,18 @@ class PlainPackageCopyJob(PackageCopyJobDerived):
         )
 
         # Add a PackageDiff for this new upload if it has ancestry.
-        if copied_publications and not ancestry.is_empty():
-            from_spr = None
-            for publication in copied_publications:
-                if ISourcePackagePublishingHistory.providedBy(publication):
-                    from_spr = publication.sourcepackagerelease
-                    break
-            if from_spr:
-                for ancestor in ancestry:
-                    to_spr = ancestor.sourcepackagerelease
-                    if from_spr != to_spr:
-                        try:
-                            to_spr.requestDiffTo(self.requester, from_spr)
-                        except PackageDiffAlreadyRequested:
-                            pass
-                        break
+        for publication in copied_publications:
+            if not ISourcePackagePublishingHistory.providedBy(publication):
+                continue
+            to_spr = publication.sourcepackagerelease
+            for ancestor in ancestries:
+                from_spr = ancestor.sourcepackagerelease
+                if from_spr == to_spr:
+                    continue
+                try:
+                    from_spr.requestDiffTo(self.requester, to_spr)
+                except PackageDiffAlreadyRequested:
+                    pass
 
         if pu is not None:
             # A PackageUpload will only exist if the copy job had to be

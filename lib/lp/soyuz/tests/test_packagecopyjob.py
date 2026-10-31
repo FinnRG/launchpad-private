@@ -56,6 +56,7 @@ from lp.soyuz.interfaces.section import ISectionSet
 from lp.soyuz.interfaces.sourcepackageformat import (
     ISourcePackageFormatSelectionSet,
 )
+from lp.soyuz.model import packagecopyjob
 from lp.soyuz.model.archive import Archive
 from lp.soyuz.model.packagecopyjob import PackageCopyJob
 from lp.soyuz.model.queue import PackageUpload
@@ -907,6 +908,126 @@ class PlainPackageCopyJobTests(TestCaseWithFactory, LocalTestHelper):
             [JobStatus.WAITING, JobStatus.RUNNING, JobStatus.FAILED],
             found_statuses,
         )
+
+    def makeDiffCopyJob(self, archive=None, pocket=None):
+        if archive is None:
+            archive = self.distroseries.main_archive
+        if pocket is None:
+            pocket = PackagePublishingPocket.RELEASE
+        source = self.publisher.getPubSource(
+            distroseries=self.distroseries,
+            sourcename="diff-copy",
+            version="3.0-1",
+            status=PackagePublishingStatus.PUBLISHED,
+            archive=self.factory.makeArchive(),
+        )
+        requester = self.factory.makePerson()
+        with person_logged_in(archive.owner):
+            archive.newComponentUploader(requester, "main")
+            archive.newPocketQueueAdmin(requester, pocket)
+        return self.createCopyJobForSPPH(
+            source,
+            source.archive,
+            archive,
+            target_pocket=pocket,
+            requester=requester,
+            auto_approve=True,
+        )
+
+    def makeDiffAncestry(self, archive, version="1.0-1", **kwargs):
+        return self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            distroseries=self.distroseries,
+            sourcepackagename="diff-copy",
+            version=version,
+            status=PackagePublishingStatus.PUBLISHED,
+            **kwargs,
+        ).sourcepackagerelease
+
+    def assertCopyDiffs(self, expected_ancestors, job):
+        spr = job.findSourcePublication().sourcepackagerelease
+        self.runJob(job)
+        self.assertEqual(JobStatus.COMPLETED, job.status)
+        self.assertContentEqual(
+            [(ancestor, spr) for ancestor in expected_ancestors],
+            [(diff.from_source, diff.to_source) for diff in spr.package_diffs],
+        )
+
+    def test_copy_diffs_release_to_proposed(self):
+        archive = self.distroseries.main_archive
+        ancestor = self.makeDiffAncestry(
+            archive, pocket=PackagePublishingPocket.RELEASE
+        )
+        job = self.makeDiffCopyJob(pocket=PackagePublishingPocket.PROPOSED)
+        self.assertCopyDiffs([ancestor], job)
+
+    def test_copy_diffs_highest_version_across_pockets(self):
+        archive = self.distroseries.main_archive
+        ancestor = self.makeDiffAncestry(
+            archive, "2.0-1", pocket=PackagePublishingPocket.SECURITY
+        )
+        self.makeDiffAncestry(archive, pocket=PackagePublishingPocket.RELEASE)
+        self.assertCopyDiffs(
+            [ancestor],
+            self.makeDiffCopyJob(pocket=PackagePublishingPocket.PROPOSED),
+        )
+
+    def test_copy_diffs_primary_and_ppa_ancestors(self):
+        primary_ancestor = self.makeDiffAncestry(
+            self.distroseries.main_archive
+        )
+        ppa = self.factory.makeArchive(self.distroseries.distribution)
+        ppa_ancestor = self.makeDiffAncestry(ppa, "2.0-1")
+        self.assertCopyDiffs(
+            [primary_ancestor, ppa_ancestor], self.makeDiffCopyJob(ppa)
+        )
+
+    def test_copy_diffs_skip_self_ancestor(self):
+        ppa = self.factory.makeArchive(self.distroseries.distribution)
+        ancestor = self.makeDiffAncestry(ppa)
+        job = self.makeDiffCopyJob(ppa)
+        spr = job.findSourcePublication().sourcepackagerelease
+        self.factory.makeSourcePackagePublishingHistory(
+            archive=self.distroseries.main_archive,
+            distroseries=self.distroseries,
+            sourcepackagerelease=spr,
+        )
+        self.assertCopyDiffs([ancestor], job)
+
+    def test_copy_diffs_already_requested(self):
+        primary_ancestor = self.makeDiffAncestry(
+            self.distroseries.main_archive
+        )
+        ppa = self.factory.makeArchive(self.distroseries.distribution)
+        ppa_ancestor = self.makeDiffAncestry(ppa, "2.0-1")
+        job = self.makeDiffCopyJob(ppa)
+        primary_ancestor.requestDiffTo(
+            job.requester, job.findSourcePublication().sourcepackagerelease
+        )
+        self.assertCopyDiffs([primary_ancestor, ppa_ancestor], job)
+
+    def test_copy_diffs_fall_back_to_another_series(self):
+        archive = self.distroseries.main_archive
+        other_series = self.factory.makeDistroSeries(
+            distribution=self.distroseries.distribution
+        )
+        ancestor = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            distroseries=other_series,
+            sourcepackagename="diff-copy",
+            version="1.0-1",
+            pocket=PackagePublishingPocket.RELEASE,
+        ).sourcepackagerelease
+        self.assertCopyDiffs([ancestor], self.makeDiffCopyJob())
+
+    def test_copy_diffs_without_ancestry(self):
+        self.assertCopyDiffs([], self.makeDiffCopyJob())
+
+    def test_copy_diffs_binary_only(self):
+        self.makeDiffAncestry(self.distroseries.main_archive)
+        binary = self.factory.makeBinaryPackagePublishingHistory()
+        self.patch(packagecopyjob, "do_copy", FakeMethod(result=[binary]))
+        self.assertCopyDiffs([], self.makeDiffCopyJob())
 
     def test_copying_to_main_archive_ancestry_overrides(self):
         # The job will complete right away for auto-approved copies to a

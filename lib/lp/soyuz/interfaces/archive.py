@@ -924,6 +924,22 @@ class IArchiveSubscriberView(Interface):
             publication outside this archive.
         """
 
+    def getSourceAncestriesForDiffs(source_name, distroseries):
+        """Return ancestry publications for an upload or copy to this archive.
+
+        Select the highest-version publication of `source_name` in the
+        primary archive and `distroseries`, across all pockets. If none
+        exists, fall back to the primary archive's release pocket across
+        all series.
+
+        If this is not the primary archive, also select its highest-version
+        publication in `distroseries`, without a cross-series fallback.
+        Publication status and removal do not restrict either lookup.
+
+        :return: A list of `ISourcePackagePublishingHistory`, primary
+            ancestry first, deduplicated by source package release.
+        """
+
     def getPublishedSources(
         name=None,
         version=None,

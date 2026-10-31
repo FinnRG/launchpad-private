@@ -1146,6 +1146,37 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             ],
         }
 
+    def getSourceAncestriesForDiffs(self, source_name, distroseries):
+        """See `IArchive`."""
+        primary_archive = distroseries.main_archive
+        archives = [primary_archive]
+        if self != primary_archive:
+            archives.append(self)
+
+        ancestries = []
+        seen_releases = set()
+        for archive in archives:
+            ancestry = archive.getPublishedSources(
+                name=source_name,
+                distroseries=distroseries,
+                exact_match=True,
+            ).first()
+            if ancestry is None and archive == primary_archive:
+                # The source is new to this series, so look in the release
+                # pocket of every series instead.
+                ancestry = archive.getPublishedSources(
+                    name=source_name,
+                    pocket=PackagePublishingPocket.RELEASE,
+                    exact_match=True,
+                ).first()
+            if ancestry is None:
+                continue
+            if ancestry.sourcepackagerelease_id in seen_releases:
+                continue
+            seen_releases.add(ancestry.sourcepackagerelease_id)
+            ancestries.append(ancestry)
+        return ancestries
+
     def getPublishedSources(
         self,
         name=None,
