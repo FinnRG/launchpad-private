@@ -105,7 +105,8 @@ class VocabularyPickerWidget(SingleDataHelper, ItemsWidgetBase):
     def inputField(self):
         d = {
             "formToken": self.formToken,
-            "name": self.input_id,
+            "name": self.name,
+            "id": self.input_id,
             "displayWidth": self.displayWidth,
             "displayMaxWidth": self.displayMaxWidth,
             "onKeyPress": self.onKeyPress,
@@ -113,7 +114,7 @@ class VocabularyPickerWidget(SingleDataHelper, ItemsWidgetBase):
             "cssClass": self.cssClass,
         }
         return structured(
-            """<input type="text" value="%(formToken)s" id="%(name)s"
+            """<input type="text" value="%(formToken)s" id="%(id)s"
                          name="%(name)s" size="%(displayWidth)s"
                          maxlength="%(displayMaxWidth)s"
                          onKeyPress="%(onKeyPress)s" style="%(style)s"
