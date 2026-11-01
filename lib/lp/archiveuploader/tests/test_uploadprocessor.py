@@ -8,12 +8,14 @@ __all__ = [
     "TestUploadProcessorBase",
 ]
 
+import hashlib
 import io
 import os
 import shutil
 import tempfile
 
 import six
+from debian.deb822 import Changes
 from fixtures import MonkeyPatch
 from storm.locals import Store
 from testtools.matchers import Equals, GreaterThan, LessThan, MatchesListwise
@@ -2726,6 +2728,42 @@ class TestUploadProcessor(StatsMixin, TestUploadProcessorBase):
         ) as f:
             buildinfo_contents = f.read()
         self.processUpload(uploadprocessor, upload_dir)
+        source_pub = self.publishPackage("bar", "1.0-1")
+        self.assertEqual(
+            buildinfo_contents,
+            source_pub.sourcepackagerelease.buildinfo.read(),
+        )
+
+    def test_source_upload_with_binary_buildinfo(self):
+        uploadprocessor = self.setupBreezyAndGetUploadProcessor(
+            policy="absolutely-anything"
+        )
+        upload_dir = self.queueUpload("bar_1.0-1_buildinfo")
+        filename = "bar_1.0-1_i386.buildinfo"
+        with open(
+            datadir("suite/bar_1.0-1_binary_buildinfo/" + filename), "rb"
+        ) as f:
+            buildinfo_contents = f.read()
+        with open(os.path.join(upload_dir, filename), "wb") as f:
+            f.write(buildinfo_contents)
+        changes_path = os.path.join(upload_dir, "bar_1.0-1_source.changes")
+        with open(changes_path, "rb") as f:
+            changes = Changes(f)
+        changes["Files"][-1].update(
+            name=filename,
+            md5sum=hashlib.md5(buildinfo_contents).hexdigest(),
+            size=str(len(buildinfo_contents)),
+        )
+        with open(changes_path, "wb") as f:
+            changes.dump(f)
+        os.unlink(os.path.join(upload_dir, "bar_1.0-1_source.buildinfo"))
+
+        self.processUpload(uploadprocessor, upload_dir)
+        upload = uploadprocessor.last_processed_upload
+        getPolicy(name="insecure").validateUploadType(upload)
+        self.assertFalse(upload.is_rejected, upload.rejection_message)
+        self.assertTrue(upload.sourceful)
+        self.assertFalse(upload.binaryful)
         source_pub = self.publishPackage("bar", "1.0-1")
         self.assertEqual(
             buildinfo_contents,
