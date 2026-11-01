@@ -2628,6 +2628,36 @@ class TestGarbo(FakeAdapterMixin, TestCaseWithFactory):
         self.assertEqual(1, rs.count())
         self.assertEqual(archive_files[1], rs.one())
 
+    def test_backfill_logs_when_idle(self):
+        # setUp has already run every job, so the backfills have no work.
+        self.runDaily()
+
+        log = self.log_buffer.getvalue()
+        self.assertIn("[ArchiveFileDatePopulator] No work to do.", log)
+        self.assertIn(
+            "[BinaryPackagePublishingHistorySPNPopulator] No work to do.", log
+        )
+        # Loops that have not opted in stay quiet.
+        self.assertNotIn("[BugNotificationPruner] No work to do.", log)
+
+    def test_backfill_does_not_log_when_working(self):
+        switch_dbuser("testadmin")
+        archive_file = self.factory.makeArchiveFile()
+        removeSecurityProxy(archive_file).scheduled_deletion_date = (
+            datetime.now(timezone.utc) + timedelta(days=1)
+        )
+        bpph = self.factory.makeBinaryPackagePublishingHistory()
+        removeSecurityProxy(bpph).sourcepackagename = None
+        transaction.commit()
+
+        self.runDaily()
+
+        log = self.log_buffer.getvalue()
+        self.assertNotIn("[ArchiveFileDatePopulator] No work to do.", log)
+        self.assertNotIn(
+            "[BinaryPackagePublishingHistorySPNPopulator] No work to do.", log
+        )
+
     def test_UpdatePPASigningKeyFingerprintToRSA4096Key(self):
         switch_dbuser("testadmin")
         person = self.factory.makePerson()

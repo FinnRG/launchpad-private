@@ -273,6 +273,12 @@ class BulkPruner(TunableLoop):
         """See `ITunableLoop`."""
         return self._num_removed == 0
 
+    def wasIdle(self, tuner):
+        """See `TunableLoop`."""
+        return (
+            tuner.finished and tuner.iterations == 1 and self._num_removed == 0
+        )
+
     def __call__(self, chunk_size):
         """See `ITunableLoop`."""
         result = self.store.execute(
@@ -2057,6 +2063,7 @@ class ArchiveArtifactoryColumnsPopulator(TunableLoop):
     """Populate new `Archive` columns used for Artifactory publishing."""
 
     maximum_chunk_size = 5000
+    log_if_idle = True
 
     def __init__(self, log, abort_time=None):
         super().__init__(log, abort_time)
@@ -2103,6 +2110,7 @@ class SourcePackagePublishingHistoryFormatPopulator(TunableLoop):
     """Populate new `SPPH.format` column."""
 
     maximum_chunk_size = 5000
+    log_if_idle = True
 
     def __init__(self, log, abort_time=None):
         super().__init__(log, abort_time)
@@ -2190,6 +2198,7 @@ class BinaryPackagePublishingHistoryFormatPopulator(TunableLoop):
     """Populate new `BPPH.binarypackageformat` column."""
 
     maximum_chunk_size = 5000
+    log_if_idle = True
 
     def __init__(self, log, abort_time=None):
         super().__init__(log, abort_time)
@@ -2234,6 +2243,7 @@ class BinaryPackagePublishingHistorySPNPopulator(BulkPruner):
     """Populate the new BPPH.sourcepackagename column."""
 
     target_table_class = BinaryPackagePublishingHistory
+    log_if_idle = True
 
     ids_to_prune_query = convert_storm_clause_to_string(
         Select(
@@ -2295,6 +2305,7 @@ class ArchiveFileDatePopulator(TunableLoop):
     """Populates ArchiveFile.date_superseded."""
 
     maximum_chunk_size = 5000
+    log_if_idle = True
 
     def __init__(self, log, abort_time=None):
         super().__init__(log, abort_time)
@@ -2333,6 +2344,7 @@ class PopulateCveSequence(TunableLoop):
     """
 
     maximum_chunk_size = 1000
+    log_if_idle = True
 
     def __init__(self, log, abort_time=None):
         super().__init__(log, abort_time)
@@ -2399,6 +2411,7 @@ class UpdatePPASigningKeyFingerprintToRSA4096Key(TunableLoop):
     """
 
     maximum_chunk_size = 1000
+    log_if_idle = True
 
     def __init__(self, log, abort_time=None):
         super().__init__(log, abort_time)

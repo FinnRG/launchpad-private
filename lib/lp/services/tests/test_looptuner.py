@@ -11,7 +11,7 @@ import io
 from zope.interface import implementer
 
 from lp.services.log.logger import FakeLogger
-from lp.services.looptuner import ITunableLoop, LoopTuner
+from lp.services.looptuner import ITunableLoop, LoopTuner, TunableLoop
 from lp.testing import TestCase
 from lp.testing.layers import BaseLayer
 
@@ -72,3 +72,74 @@ class TestSomething(TestCase):
         self.assertEqual(
             log_file.getvalue().strip(), "ERROR Unhandled exception in cleanUp"
         )
+
+
+class CountingLoop(TunableLoop):
+    """A loop that does a fixed number of iterations."""
+
+    tuner_class = LoopTuner
+    maximum_chunk_size = 10
+
+    def __init__(self, log, iterations, abort_time=None):
+        super().__init__(log, abort_time=abort_time)
+        self.remaining = iterations
+
+    def isDone(self):
+        return self.remaining == 0
+
+    def __call__(self, chunk_size):
+        self.remaining -= 1
+
+
+class TestLoopTunerProgress(TestCase):
+    layer = BaseLayer
+
+    def test_finished_with_no_iterations(self):
+        tuner = LoopTuner(CountingLoop(None, 0), 5, log=FakeLogger())
+        tuner.run()
+        self.assertTrue(tuner.finished)
+        self.assertEqual(0, tuner.iterations)
+
+    def test_finished_after_iterations(self):
+        tuner = LoopTuner(CountingLoop(None, 3), 5, log=FakeLogger())
+        tuner.run()
+        self.assertTrue(tuner.finished)
+        self.assertEqual(3, tuner.iterations)
+
+    def test_not_finished_when_aborted(self):
+        tuner = LoopTuner(
+            CountingLoop(None, 3),
+            5,
+            abort_time=0,
+            log=FakeLogger(io.StringIO()),
+        )
+        tuner.run()
+        self.assertFalse(tuner.finished)
+        self.assertEqual(0, tuner.iterations)
+
+
+class TestTunableLoopLogIfIdle(TestCase):
+    layer = BaseLayer
+
+    def runLoop(self, iterations, log_if_idle, abort_time=None):
+        log_file = io.StringIO()
+        loop = CountingLoop(
+            FakeLogger(log_file), iterations, abort_time=abort_time
+        )
+        loop.log_if_idle = log_if_idle
+        loop.run()
+        return log_file.getvalue()
+
+    def test_logs_when_idle(self):
+        self.assertIn("INFO No work to do.", self.runLoop(0, True))
+
+    def test_silent_when_idle_by_default(self):
+        self.assertNotIn("No work to do.", self.runLoop(0, False))
+
+    def test_silent_when_work_was_done(self):
+        self.assertNotIn("No work to do.", self.runLoop(2, True))
+
+    def test_silent_when_aborted_before_any_work(self):
+        log = self.runLoop(2, True, abort_time=0)
+        self.assertIn("Task aborted", log)
+        self.assertNotIn("No work to do.", log)

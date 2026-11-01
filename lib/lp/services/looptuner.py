@@ -137,6 +137,12 @@ class LoopTuner:
     # True if this task has timed out. Set by _isTimedOut().
     _has_timed_out = False
 
+    # Set by run(): the number of times the operation was called, and
+    # whether the loop stopped because the operation reported it was done
+    # (rather than timing out).
+    iterations = 0
+    finished = False
+
     def _isTimedOut(self, extra_seconds=0):
         """Return True if the task will be timed out in extra_seconds.
 
@@ -162,7 +168,10 @@ class LoopTuner:
             total_size = 0
             self.start_time = self._time()
             last_clock = self.start_time
-            while not self.operation.isDone():
+            while True:
+                if self.operation.isDone():
+                    self.finished = True
+                    break
                 if self._isTimedOut():
                     self.log.info(
                         "Task aborted after %d seconds.", self.abort_time
@@ -201,6 +210,7 @@ class LoopTuner:
                 chunk_size = max(chunk_size, self.minimum_chunk_size)
                 chunk_size = min(chunk_size, self.maximum_chunk_size)
                 iteration += 1
+                self.iterations = iteration
 
             total_time = last_clock - self.start_time
             average_size = total_size / max(1, iteration)
@@ -394,6 +404,10 @@ class TunableLoop:
     maximum_chunk_size: int = None
     cooldown_time = 0
 
+    # Set this on one-off backfills.  Each run that finds nothing to do then
+    # logs that at INFO level.
+    log_if_idle = False
+
     def __init__(self, log, abort_time=None):
         self.log = log
         self.abort_time = abort_time
@@ -402,11 +416,19 @@ class TunableLoop:
         """Return True when the TunableLoop is complete."""
         raise NotImplementedError(self.isDone)
 
+    def wasIdle(self, tuner):
+        """Return True if `tuner` finished this loop without doing any work.
+
+        Subclasses that only find out whether there is work by doing an
+        iteration should override this.
+        """
+        return tuner.finished and tuner.iterations == 0
+
     def run(self):
         assert (
             self.maximum_chunk_size is not None
         ), "Did not override maximum_chunk_size."
-        self.tuner_class(
+        tuner = self.tuner_class(
             self,
             self.goal_seconds,
             minimum_chunk_size=self.minimum_chunk_size,
@@ -414,4 +436,7 @@ class TunableLoop:
             cooldown_time=self.cooldown_time,
             abort_time=self.abort_time,
             log=self.log,
-        ).run()
+        )
+        tuner.run()
+        if self.log_if_idle and self.wasIdle(tuner):
+            tuner.log.info("No work to do.")
