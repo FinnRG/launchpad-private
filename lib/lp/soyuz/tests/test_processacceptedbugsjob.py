@@ -6,9 +6,11 @@
 import io
 from itertools import product
 from textwrap import dedent
+from unittest.mock import patch
 
 import transaction
 from debian.deb822 import Changes
+from psycopg2.errors import LockNotAvailable
 from testtools.content import text_content
 from zope.component import getUtility
 from zope.security.interfaces import ForbiddenAttribute
@@ -16,9 +18,11 @@ from zope.security.proxy import removeSecurityProxy
 
 from lp.app.enums import InformationType
 from lp.bugs.interfaces.bugtask import BugTaskStatus
+from lp.bugs.model.bug import Bug
 from lp.registry.interfaces.pocket import PackagePublishingPocket
 from lp.registry.interfaces.series import SeriesStatus
 from lp.services.config import config
+from lp.services.database.sqlbase import connect
 from lp.services.features.testing import FeatureFixture
 from lp.services.job.interfaces.job import JobStatus
 from lp.services.job.runner import JobRunner
@@ -325,6 +329,49 @@ class TestCloseBugIDsForSourcePackageRelease(TestCaseWithFactory):
             "\n\n---------------\nchangelog" % self.sprs[0].title,
             self.bug.messages[1].text_contents,
         )
+
+    def test_locks_parent_bugs_before_changing_tasks(self):
+        # Every affected bug is locked before any of their tasks change,
+        # so a concurrent update that locks a bug before its tasks cannot
+        # deadlock with this transaction.
+        other_bug = self.factory.makeBug()
+        other_task = self.factory.makeBugTask(
+            target=self.bugtasks[0].target, bug=other_bug
+        )
+        bug_ids = [other_bug.id, self.bug.id, other_bug.id]
+        transaction.commit()
+        connection = connect(user=self.dbuser)
+        self.addCleanup(connection.close)
+        original_set_status = Bug.setStatus
+        checked_bugs = []
+
+        def assert_bug_locked(bug_id):
+            # Run in a separate transaction; NOWAIT fails at once if this
+            # test's transaction holds a conflicting lock on the row.
+            try:
+                self.assertRaises(
+                    LockNotAvailable,
+                    connection.cursor().execute,
+                    "SELECT id FROM Bug WHERE id = %s "
+                    "FOR NO KEY UPDATE NOWAIT",
+                    (bug_id,),
+                )
+            finally:
+                connection.rollback()
+
+        def set_status(bug, *args, **kwargs):
+            for bug_id in set(bug_ids):
+                assert_bug_locked(bug_id)
+            checked_bugs.append(bug.id)
+            return original_set_status(bug, *args, **kwargs)
+
+        with patch.object(Bug, "setStatus", set_status):
+            close_bug_ids_for_sourcepackagerelease(
+                self.series[0], self.sprs[0], bug_ids
+            )
+        self.assertEqual(sorted({self.bug.id, other_bug.id}), checked_bugs)
+        self.assertEqual(BugTaskStatus.FIXRELEASED, self.bugtasks[0].status)
+        self.assertEqual(BugTaskStatus.FIXRELEASED, other_task.status)
 
     def test_ignore_unknown_bug_ids(self):
         # Unknown bug IDs are ignored, and no message is added.
