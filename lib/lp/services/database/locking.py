@@ -5,6 +5,7 @@ __all__ = [
     "AdvisoryLockHeld",
     "LockType",
     "try_advisory_lock",
+    "try_advisory_xact_lock",
 ]
 
 from contextlib import contextmanager
@@ -12,7 +13,11 @@ from contextlib import contextmanager
 from lazr.enum import DBEnumeratedType, DBItem
 from storm.locals import Select
 
-from lp.services.database.stormexpr import AdvisoryUnlock, TryAdvisoryLock
+from lp.services.database.stormexpr import (
+    AdvisoryUnlock,
+    TryAdvisoryLock,
+    TryAdvisoryXactLock,
+)
 
 
 class AdvisoryLockHeld(Exception):
@@ -66,3 +71,16 @@ def try_advisory_lock(lock_type, lock_id, store):
         yield
     finally:
         store.execute(Select(AdvisoryUnlock(lock_type.value, lock_id)))
+
+
+def try_advisory_xact_lock(lock_type, lock_id, store):
+    """Try to acquire an advisory lock for the current transaction.
+
+    Raise `AdvisoryLockHeld` if the lock is already held.  The lock is
+    released on commit or rollback.
+    """
+    result = store.execute(
+        Select(TryAdvisoryXactLock(lock_type.value, lock_id))
+    )
+    if not result.get_one()[0]:
+        raise AdvisoryLockHeld()

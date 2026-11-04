@@ -24,6 +24,7 @@ __all__ = [
     "RegexpMatch",
     "rank_by_fti",
     "TryAdvisoryLock",
+    "TryAdvisoryXactLock",
     "Unnest",
     "Values",
     "WithMaterialized",
@@ -185,6 +186,12 @@ class TryAdvisoryLock(NamedFunc):
     __slots__ = ()
 
     name = "PG_TRY_ADVISORY_LOCK"
+
+
+class TryAdvisoryXactLock(NamedFunc):
+    __slots__ = ()
+
+    name = "PG_TRY_ADVISORY_XACT_LOCK"
 
 
 class AdvisoryUnlock(NamedFunc):
