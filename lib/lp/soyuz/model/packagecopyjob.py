@@ -41,7 +41,7 @@ from lp.services.database.interfaces import IPrimaryStore, IStore
 from lp.services.database.locking import (
     AdvisoryLockHeld,
     LockType,
-    try_advisory_lock,
+    try_advisory_xact_lock,
 )
 from lp.services.database.stormbase import StormBase
 from lp.services.job.interfaces.job import JobStatus
@@ -725,10 +725,10 @@ class PlainPackageCopyJob(PackageCopyJobDerived):
             # checker, namely copies of the same source name and version
             # from the same archive into multiple destination series.  Other
             # races are still possible, but much rarer.
-            with try_advisory_lock(
+            try_advisory_xact_lock(
                 LockType.PACKAGE_COPY, self._advisory_lock_id, IStore(Archive)
-            ):
-                self.attemptCopy()
+            )
+            self.attemptCopy()
         except CannotCopy as e:
             # Remember the target archive purpose, as otherwise aborting the
             # transaction will forget it.

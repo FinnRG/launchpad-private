@@ -19,6 +19,7 @@ from lp.app.interfaces.launchpad import ILaunchpadCelebrities
 from lp.archiveuploader.tagfiles import parse_tagfile_content
 from lp.bugs.interfaces.bug import IBugSet
 from lp.bugs.interfaces.bugtask import BugTaskStatus
+from lp.bugs.model.bug import Bug
 from lp.registry.interfaces.pocket import PackagePublishingPocket
 from lp.registry.model.distroseries import DistroSeries
 from lp.services.config import config
@@ -42,6 +43,13 @@ from lp.soyuz.model.sourcepackagerelease import SourcePackageRelease
 
 def close_bug_ids_for_sourcepackagerelease(distroseries, spr, bug_ids):
     bugs = list(getUtility(IBugSet).getByNumbers(bug_ids))
+    if bugs:
+        # Lock bugs before their tasks to match the order used by bug updates.
+        IStore(Bug).execute(
+            "SELECT id FROM Bug WHERE id = ANY(%s) "
+            "ORDER BY id FOR NO KEY UPDATE",
+            ([bug.id for bug in bugs],),
+        ).get_all()
     janitor = getUtility(ILaunchpadCelebrities).janitor
     target = distroseries.getSourcePackage(spr.sourcepackagename)
     assert (

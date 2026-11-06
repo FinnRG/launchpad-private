@@ -12,7 +12,9 @@ __all__ = [
 ]
 
 import apt_pkg
+import psycopg2
 from lazr.delegates import delegate_to
+from storm.exceptions import StormError
 from zope.component import getAdapter, getUtility
 from zope.security.proxy import removeSecurityProxy
 
@@ -20,6 +22,7 @@ from lp.app.interfaces.security import IAuthorization
 from lp.registry.interfaces.role import IPersonRoles
 from lp.registry.model.person import Person
 from lp.services.database.bulk import load_related
+from lp.services.database.locking import AdvisoryLockHeld
 from lp.soyuz.adapters.overrides import SourceOverride
 from lp.soyuz.enums import SourcePackageFormat
 from lp.soyuz.interfaces.archive import CannotCopy
@@ -592,8 +595,8 @@ def do_copy(
     Verifies if each copy can be performed using `CopyChecker` and
     raises `CannotCopy` if one or more copies could not be performed.
 
-    When `CannotCopy` is raised, call sites are responsible for rolling
-    back the transaction.  Otherwise, performed copies will be committed.
+    Callers are responsible for committing successful copies or rolling
+    back the transaction if an exception is raised.
 
     Wrapper for `do_direct_copy`.
 
@@ -621,7 +624,10 @@ def do_copy(
     :param strict_binaries: If 'include_binaries' is True then setting this
         to True will make the copy fail if binaries cannot be also copied.
     :param close_bugs: A boolean indicating whether or not bugs on the
-        copied publications should be closed.
+        copied publications should be closed.  Database, ORM, and advisory
+        lock errors propagate so that the copy can be rolled back.  Other
+        bug-closing errors are logged when a logger is supplied and do not
+        prevent copying.
     :param create_dsd_job: A boolean indicating whether or not a dsd job
          should be created for the new source publication.
     :param sponsored: An `IPerson` representing the person who is
@@ -874,9 +880,10 @@ def _do_direct_copy(
                 close_bugs_for_sourcepublication(
                     source_copy, close_bugs_since_version
                 )
+            except (psycopg2.Error, StormError, AdvisoryLockHeld):
+                raise
             except Exception:
-                # Bug-closing is best-effort: any failure must not abort the
-                # whole copy job
+                # Non-database bug-closing failures must not block copying.
                 if logger is not None:
                     logger.warning(
                         "Failed to close bugs for %s; the copy will proceed "

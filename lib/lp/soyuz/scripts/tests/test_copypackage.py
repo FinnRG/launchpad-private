@@ -5,7 +5,9 @@ from datetime import datetime, timedelta, timezone
 from textwrap import dedent
 from unittest.mock import patch
 
+import psycopg2
 import transaction
+from storm.exceptions import DisconnectionError, TimeoutError
 from testtools.content import text_content
 from testtools.matchers import (
     Equals,
@@ -24,7 +26,9 @@ from lp.registry.interfaces.distribution import IDistributionSet
 from lp.registry.interfaces.pocket import PackagePublishingPocket
 from lp.registry.interfaces.sourcepackage import SourcePackageType
 from lp.services.database.constants import UTC_NOW
+from lp.services.database.locking import AdvisoryLockHeld
 from lp.services.database.sqlbase import flush_database_caches
+from lp.services.log.logger import BufferLogger
 from lp.soyuz.adapters.overrides import SourceOverride
 from lp.soyuz.enums import (
     ArchivePermissionType,
@@ -2848,9 +2852,6 @@ class TestCopyClosesBugs(TestCaseWithFactory):
         self.assertEqual(proposed_bug_task.status, BugTaskStatus.NEW)
 
     def test_copy_succeeds_when_close_bugs_fails(self):
-        # If close_bugs_for_sourcepublication raises an exception (e.g. due
-        # to an unparsable Debian changelog), the copy must still succeed.
-        # Bug-closing is best-effort and must never abort a valid copy.
         bug_id = self.createBug("buggy-source", "bug that won't close")
         spph = self.createSource(
             "671",
@@ -2859,18 +2860,104 @@ class TestCopyClosesBugs(TestCaseWithFactory):
             bug_id,
         )
 
+        logger = BufferLogger()
         with patch(
             "lp.soyuz.scripts.packagecopier.close_bugs_for_sourcepublication",
-            side_effect=Exception("changelog parse error"),
+            side_effect=ValueError("changelog parse error"),
         ):
-            copies = do_copy(
+            [copied_source] = do_copy(
                 [spph],
                 self.hoary_test.main_archive,
                 self.hoary_test,
                 PackagePublishingPocket.UPDATES,
                 check_permissions=False,
+                logger=logger,
             )
+        self.assertEqual(PackagePublishingStatus.PENDING, copied_source.status)
+        self.assertIn("Failed to close bugs for ", logger.getLogBuffer())
+        self.assertIn("the copy will proceed anyway", logger.getLogBuffer())
+        self.assertIn(
+            "ValueError: changelog parse error", logger.getLogBuffer()
+        )
 
-        # The copy should have completed despite the bug-closing failure.
-        self.assertEqual(1, len(copies))
-        self.assertEqual(PackagePublishingStatus.PENDING, copies[0].status)
+    def test_copy_succeeds_with_unparseable_changelog(self):
+        bug_id = self.createBug("buggy-source", "bug that won't close")
+        self.createSource(
+            "670",
+            self.hoary_test.main_archive,
+            PackagePublishingPocket.UPDATES,
+            bug_id,
+        )
+        spph = self.createSource(
+            "671",
+            self.hoary_test.main_archive,
+            PackagePublishingPocket.PROPOSED,
+            bug_id,
+        )
+        spph.sourcepackagerelease.changelog = (
+            self.factory.makeLibraryFileAlias(
+                content=b"not a Debian changelog\n"
+            )
+        )
+        transaction.commit()
+        logger = BufferLogger()
+
+        [copied_source] = do_copy(
+            [spph],
+            self.hoary_test.main_archive,
+            self.hoary_test,
+            PackagePublishingPocket.UPDATES,
+            check_permissions=False,
+            logger=logger,
+        )
+        transaction.commit()
+
+        self.assertEqual(PackagePublishingStatus.PENDING, copied_source.status)
+        [bug_task] = getUtility(IBugSet).get(bug_id).bugtasks
+        self.assertEqual(BugTaskStatus.NEW, bug_task.status)
+        self.assertIn("the copy will proceed anyway", logger.getLogBuffer())
+        self.assertIn("TypeError:", logger.getLogBuffer())
+
+    def test_copy_propagates_database_and_lock_errors(self):
+        bug_id = self.createBug("buggy-source", "bug that won't close")
+        spph = self.createSource(
+            "671",
+            self.hoary_test.main_archive,
+            PackagePublishingPocket.PROPOSED,
+            bug_id,
+        )
+        errors = (
+            psycopg2.errors.DeadlockDetected("deadlock"),
+            psycopg2.ProgrammingError("invalid statement"),
+            psycopg2.InterfaceError("closed connection"),
+            DisconnectionError("disconnected"),
+            TimeoutError("SELECT 1", (), 1),
+            AdvisoryLockHeld(),
+        )
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                logger = BufferLogger()
+                try:
+                    with patch(
+                        "lp.soyuz.scripts.packagecopier."
+                        "close_bugs_for_sourcepublication",
+                        side_effect=error,
+                    ):
+                        self.assertIs(
+                            error,
+                            self.assertRaises(
+                                type(error),
+                                do_copy,
+                                [spph],
+                                self.hoary_test.main_archive,
+                                self.hoary_test,
+                                PackagePublishingPocket.UPDATES,
+                                check_permissions=False,
+                                logger=logger,
+                            ),
+                        )
+                    self.assertNotIn(
+                        "the copy will proceed anyway", logger.getLogBuffer()
+                    )
+                finally:
+                    transaction.abort()
