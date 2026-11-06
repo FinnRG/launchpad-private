@@ -10,6 +10,7 @@ import tarfile
 from dataclasses import replace
 from unittest import mock
 
+import requests
 from zope.interface.verify import verifyObject
 
 from lp.code.autopkgtest import (
@@ -648,6 +649,7 @@ class TestAutopkgtestContract(TestCase):
             results_url="https://results.example.test/public/",
             connect_timeout=4,
             read_timeout=19,
+            user_agent="ubuntu/launchpad-test/0.2",
         )
         self.pushConfig(
             "launchpad",
@@ -666,6 +668,12 @@ class TestAutopkgtestContract(TestCase):
         self.assertEqual((4, 19), adapter.timeout)
         self.assertIsNot(adapter.submit_session, adapter.read_session)
         for session in (adapter.submit_session, adapter.read_session):
+            prepared = session.prepare_request(
+                requests.Request("GET", "https://autopkgtest.example.test/")
+            )
+            self.assertEqual(
+                "ubuntu/launchpad-test/0.2", prepared.headers["User-Agent"]
+            )
             self.assertFalse(session.trust_env)
             self.assertEqual(
                 {
