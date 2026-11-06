@@ -37,7 +37,7 @@ from zope.component import getUtility
 from zope.security.interfaces import Unauthorized
 from zope.security.proxy import removeSecurityProxy
 
-from lp.app.errors import NotFoundError
+from lp.app.errors import IncompatibleArguments, NotFoundError
 from lp.app.interfaces.launchpad import ILaunchpadCelebrities
 from lp.archivepublisher.interfaces.archivegpgsigningkey import (
     IArchiveGPGSigningKey,
@@ -55,6 +55,7 @@ from lp.registry.interfaces.pocket import PackagePublishingPocket
 from lp.registry.interfaces.series import SeriesStatus
 from lp.registry.interfaces.teammembership import TeamMembershipStatus
 from lp.services.authserver.testing import InProcessAuthServerFixture
+from lp.services.database.constants import UTC_NOW
 from lp.services.database.interfaces import IStore
 from lp.services.features import getFeatureFlag
 from lp.services.features.testing import FeatureFixture
@@ -111,6 +112,7 @@ from lp.soyuz.interfaces.archive import (
     RedirectedPocket,
     VersionRequiresName,
 )
+from lp.soyuz.interfaces.archivefile import IArchiveFileSet
 from lp.soyuz.interfaces.archivejob import ICIBuildUploadJobSource
 from lp.soyuz.interfaces.archivepermission import IArchivePermissionSet
 from lp.soyuz.interfaces.binarypackagebuild import BuildSetStatus
@@ -161,6 +163,297 @@ from lp.testing.layers import (
 from lp.testing.matchers import HasQueryCount
 from lp.testing.pages import webservice_for_person
 from lp.testing.views import create_webservice_error_view
+
+
+class TestPublicationsLiveAt(TestCaseWithFactory):
+    layer = DatabaseFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        self.archive = self.factory.makeArchive(purpose=ArchivePurpose.PRIMARY)
+        self.series = self.factory.makeDistroSeries(
+            distribution=self.archive.distribution
+        )
+        self.arch = self.factory.makeDistroArchSeries(distroseries=self.series)
+        self.pocket = PackagePublishingPocket.RELEASE
+        self.start = datetime.now(timezone.utc) - timedelta(days=3)
+        self.change = self.start + timedelta(days=1)
+        self.finish = self.change + timedelta(days=1)
+
+    def makeIndex(self, date, series=None, pocket=None, filename="Sources.gz"):
+        series = self.series if series is None else series
+        pocket = self.pocket if pocket is None else pocket
+        suite = series.getSuite(pocket)
+        path = "dists/%s/main/source/%s" % (suite, filename)
+        for previous in getUtility(IArchiveFileSet).getByArchive(
+            self.archive, path=path
+        ):
+            if previous.date_superseded is None:
+                removeSecurityProxy(previous).date_superseded = date
+        archive_file = self.factory.makeArchiveFile(
+            archive=self.archive,
+            container="release:" + suite,
+            path=path,
+            library_file=self.factory.makeLibraryFileAlias(db_only=True),
+        )
+        removeSecurityProxy(archive_file).date_created = date
+        return archive_file
+
+    def makePublications(
+        self,
+        date,
+        status=PackagePublishingStatus.PUBLISHED,
+        superseded=None,
+        arch=None,
+        pocket=None,
+    ):
+        arch = self.arch if arch is None else arch
+        pocket = self.pocket if pocket is None else pocket
+        source = self.factory.makeSourcePackagePublishingHistory(
+            archive=self.archive,
+            distroseries=arch.distroseries,
+            pocket=pocket,
+            status=status,
+        )
+        binary = self.factory.makeBinaryPackagePublishingHistory(
+            archive=self.archive,
+            distroarchseries=arch,
+            pocket=pocket,
+            source_package_release=source.sourcepackagerelease,
+            status=status,
+            architecturespecific=True,
+        )
+        for publication in (source, binary):
+            naked = removeSecurityProxy(publication)
+            naked.datepublished = date
+            naked.datesuperseded = superseded
+        return source, binary
+
+    def assertLiveAt(self, expected, live_at, **kwargs):
+        self.assertContentEqual(
+            [pair[0] for pair in expected],
+            self.archive.getPublishedSources(live_at=live_at, **kwargs),
+        )
+        self.assertContentEqual(
+            [pair[1] for pair in expected],
+            self.archive.getAllPublishedBinaries(live_at=live_at, **kwargs),
+        )
+
+    def test_live_at_before_and_after_index_publication(self):
+        old = self.makePublications(self.start)
+        self.makeIndex(self.start)
+        new = self.makePublications(self.change)
+        self.assertLiveAt([old], self.finish)
+        self.assertLiveAt([old], UTC_NOW)
+        self.assertLiveAt([], self.start - timedelta(seconds=1))
+        self.makeIndex(self.finish)
+        self.assertLiveAt([old, new], self.finish)
+        self.assertLiveAt([old], self.change)
+
+    def test_live_at_without_index_dates(self):
+        # Suites without dated index records use the publication dates.
+        superseded = self.makePublications(
+            self.start, PackagePublishingStatus.SUPERSEDED, self.change
+        )
+        published = self.makePublications(self.change)
+        self.assertLiveAt([superseded], self.start)
+        self.assertLiveAt([published], self.finish)
+        self.assertLiveAt([], self.start - timedelta(seconds=1))
+        self.makeIndex(None)
+        self.assertLiveAt([published], self.finish)
+        self.makeIndex(self.start)
+        self.assertLiveAt([superseded], self.finish)
+
+    def test_live_at_ignores_unpublished_pockets(self):
+        archive = self.factory.makeArchive(
+            distribution=self.archive.distribution
+        )
+        source = self.factory.makeSourcePackagePublishingHistory(
+            archive=archive,
+            distroseries=self.series,
+            pocket=PackagePublishingPocket.UPDATES,
+            status=PackagePublishingStatus.PUBLISHED,
+        )
+        removeSecurityProxy(source).datepublished = self.start
+        self.assertContentEqual(
+            [], archive.getPublishedSources(live_at=self.finish)
+        )
+
+    def test_live_at_supersession(self):
+        old = self.makePublications(
+            self.start, PackagePublishingStatus.SUPERSEDED, self.change
+        )
+        new = self.makePublications(self.change)
+        self.makeIndex(self.start)
+        self.assertLiveAt([old], self.finish)
+        self.makeIndex(self.change)
+        self.assertLiveAt([new], self.change)
+        self.assertLiveAt([old], self.change - timedelta(seconds=1))
+
+    def test_live_at_deletion_ignores_pool_removal(self):
+        deleted = self.makePublications(
+            self.start, PackagePublishingStatus.DELETED, self.change
+        )
+        for publication in deleted:
+            removeSecurityProxy(publication).dateremoved = self.finish
+        self.makeIndex(self.start)
+        self.assertLiveAt([deleted], self.finish)
+        self.makeIndex(self.change)
+        self.assertLiveAt([], self.change)
+        self.assertLiveAt([deleted], self.start)
+
+    def test_live_at_ignores_non_package_index_refresh(self):
+        old = self.makePublications(
+            self.start, PackagePublishingStatus.SUPERSEDED, self.change
+        )
+        self.makePublications(self.change)
+        self.makeIndex(self.start)
+        for filename in (
+            "Release",
+            "Release.gpg",
+            "InRelease",
+            "Contents-amd64.gz",
+            "Components-amd64.yml.gz",
+            "Translation-en.xz",
+        ):
+            self.makeIndex(self.finish, filename=filename)
+        self.assertLiveAt([old], self.finish)
+
+    def test_live_at_pending_and_inactive_publications(self):
+        published = self.makePublications(self.start)
+        for status in PackagePublishingStatus.items:
+            if status != PackagePublishingStatus.PUBLISHED:
+                self.makePublications(self.start, status)
+        self.makePublications(None)
+        self.makeIndex(self.change)
+        self.assertLiveAt([published], self.finish)
+
+    def test_live_at_per_suite_dates_and_filters(self):
+        # Each suite uses its own index date alongside the other filters.
+        release = self.makePublications(self.start)
+        self.makePublications(self.change)
+        updates = self.makePublications(
+            self.change, pocket=PackagePublishingPocket.UPDATES
+        )
+        self.makeIndex(self.start)
+        self.makeIndex(self.finish, pocket=PackagePublishingPocket.UPDATES)
+        other_arch = self.factory.makeDistroArchSeries(
+            distroseries=self.factory.makeDistroSeries(
+                distribution=self.archive.distribution
+            )
+        )
+        other = self.makePublications(self.change, arch=other_arch)
+        self.makeIndex(self.start, series=other_arch.distroseries)
+        self.assertLiveAt([release, updates], self.finish)
+        self.makeIndex(self.finish, series=other_arch.distroseries)
+        self.assertLiveAt([release, updates, other], self.finish)
+        self.assertLiveAt(
+            [release, updates], self.finish, distroseries=self.series
+        )
+        self.assertLiveAt(
+            [updates], self.finish, pocket=PackagePublishingPocket.UPDATES
+        )
+        self.assertLiveAt(
+            [release],
+            self.finish,
+            distroseries=self.series,
+            pocket=self.pocket,
+        )
+        self.assertContentEqual(
+            [release[0], updates[0]],
+            self.archive.getPublishedSources(
+                live_at=self.finish,
+                distroseries=self.series,
+                pocket=[self.pocket, PackagePublishingPocket.UPDATES],
+            ),
+        )
+        for arch_filter in (
+            self.arch,
+            [self.arch],
+            (self.arch,),
+            {self.arch},
+            iter([self.arch]),
+        ):
+            self.assertContentEqual(
+                [release[1], updates[1]],
+                self.archive.getAllPublishedBinaries(
+                    live_at=self.finish, distroarchseries=arch_filter
+                ),
+            )
+
+    def test_live_at_other_filters_and_eager_loading(self):
+        # Existing filters still select one publication with eager loading.
+        old = self.makePublications(self.start)
+        self.makePublications(self.start)
+        self.makeIndex(self.change)
+        for publication, query, name, version in (
+            (
+                old[0],
+                self.archive.getPublishedSources,
+                old[0].sourcepackagename.name,
+                old[0].sourcepackagerelease.version,
+            ),
+            (
+                old[1],
+                self.archive.getAllPublishedBinaries,
+                old[1].binarypackagename.name,
+                old[1].binarypackagerelease.version,
+            ),
+        ):
+            self.assertContentEqual(
+                [publication],
+                query(
+                    live_at=self.finish,
+                    name=name,
+                    exact_match=True,
+                    version=version,
+                    component_name=publication.component.name,
+                    published_since=self.start,
+                    published_until=self.start,
+                    eager_load=True,
+                ),
+            )
+
+    def test_live_at_status_conflict(self):
+        for query in (
+            self.archive.getPublishedSources,
+            self.archive.getAllPublishedBinaries,
+        ):
+            self.assertRaisesWithContent(
+                IncompatibleArguments,
+                "You cannot specify both 'live_at' and 'status'.",
+                query,
+                live_at=self.finish,
+                status=PackagePublishingStatus.PUBLISHED,
+            )
+
+    def test_live_at_source_binaries(self):
+        # Historical binaries follow index dates, not the active-status flag.
+        source, binary = self.makePublications(
+            self.start, PackagePublishingStatus.SUPERSEDED, self.change
+        )
+        self.makeIndex(self.start)
+        self.makePublications(self.start)
+        self.assertContentEqual([], source.getPublishedBinaries())
+        self.assertContentEqual(
+            [binary], source.getPublishedBinaries(live_at=self.finish)
+        )
+        self.assertContentEqual(
+            [binary],
+            source.getPublishedBinaries(
+                live_at=self.finish, active_binaries_only=False
+            ),
+        )
+        self.assertContentEqual(
+            [],
+            source.getPublishedBinaries(
+                live_at=self.start - timedelta(seconds=1)
+            ),
+        )
+        self.makeIndex(self.change)
+        self.assertContentEqual(
+            [], source.getPublishedBinaries(live_at=self.change)
+        )
 
 
 class TestGetPublicationsInArchive(TestCaseWithFactory):

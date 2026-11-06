@@ -16,13 +16,14 @@ from collections import OrderedDict, defaultdict
 from datetime import datetime, timedelta, timezone
 from fnmatch import fnmatch
 from functools import partial
+from io import BytesIO
 from textwrap import dedent
 from typing import Optional, Sequence, Tuple
 from unittest import mock
 
 import six
 import transaction
-from debian.deb822 import Release
+from debian.deb822 import Packages, Release, Sources
 from fixtures import MonkeyPatch
 from testscenarios import WithScenarios, load_tests_apply_scenarios
 from testtools.matchers import (
@@ -3953,6 +3954,154 @@ class TestFtparchiveIndices(TestArchiveIndices):
 
 class TestUpdateByHash(TestPublisherBase):
     """Tests for handling of by-hash files."""
+
+    def assertLiveAtMatchesIndexes(self, live_at):
+        # Compare query results with the snapshot's Sources and Packages.
+        archive = self.ubuntutest.main_archive
+        series = self.breezy_autotest
+        archive_files = getUtility(IArchiveFileSet)
+        for path, parser, publications, release_attribute in (
+            (
+                "main/source/Sources.gz",
+                Sources,
+                archive.getPublishedSources(
+                    live_at=live_at,
+                    distroseries=series,
+                    pocket=RELEASE,
+                    component_name="main",
+                ),
+                "sourcepackagerelease",
+            ),
+            (
+                "main/binary-i386/Packages.gz",
+                Packages,
+                archive.getAllPublishedBinaries(
+                    live_at=live_at,
+                    distroarchseries=series.getDistroArchSeries("i386"),
+                    pocket=RELEASE,
+                    component_name="main",
+                ),
+                "binarypackagerelease",
+            ),
+        ):
+            archive_file = archive_files.getByArchive(
+                archive,
+                path="dists/%s/%s" % (series.name, path),
+                live_at=live_at,
+            ).one()
+            self.assertIsNotNone(archive_file)
+            library_file = archive_file.library_file
+            library_file.open()
+            try:
+                contents = gzip.decompress(library_file.read())
+            finally:
+                library_file.close()
+            expected = {
+                (paragraph["Package"], paragraph["Version"])
+                for paragraph in parser.iter_paragraphs(
+                    BytesIO(contents), use_apt_pkg=False
+                )
+            }
+            actual = set()
+            for publication in publications:
+                release = getattr(publication, release_attribute)
+                package_name = (
+                    release.sourcepackagename.name
+                    if parser is Sources
+                    else release.binarypackagename.name
+                )
+                actual.add((package_name, release.version))
+            self.assertEqual(expected, actual)
+
+    def checkLiveAtAcrossPublisherRuns(self, index_writer):
+        # Queries match indexes through replacement, refresh and deletion.
+        self.breezy_autotest.publish_by_hash = True
+        archive = self.ubuntutest.main_archive
+        publisher = Publisher(
+            self.logger, self.config, self.disk_pool, archive
+        )
+        source = self.getPubSource(
+            sourcename="live-at", version="1", filecontent=b"Source: live-at\n"
+        )
+        self.getPubBinaries(pub_source=source, binaryname="live-at-bin")
+
+        def finish_run():
+            getattr(publisher, index_writer)(False)
+            self.layer.commit()
+            publisher.D_writeReleaseFiles(False)
+            self.layer.commit()
+            return datetime.now(timezone.utc)
+
+        publisher.A_publish(False)
+        publisher.B_dominate(False)
+        snapshots = [finish_run()]
+        self.assertEqual(
+            1,
+            archive.getPublishedSources(
+                live_at=snapshots[0],
+                distroseries=self.breezy_autotest,
+                pocket=RELEASE,
+                name="live-at",
+                exact_match=True,
+            ).count(),
+        )
+        self.assertNotEqual(
+            0,
+            archive.getAllPublishedBinaries(
+                live_at=snapshots[0],
+                distroseries=self.breezy_autotest,
+                pocket=RELEASE,
+                name="live-at-bin",
+                exact_match=True,
+            ).count(),
+        )
+
+        replacement = self.getPubSource(
+            sourcename="live-at", version="2", filecontent=b"Source: live-at\n"
+        )
+        binaries = self.getPubBinaries(
+            pub_source=replacement, binaryname="live-at-bin"
+        )
+        publisher.A_publish(False)
+        publisher.B_dominate(False)
+        self.layer.commit()
+        snapshots.append(datetime.now(timezone.utc))
+        snapshots.append(finish_run())
+
+        suites = [
+            series.getSuite(pocket)
+            for series in archive.distribution.series
+            for pocket in archive.getPockets()
+        ]
+        index_dates = getUtility(IArchiveFileSet).getIndexDates(
+            archive, UTC_NOW, suites
+        )
+        publisher.D_writeReleaseFiles(True)
+        self.layer.commit()
+        snapshots.append(datetime.now(timezone.utc))
+        self.assertEqual(
+            index_dates,
+            getUtility(IArchiveFileSet).getIndexDates(
+                archive, UTC_NOW, suites
+            ),
+        )
+
+        replacement.requestDeletion(self.person, "Removed from indexes")
+        for binary in binaries:
+            binary.requestDeletion(self.person, "Removed from indexes")
+        self.layer.commit()
+        snapshots.append(datetime.now(timezone.utc))
+        publisher.A2_markPocketsWithDeletionsDirty()
+        snapshots.append(finish_run())
+
+        for live_at in snapshots:
+            self.assertLiveAtMatchesIndexes(live_at)
+
+    def test_live_at_matches_indexes(self):
+        self.checkLiveAtAcrossPublisherRuns("C_writeIndexes")
+
+    def test_live_at_matches_direct_indexes(self):
+        self.checkLiveAtAcrossPublisherRuns("C_doDirectIndexes")
 
     def setUpMockTime(self):
         """Start simulating the advance of time in the publisher."""

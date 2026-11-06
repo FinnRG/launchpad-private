@@ -4,6 +4,7 @@
 __all__ = [
     "BinaryPackagePublishingHistory",
     "get_current_source_releases",
+    "get_live_at_clauses",
     "makePoolPath",
     "PublishingSet",
     "SourcePackagePublishingHistory",
@@ -60,8 +61,9 @@ from lp.services.database.constants import UTC_NOW
 from lp.services.database.decoratedresultset import DecoratedResultSet
 from lp.services.database.enumcol import DBEnum
 from lp.services.database.interfaces import IPrimaryStore, IStore
+from lp.services.database.sqlbase import get_transaction_timestamp
 from lp.services.database.stormbase import StormBase
-from lp.services.database.stormexpr import IsDistinctFrom
+from lp.services.database.stormexpr import IsDistinctFrom, Values
 from lp.services.librarian.browser import ProxiedLibraryFileAlias
 from lp.services.librarian.model import LibraryFileAlias, LibraryFileContent
 from lp.services.propertycache import cachedproperty, get_property_cache
@@ -78,6 +80,7 @@ from lp.soyuz.enums import (
     PackageUploadStatus,
 )
 from lp.soyuz.event import BinaryPackagePublishedEvent
+from lp.soyuz.interfaces.archivefile import IArchiveFileSet
 from lp.soyuz.interfaces.binarypackagebuild import (
     BuildSetStatus,
     IBinaryPackageBuildSet,
@@ -110,6 +113,122 @@ from lp.soyuz.model.distroarchseries import DistroArchSeries
 from lp.soyuz.model.files import BinaryPackageFile, SourcePackageReleaseFile
 from lp.soyuz.model.section import Section
 from lp.soyuz.model.sourcepackagerelease import SourcePackageRelease
+
+
+def _live_clauses(pub_class, date):
+    """Restrict publications to those live in the indexes written at `date`.
+
+    Superseded and deleted rows without a supersession date are left out,
+    since their time in the indexes is unknown.
+    """
+    return [
+        pub_class.status.is_in(
+            (
+                PackagePublishingStatus.PUBLISHED,
+                PackagePublishingStatus.SUPERSEDED,
+                PackagePublishingStatus.DELETED,
+            )
+        ),
+        pub_class.datepublished <= date,
+        Or(
+            And(
+                pub_class.datesuperseded == None,
+                pub_class.status == PackagePublishingStatus.PUBLISHED,
+            ),
+            pub_class.datesuperseded > date,
+        ),
+    ]
+
+
+def get_live_at_clauses(
+    pub_class, archive, live_at, distroseries=None, pocket=None
+):
+    """Restrict publications to those in the archive's indexes at `live_at`.
+
+    Each suite is checked at the time its package indexes were last
+    recorded at or before `live_at`.  Suites without such a record fall back
+    to the publication dates at `live_at`.
+
+    When `distroseries` and a single `pocket` are given, the caller must
+    also filter on them; only the dates are compared here.
+    """
+    if live_at is UTC_NOW:
+        live_at = get_transaction_timestamp(IStore(pub_class))
+    elif live_at.tzinfo is None:
+        live_at = live_at.replace(tzinfo=timezone.utc)
+    else:
+        live_at = live_at.astimezone(timezone.utc)
+    if pocket is None:
+        pockets = archive.getPockets()
+    else:
+        try:
+            pockets = tuple(pocket)
+        except TypeError:
+            pockets = (pocket,)
+    all_series = (
+        [distroseries]
+        if distroseries is not None
+        else archive.distribution.series
+    )
+    suites = {
+        (series.id, item.value): series.getSuite(item)
+        for series in all_series
+        for item in pockets
+    }
+    if not suites:
+        return [False]
+    index_dates = getUtility(IArchiveFileSet).getIndexDates(
+        archive, live_at, suites.values()
+    )
+    if distroseries is not None and len(pockets) == 1:
+        (suite,) = suites.values()
+        return _live_clauses(pub_class, index_dates.get(suite, live_at))
+    dates = {
+        key: index_dates.get(suite, live_at).replace(tzinfo=None)
+        for key, suite in suites.items()
+    }
+    if pub_class is BinaryPackagePublishingHistory:
+        # Keying on the architecture lets the join use the publication's
+        # own columns instead of going through `DistroArchSeries`.
+        context_name, context_column = (
+            "distroarchseries",
+            pub_class.distroarchseries_id,
+        )
+        das_series = IStore(DistroArchSeries).find(
+            (DistroArchSeries.id, DistroArchSeries.distroseries_id),
+            DistroArchSeries.distroseries_id.is_in(
+                {series_id for series_id, _ in suites}
+            ),
+        )
+        rows = [
+            (das_id, item.value, dates[series_id, item.value])
+            for das_id, series_id in das_series
+            for item in pockets
+        ]
+    else:
+        context_name, context_column = (
+            "distroseries",
+            pub_class.distroseries_id,
+        )
+        rows = [
+            (series_id, pocket_value, date)
+            for (series_id, pocket_value), date in dates.items()
+        ]
+    if not rows:
+        return [False]
+    dates_table = Values(
+        "index_dates",
+        [
+            (context_name, "integer"),
+            ("pocket", "integer"),
+            ("date", "timestamp without time zone"),
+        ],
+        rows,
+    )
+    return _live_clauses(pub_class, SQL("index_dates.date")) + [
+        pub_class.pocket == SQL("index_dates.pocket", tables=[dates_table]),
+        context_column == SQL("index_dates.%s" % context_name),
+    ]
 
 
 def makePoolPath(source_name: str, component_name: str) -> str:
@@ -403,12 +522,25 @@ class SourcePackagePublishingHistory(StormBase, ArchivePublisherBase):
             return None
         return channel_list_to_string(*self._channel)
 
-    def getPublishedBinaries(self, active_binaries_only=True):
+    def getPublishedBinaries(self, active_binaries_only=True, live_at=None):
         """See `ISourcePackagePublishingHistory`."""
         publishing_set = getUtility(IPublishingSet)
         result_set = publishing_set.getBinaryPublicationsForSources(
-            self, active_binaries_only=active_binaries_only
+            self,
+            active_binaries_only=(
+                active_binaries_only if live_at is None else False
+            ),
         )
+        if live_at is not None:
+            result_set = removeSecurityProxy(result_set).find(
+                *get_live_at_clauses(
+                    BinaryPackagePublishingHistory,
+                    self.archive,
+                    live_at,
+                    distroseries=self.distroseries,
+                    pocket=self.pocket,
+                )
+            )
         return DecoratedResultSet(result_set, result_decorator=itemgetter(1))
 
     def getBuiltBinaries(self, want_files=False):

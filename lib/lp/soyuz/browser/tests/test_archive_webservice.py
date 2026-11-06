@@ -2524,6 +2524,113 @@ class TestBinaryPackageDetails(PackageListingTestCase):
         )
 
 
+class TestPublicationsLiveAtWebservice(TestCaseWithFactory):
+    layer = DatabaseFunctionalLayer
+
+    def setUp(self):
+        super().setUp()
+        self.archive = self.factory.makeArchive()
+        self.series = self.factory.makeDistroSeries(
+            distribution=self.archive.distribution
+        )
+        arch = self.factory.makeDistroArchSeries(distroseries=self.series)
+        self.start = datetime.now(timezone.utc) - timedelta(days=2)
+        self.change = self.start + timedelta(days=1)
+        self.now = self.change + timedelta(hours=12)
+        self.source = self.factory.makeSourcePackagePublishingHistory(
+            archive=self.archive,
+            distroseries=self.series,
+            pocket=PackagePublishingPocket.RELEASE,
+            status=PackagePublishingStatus.SUPERSEDED,
+        )
+        self.binary = self.factory.makeBinaryPackagePublishingHistory(
+            archive=self.archive,
+            distroarchseries=arch,
+            source_package_release=self.source.sourcepackagerelease,
+            pocket=PackagePublishingPocket.RELEASE,
+            status=PackagePublishingStatus.SUPERSEDED,
+            architecturespecific=True,
+        )
+        for publication in (self.source, self.binary):
+            naked = removeSecurityProxy(publication)
+            naked.datepublished = self.start
+            naked.datesuperseded = self.change
+        self.index = self.factory.makeArchiveFile(
+            archive=self.archive,
+            container="release:" + self.series.name,
+            path="dists/%s/main/source/Sources.gz" % self.series.name,
+            library_file=self.factory.makeLibraryFileAlias(db_only=True),
+        )
+        removeSecurityProxy(self.index).date_created = self.start
+        self.person = self.archive.owner
+        self.person_url = api_url(self.person)
+        self.archive_url = api_url(self.archive)
+        self.source_url = api_url(self.source)
+        self.ws = webservice_for_person(
+            self.person, default_api_version="devel"
+        )
+
+    def operations(self):
+        return (
+            (self.archive_url, "getPublishedSources"),
+            (self.archive_url, "getPublishedBinaries"),
+            (self.source_url, "getPublishedBinaries"),
+        )
+
+    def test_live_at_devel(self):
+        # All three operations use index dates rather than current status.
+        for url, operation in self.operations():
+            response = self.ws.named_get(
+                url, operation, live_at=self.now.isoformat()
+            )
+            self.assertEqual(200, response.status)
+            self.assertEqual(1, response.jsonBody()["total_size"])
+            self.assertEqual(
+                "Superseded", response.jsonBody()["entries"][0]["status"]
+            )
+        removeSecurityProxy(self.index).date_created = self.change
+        for url, operation in self.operations():
+            response = self.ws.named_get(
+                url, operation, live_at=self.now.isoformat()
+            )
+            self.assertEqual(200, response.status)
+            self.assertEqual(0, response.jsonBody()["total_size"])
+
+    def test_live_at_status_conflict(self):
+        for operation, status in (
+            ("getPublishedSources", ["Published"]),
+            ("getPublishedBinaries", "Published"),
+        ):
+            response = self.ws.named_get(
+                self.archive_url,
+                operation,
+                status=status,
+                live_at=self.now.isoformat(),
+            )
+            self.assertEqual(400, response.status)
+            self.assertIn(
+                b"You cannot specify both 'live_at' and 'status'.",
+                response.body,
+            )
+
+    def test_live_at_parameter_reference_types(self):
+        for version in ("beta", "devel"):
+            ws = webservice_for_person(
+                self.person, default_api_version=version
+            )
+            for operation, parameters in (
+                ("getPublishedSources", {"packageset": self.person_url}),
+                (
+                    "getPublishedBinaries",
+                    {"distro_arch_series": self.person_url},
+                ),
+            ):
+                response = ws.named_get(
+                    self.archive_url, operation, **parameters
+                )
+                self.assertEqual(400, response.status)
+
+
 class TestRemoveCopyNotification(TestCaseWithFactory):
     """Test removeCopyNotification."""
 

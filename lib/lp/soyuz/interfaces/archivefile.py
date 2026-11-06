@@ -85,6 +85,18 @@ class IArchiveFile(Interface):
 class IArchiveFileSet(Interface):
     """Bulk operations on files in an archive."""
 
+    def getIndexDates(archive, live_at, suites):
+        """Return when each suite's package indexes were last recorded.
+
+        :param archive: The archive containing the indexes.
+        :param live_at: A datetime or `UTC_NOW`; later records are ignored.
+        :param suites: An iterable of suite names.
+        :return: A mapping from suite names to datetimes. Suites without a
+            dated record are omitted. Only `Sources` and `Packages` files
+            count, since other files can change without the package indexes
+            being rebuilt.
+        """
+
     def new(archive, container, path, library_file):
         """Create a new `IArchiveFile`.
 

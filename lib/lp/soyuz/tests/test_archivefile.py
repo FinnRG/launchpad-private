@@ -35,6 +35,65 @@ def read_library_file(library_file):
 class TestArchiveFile(TestCaseWithFactory):
     layer = LaunchpadZopelessLayer
 
+    def test_getIndexDates(self):
+        # Only dated package indexes in the requested suites set the cutoff.
+        archive = self.factory.makeArchive()
+        now = get_transaction_timestamp(Store.of(archive))
+        old = now - timedelta(days=2)
+        recent = now - timedelta(days=1)
+        for container, path, date in (
+            ("release:jammy", "dists/jammy/main/source/Sources.gz", old),
+            ("release:jammy", "dists/jammy/main/source/Sources.gz", recent),
+            (
+                "release:jammy-updates",
+                "dists/jammy-updates/main/binary-amd64/Packages.xz",
+                old,
+            ),
+            ("release:jammy-updates", "dists/jammy-updates/Contents.gz", now),
+            (
+                "release:jammy-updates",
+                "dists/jammy-updates/main/dep11/Components-amd64.yml.gz",
+                now,
+            ),
+            ("release:focal", "dists/focal/main/source/Sources.gz", None),
+            ("other:jammy", "dists/jammy/main/source/Other.gz", now),
+            ("release:empty", "dists/empty/Release", now),
+            ("release:jammy", "dists/jammy/Release", now),
+            ("release:jammy", "dists/jammy/Release.gpg", now),
+            ("release:jammy", "dists/jammy/InRelease", now),
+            ("release:jammy", "dists/jammy/main/binary-amd64/Release", now),
+        ):
+            archive_file = self.factory.makeArchiveFile(
+                archive=archive, container=container, path=path
+            )
+            removeSecurityProxy(archive_file).date_created = date
+            if date == old and container == "release:jammy":
+                removeSecurityProxy(archive_file).date_superseded = recent
+        self.factory.makeArchiveFile(
+            container="release:jammy", path="dists/jammy/Contents.gz"
+        )
+        archive_file_set = getUtility(IArchiveFileSet)
+        suites = ["jammy", "jammy-updates", "focal", "empty", "unknown"]
+        self.assertEqual(
+            {"jammy": recent, "jammy-updates": old},
+            archive_file_set.getIndexDates(archive, UTC_NOW, suites),
+        )
+        self.assertEqual(
+            {"jammy": old, "jammy-updates": old},
+            archive_file_set.getIndexDates(archive, old, suites),
+        )
+        self.assertEqual(
+            {},
+            archive_file_set.getIndexDates(
+                archive, old - timedelta(days=1), suites
+            ),
+        )
+        self.assertEqual(
+            {"jammy": recent},
+            archive_file_set.getIndexDates(archive, now, ["jammy"]),
+        )
+        self.assertEqual({}, archive_file_set.getIndexDates(archive, now, []))
+
     def test_new(self):
         archive = self.factory.makeArchive()
         library_file = self.factory.makeLibraryFileAlias()

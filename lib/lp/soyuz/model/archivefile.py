@@ -12,7 +12,17 @@ import os.path
 import re
 from datetime import timezone
 
-from storm.locals import DateTime, Int, Or, Reference, Unicode
+from storm.locals import (
+    SQL,
+    And,
+    DateTime,
+    Desc,
+    Int,
+    Or,
+    Reference,
+    Select,
+    Unicode,
+)
 from zope.component import getUtility
 from zope.interface import implementer
 
@@ -22,10 +32,14 @@ from lp.services.database.constants import UTC_NOW
 from lp.services.database.decoratedresultset import DecoratedResultSet
 from lp.services.database.interfaces import IPrimaryStore, IStore
 from lp.services.database.stormbase import StormBase
-from lp.services.database.stormexpr import RegexpMatch
+from lp.services.database.stormexpr import ColumnSelect, RegexpMatch, Values
 from lp.services.librarian.interfaces import ILibraryFileAliasSet
 from lp.services.librarian.model import LibraryFileAlias, LibraryFileContent
 from lp.soyuz.interfaces.archivefile import IArchiveFile, IArchiveFileSet
+
+# Must stay identical to the predicate of
+# archivefile__archive__container__date_created__index_files__idx.
+PACKAGE_INDEX_PATH_PATTERN = r"/(Packages|Sources)(\.(gz|bz2|xz))?$"
 
 
 def _now():
@@ -91,6 +105,36 @@ class ArchiveFile(StormBase):
 @implementer(IArchiveFileSet)
 class ArchiveFileSet:
     """See `IArchiveFileSet`."""
+
+    @staticmethod
+    def getIndexDates(archive, live_at, suites):
+        """See `IArchiveFileSet`."""
+        containers = Values(
+            "suite_containers",
+            [("container", "text")],
+            [("release:" + suite,) for suite in suites],
+        )
+        if not containers.values:
+            return {}
+        container = SQL("suite_containers.container", tables=[containers])
+        latest = Select(
+            ArchiveFile.date_created,
+            tables=ArchiveFile,
+            where=And(
+                ArchiveFile.archive == archive,
+                ArchiveFile.container == SQL("suite_containers.container"),
+                ArchiveFile.date_created <= live_at,
+                RegexpMatch(ArchiveFile.path, PACKAGE_INDEX_PATH_PATTERN),
+            ),
+            order_by=Desc(ArchiveFile.date_created),
+            limit=1,
+        )
+        rows = IStore(ArchiveFile).find((container, ColumnSelect(latest)))
+        return {
+            container[len("release:") :]: date.replace(tzinfo=timezone.utc)
+            for container, date in rows
+            if date is not None
+        }
 
     @staticmethod
     def new(archive, container, path, library_file):

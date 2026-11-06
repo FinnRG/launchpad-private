@@ -515,14 +515,24 @@ class ISourcePackagePublishingHistoryPublic(IPublishingView):
     @operation_parameters(
         active_binaries_only=Bool(
             title=_("Only return active publications"), required=False
-        )
+        ),
+        live_at=Datetime(
+            title=_("Live at"),
+            description=_(
+                "Return binaries listed in this source's suite indexes at "
+                "this time, as served by the snapshot service. Overrides "
+                "active_binaries_only. If the suite has no recorded index "
+                "dates, the publication dates are used instead."
+            ),
+            required=False,
+        ),
     )
     # Really IBinaryPackagePublishingHistory, patched in
     # lp.soyuz.interfaces.webservice.
     @operation_returns_collection_of(Interface)
     @export_read_operation()
     @operation_for_version("beta")
-    def getPublishedBinaries(active_binaries_only=True):
+    def getPublishedBinaries(active_binaries_only=True, live_at=None):
         """Return all resulted `IBinaryPackagePublishingHistory`.
 
         Follow the build record and return every binary publishing record
@@ -533,6 +543,8 @@ class ISourcePackagePublishingHistoryPublic(IPublishingView):
 
         :param active_binaries_only: If True, only return PUBLISHED or
             PENDING publishing records.
+        :param live_at: If given, return binaries in the published indexes
+            at this time instead of filtering by active status.
         :return: a list with all corresponding publishing records.
         """
 
