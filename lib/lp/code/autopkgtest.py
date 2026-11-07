@@ -171,11 +171,14 @@ class UbuntuAutopkgtestAdapter:
         read_session=None,
         http_proxy=None,
         ca_certificates_path=None,
+        user_agent=None,
     ):
         if service_url is None:
             service_url = config.autopkgtest.service_url
         if results_url is None:
             results_url = config.autopkgtest.results_url
+        if user_agent is None:
+            user_agent = config.autopkgtest.user_agent
         for url in (service_url, results_url):
             parsed = urlparse(url)
             if (
@@ -200,6 +203,7 @@ class UbuntuAutopkgtestAdapter:
         self.submit_session.trust_env = False
         self.read_session.trust_env = False
         for session in (self.submit_session, self.read_session):
+            session.headers.update({"User-Agent": user_agent})
             if http_proxy:
                 session.proxies = {"http": http_proxy, "https": http_proxy}
             if ca_certificates_path:
@@ -219,6 +223,7 @@ class UbuntuAutopkgtestAdapter:
             timeout=(settings.connect_timeout, settings.read_timeout),
             http_proxy=config.launchpad.http_proxy,
             ca_certificates_path=config.launchpad.ca_certificates_path,
+            user_agent=settings.user_agent,
         )
 
     def _get(self, session, url, params=None, cookies=None):
