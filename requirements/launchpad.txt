@@ -94,7 +94,8 @@ lazr.jobrunner==1.1
 lazr.lifecycle==1.2.1
 lazr.restful==2.0.2
 lazr.restfulclient==0.14.6
-lazr.sshserver==0.1.15+lp1
+# 0.1.15+lp1 requires Twisted 20.3.0+lp11, not Twisted 24.
+lazr.sshserver==0.1.13
 lazr.uri==1.0.6
 lxml==6.1.0
 loggerhead==2.0.1
