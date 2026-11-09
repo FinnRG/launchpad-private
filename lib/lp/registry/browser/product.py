@@ -469,10 +469,13 @@ class ProductEditLinksMixin(StructuralSubscriptionMenuMixin):
         summary = "Enable tracking of feature planning."
         return Link("+configure-blueprints", text, summary, icon="edit")
 
-    @enabled_with_permission("launchpad.Edit")
+    @enabled_with_permission("launchpad.View")
     def access_tokens(self):
         text = "Manage access tokens"
-        return Link("+access-tokens", text, icon="edit")
+        link = Link("+access-tokens", text, icon="edit")
+        if self.user is None:
+            link.enabled = False
+        return link
 
     @enabled_with_permission("launchpad.Edit")
     def branding(self):

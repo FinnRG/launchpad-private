@@ -132,6 +132,7 @@ from lp.registry.model.accesspolicy import (
 from lp.registry.model.person import Person
 from lp.registry.model.teammembership import TeamParticipation
 from lp.rocks.interfaces.rockrecipe import IRockRecipeSet
+from lp.services.auth.interfaces import IAccessTokenSet
 from lp.services.auth.model import AccessTokenTargetMixin
 from lp.services.config import config
 from lp.services.database import bulk
@@ -2211,7 +2212,9 @@ class GitRepository(
         self.grants.remove()
         self.rules.remove()
         removeSecurityProxy(
-            self.getAccessTokens(include_expired=True)
+            getUtility(IAccessTokenSet).findByTarget(
+                self, include_expired=True
+            )
         ).remove()
         getUtility(IRevisionStatusReportSet).deleteForRepository(self)
         getUtility(ICIBuildSet).deleteByGitRepository(self)

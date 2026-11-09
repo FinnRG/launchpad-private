@@ -36,7 +36,7 @@
     <browser:page
         for="lp.services.auth.interfaces.IAccessTokenTarget"
         name="+access-tokens"
-        permission="launchpad.Edit"
+        permission="launchpad.View"
         class="lp.services.auth.browser.AccessTokensView"
         template="templates/accesstokentarget-access-tokens.pt" />
 

@@ -9,7 +9,11 @@ __all__ = [
 
 from lazr.restful.interface import copy_field, use_template
 from zope.component import getUtility
+from zope.formlib.form import FormFields
 from zope.interface import Interface
+from zope.schema import Choice, List
+from zope.schema.vocabulary import SimpleVocabulary
+from zope.security.interfaces import Unauthorized
 
 from lp import _
 from lp.app.browser.launchpadform import LaunchpadFormView, action
@@ -18,12 +22,14 @@ from lp.app.widgets.date import DateTimeWidget
 from lp.app.widgets.itemswidgets import LabeledMultiCheckBoxWidget
 from lp.code.interfaces.gitrepository import IGitRepository
 from lp.registry.interfaces.product import IProduct
+from lp.services.auth.enums import AccessTokenScope
 from lp.services.auth.interfaces import (
     IAccessToken,
     IAccessTokenSet,
     IAccessTokenTarget,
 )
 from lp.services.propertycache import cachedproperty
+from lp.services.webapp.authorization import check_permission
 from lp.services.webapp.publisher import canonical_url
 
 
@@ -54,6 +60,35 @@ class AccessTokensView(LaunchpadFormView):
         return "Personal access tokens for %s" % self.context.display_name
 
     page_title = "Personal access tokens"
+
+    def initialize(self):
+        if self.user is None:
+            raise Unauthorized("Please log in to manage access tokens.")
+        super().initialize()
+
+    def setUpFields(self):
+        super().setUpFields()
+        if not check_permission("launchpad.Edit", self.context):
+            # People who can't edit the target can't push to it, so don't
+            # offer the push scope.
+            terms = [
+                AccessTokenScope.getTermByToken(item.title)
+                for item in AccessTokenScope.items
+                if item != AccessTokenScope.REPOSITORY_PUSH
+            ]
+            field = List(
+                __name__="scopes",
+                title=IAccessToken["scopes"].title,
+                description=IAccessToken["scopes"].description,
+                value_type=Choice(vocabulary=SimpleVocabulary(terms)),
+                required=True,
+            )
+            self.form_fields = FormFields(
+                *(
+                    field if ff.__name__ == "scopes" else ff.field
+                    for ff in self.form_fields
+                )
+            )
 
     @property
     def context_type(self):

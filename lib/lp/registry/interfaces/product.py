@@ -118,10 +118,7 @@ from lp.registry.interfaces.role import (
     IHasDrivers,
     IHasOwner,
 )
-from lp.services.auth.interfaces import (
-    IAccessTokenTarget,
-    IAccessTokenTargetEdit,
-)
+from lp.services.auth.interfaces import IAccessTokenTarget
 from lp.services.fields import (
     Description,
     IconImageUpload,
@@ -1108,7 +1105,6 @@ class IProductView(
 class IProductEditRestricted(
     IOfficialBugTagTargetRestricted,
     IWebhookTarget,
-    IAccessTokenTargetEdit,
 ):
     """`IProduct` properties which require launchpad.Edit permission."""
 
