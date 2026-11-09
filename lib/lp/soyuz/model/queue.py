@@ -1449,41 +1449,9 @@ class PackageUploadSource(StormBase):
 
     def getSourceAncestriesForDiffs(self):
         """See `IPackageUploadSource`."""
-        primary_archive = self.packageupload.distroseries.main_archive
-        distroseries = self.packageupload.distroseries
-        archives = [primary_archive]
-        if self.packageupload.archive != primary_archive:
-            archives.append(self.packageupload.archive)
-
-        ancestries = []
-        seen_releases = set()
-        for archive in archives:
-            ancestry = self._findLatestPublication(archive, distroseries)
-            if ancestry is None and archive == primary_archive:
-                # The source is new to this series, so look for it in the
-                # release pocket of every series instead.
-                ancestry = self._findLatestPublication(
-                    archive, None, PackagePublishingPocket.RELEASE
-                )
-            if ancestry is None:
-                continue
-            # The same source can be published in both archives, for
-            # instance after a copy out of the distribution.
-            if ancestry.sourcepackagerelease_id in seen_releases:
-                continue
-            seen_releases.add(ancestry.sourcepackagerelease_id)
-            ancestries.append(ancestry)
-
-        return ancestries
-
-    def _findLatestPublication(self, archive, distroseries, pocket=None):
-        """Return the newest publication of our source, or None."""
-        return archive.getPublishedSources(
-            name=self.sourcepackagerelease.name,
-            distroseries=distroseries,
-            pocket=pocket,
-            exact_match=True,
-        ).first()
+        return self.packageupload.archive.getSourceAncestriesForDiffs(
+            self.sourcepackagerelease.name, self.packageupload.distroseries
+        )
 
     def verifyBeforeAccept(self):
         """See `IPackageUploadSource`."""
