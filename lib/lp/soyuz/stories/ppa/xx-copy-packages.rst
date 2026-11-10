@@ -293,7 +293,7 @@ there is actually a newer version already available in hoary.
 Expanding the details area, James can see that the source copied is
 indeed the same by checking the changelog, also that the binaries
 were not copied and instead a build was already created in his PPA
-context.
+context. A diff from the newer version is pending.
 
     >>> pmount_pub_id = getPPAPubIDsFor("jblack", "pmount")[0]
     >>> expander_url = jblack_browser.getLink(
@@ -311,6 +311,8 @@ context.
       * Fix warty (Warty Ubuntu #1)
       -- Sample Person &lt;test@canonical.com&gt;
       Tue, 7 Feb 2006 12:10:08 +0300
+    Available diffs
+      diff from 0.1-2 to 0.1-1 (pending)
     Builds
       i386
     Package files
