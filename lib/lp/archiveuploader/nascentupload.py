@@ -268,9 +268,8 @@ class NascentUpload:
             elif isinstance(uploaded_file, SourceUploadFile):
                 files_sourceful = True
             elif isinstance(uploaded_file, BuildInfoFile):
-                files_sourceful = files_sourceful or uploaded_file.is_sourceful
-                if uploaded_file.is_binaryful:
-                    files_binaryful = files_binaryful or True
+                # Build information may describe files not being uploaded.
+                pass
             else:
                 # This is already caught in ChangesFile.__init__
                 raise AssertionError("Unknown uploaded file type.")

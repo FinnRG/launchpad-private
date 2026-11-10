@@ -6,8 +6,10 @@
 from testtools import TestCase
 from testtools.matchers import MatchesStructure
 
+from lp.archiveuploader.buildinfofile import BuildInfoFile
 from lp.archiveuploader.changesfile import determine_file_class_and_name
 from lp.archiveuploader.nascentupload import NascentUpload
+from lp.archiveuploader.nascentuploadfile import BaseBinaryUploadFile
 from lp.archiveuploader.tests import datadir, getPolicy
 from lp.archiveuploader.uploadpolicy import ArchiveUploadType
 from lp.services.log.logger import DevNullLogger
@@ -139,4 +141,80 @@ class TestNascentUpload(TestCase):
             "mismatch. 2ca33cf32a45852c62b465aaf9063fb7deb31725 != "
             "91556113ad38eb35d2fe03d27ae646e0ed487a3d",
             upload.rejection_message,
+        )
+
+
+class TestBuildInfoConsistency(TestCase):
+    layer = ZopelessDatabaseLayer
+
+    def makeUpload(self, fixture, architecture):
+        policy = getPolicy(name="sync", distro="ubuntu", distroseries="hoary")
+        upload = NascentUpload.from_changesfile_path(
+            datadir("suite/%s/bar_1.0-1_%s.changes" % (fixture, architecture)),
+            policy,
+            DevNullLogger(),
+        )
+        self.assertEqual([], list(upload.changes.parseChanges()))
+        self.assertEqual([], list(upload.changes.processFiles()))
+        return upload
+
+    def test_source_upload_with_binary_buildinfo_accepted(self):
+        upload = self.makeUpload("bar_1.0-1_buildinfo", "source")
+        binary_upload = self.makeUpload("bar_1.0-1_binary_buildinfo", "i386")
+        upload.changes.files = [
+            file
+            for file in upload.changes.files
+            if not isinstance(file, BuildInfoFile)
+        ] + [
+            file
+            for file in binary_upload.changes.files
+            if isinstance(file, BuildInfoFile)
+        ]
+        upload._check_overall_consistency()
+        self.assertEqual([], upload.rejections)
+        self.assertTrue(upload.sourceful)
+        self.assertFalse(upload.binaryful)
+
+    def test_source_upload_with_actual_binaries_rejected(self):
+        upload = self.makeUpload("bar_1.0-1_buildinfo", "source")
+        binary_upload = self.makeUpload("bar_1.0-1_binary_buildinfo", "i386")
+        upload.changes.files.extend(
+            file
+            for file in binary_upload.changes.files
+            if isinstance(file, BaseBinaryUploadFile)
+        )
+        upload._check_overall_consistency()
+        self.assertEqual(
+            [
+                "Mismatch in binaryfulness. (arch) False != (files) True",
+                "One or more files uploaded with specific "
+                "architecture but changes file does not list it.",
+            ],
+            upload.rejections,
+        )
+
+    def test_binary_buildinfo_without_binaries_rejected(self):
+        upload = self.makeUpload("bar_1.0-1_binary_buildinfo", "i386")
+        upload.changes.files = [
+            file
+            for file in upload.changes.files
+            if isinstance(file, BuildInfoFile)
+        ]
+        upload._check_overall_consistency()
+        self.assertEqual(
+            ["Mismatch in binaryfulness. (arch) True != (files) False"],
+            upload.rejections,
+        )
+
+    def test_source_buildinfo_without_source_rejected(self):
+        upload = self.makeUpload("bar_1.0-1_buildinfo", "source")
+        upload.changes.files = [
+            file
+            for file in upload.changes.files
+            if isinstance(file, BuildInfoFile)
+        ]
+        upload._check_overall_consistency()
+        self.assertEqual(
+            ["Mismatch in sourcefulness. (arch) True != (files) False"],
+            upload.rejections,
         )

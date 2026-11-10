@@ -235,6 +235,10 @@ parse the maintainer for them either:
     >>> print(ed_binary_upload.changes.maintainer)
     None
 
+Build information files do not determine whether an upload contains source
+or binary packages.  A source-only upload may include a `.buildinfo` file
+describing locally built binaries without uploading those binaries.
+
 Other ChangesFile information are also checked across the uploads
 files specified. For instance, the changesfile Architecture list line
 should match the files target architectures:
