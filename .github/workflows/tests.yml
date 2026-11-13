@@ -1,0 +1,71 @@
+name: Tests
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      ubuntu-release:
+        description: Ubuntu release for the test container
+        type: choice
+        default: "20.04"
+        options:
+          - "20.04"
+          - "24.04"
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Full suite (Ubuntu ${{ inputs.ubuntu-release || '20.04' }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      UBUNTU_RELEASE: ${{ inputs.ubuntu-release || '20.04' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: canonical/setup-lxd@v0.1.3
+        with:
+          channel: 5.21/stable
+
+      - name: Start a clean Ubuntu container
+        run: |
+          lxc launch "ubuntu:$UBUNTU_RELEASE" launchpad-tests
+          lxc exec launchpad-tests -- cloud-init status --wait
+          lxc exec launchpad-tests -- mkdir -p /home/ubuntu/launchpad
+          git archive HEAD | lxc exec launchpad-tests -- \
+            tar -x -C /home/ubuntu/launchpad
+          tar -c .git | lxc exec launchpad-tests -- \
+            tar -x -C /home/ubuntu/launchpad
+
+      - name: Install dependencies and build test databases
+        run: |
+          set -o pipefail
+          lxc exec launchpad-tests -- bash \
+            /home/ubuntu/launchpad/.github/scripts/setup-tests.sh \
+            2>&1 | tee "$RUNNER_TEMP/setup.log"
+
+      - name: Run the entire test suite
+        run: |
+          set -o pipefail
+          lxc exec launchpad-tests -- \
+            /home/ubuntu/launchpad/utilities/run-as ubuntu \
+            xvfb-run -a bin/test -vvc \
+            2>&1 | tee "$RUNNER_TEMP/tests.log"
+
+      - name: Save test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output
+          path: |
+            ${{ runner.temp }}/setup.log
+            ${{ runner.temp }}/tests.log
+          if-no-files-found: ignore
+
+      - name: Remove the test container
+        if: always()
+        run: lxc delete --force launchpad-tests
