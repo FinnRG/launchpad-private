@@ -48,7 +48,7 @@ defusedxml==0.8.0rc2
 difftacular==0.1
 distro==1.9.0
 dkimpy==1.1.8
-dnspython==2.6.1
+dnspython==2.9.2
 # https://code.launchpad.net/~launchpad/dohq-artifactory/+git/dohq-artifactory/+ref/0.7.630
 # lp1 Fix the version determination code in setup.py.
 dohq-artifactory==0.7.630+lp1
