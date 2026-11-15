@@ -755,6 +755,202 @@ class TestBranchMergeProposals(TestCaseWithFactory):
         self.assertEqual([mp1], list(proposals))
 
 
+class TestMergeProposalPrerequisiteVisibility(TestCaseWithFactory):
+    """Merge proposal queries filter on prerequisite repository visibility.
+
+    A merge proposal whose prerequisite repository is invisible to the user
+    must not be returned, since the security adapter checks all three
+    repositories when the proposal's attributes are accessed.  Conversely,
+    the prerequisite only has to be *visible*: the rest of the collection's
+    filters describe the repositories being merged, not the prerequisite.
+    """
+
+    layer = DatabaseFunctionalLayer
+
+    def setUp(self):
+        TestCaseWithFactory.setUp(self)
+        self.all_repositories = getUtility(IAllGitRepositories)
+
+    def makeProposal(
+        self,
+        prerequisite=True,
+        prerequisite_private=False,
+        source_private=False,
+        target_private=False,
+    ):
+        """Make a merge proposal, controlling each repository's privacy.
+
+        All the repositories are owned by the same person, who is returned
+        along with the proposal so that tests can query as someone who can
+        see the whole proposal.
+        """
+        project = self.factory.makeProduct()
+        owner = self.factory.makePerson()
+
+        def make_ref(private):
+            [ref] = self.factory.makeGitRefs(
+                target=project,
+                owner=owner,
+                information_type=(
+                    InformationType.USERDATA if private else None
+                ),
+            )
+            return ref
+
+        source_ref = make_ref(source_private)
+        target_ref = make_ref(target_private)
+        prerequisite_ref = (
+            make_ref(prerequisite_private) if prerequisite else None
+        )
+        # addLandingTarget checks that the prerequisite is mergeable, and
+        # the events it fires touch all three repositories, so the proposal
+        # has to be created by someone who can see them all.
+        with person_logged_in(owner):
+            proposal = self.factory.makeBranchMergeProposalForGit(
+                registrant=owner,
+                source_ref=source_ref,
+                target_ref=target_ref,
+                prerequisite_ref=prerequisite_ref,
+            )
+            return owner, removeSecurityProxy(proposal)
+
+    # The scoped query, used when getMergeProposals() is called without
+    # arguments.
+
+    def test_scoped_anonymous_excludes_private_prerequisite(self):
+        _, proposal = self.makeProposal(prerequisite_private=True)
+        _, visible_proposal = self.makeProposal()
+        proposals = list(
+            self.all_repositories.visibleByUser(None).getMergeProposals()
+        )
+        self.assertIn(visible_proposal, proposals)
+        self.assertNotIn(proposal, proposals)
+
+    def test_scoped_random_user_excludes_private_prerequisite(self):
+        _, proposal = self.makeProposal(prerequisite_private=True)
+        _, visible_proposal = self.makeProposal()
+        person = self.factory.makePerson()
+        proposals = list(
+            self.all_repositories.visibleByUser(person).getMergeProposals()
+        )
+        self.assertIn(visible_proposal, proposals)
+        self.assertNotIn(proposal, proposals)
+
+    def test_scoped_includes_visible_prerequisite(self):
+        owner, proposal = self.makeProposal(prerequisite_private=True)
+        proposals = list(
+            self.all_repositories.visibleByUser(owner).getMergeProposals()
+        )
+        self.assertIn(proposal, proposals)
+
+    def test_scoped_includes_absent_prerequisite(self):
+        _, proposal = self.makeProposal(prerequisite=False)
+        proposals = list(
+            self.all_repositories.visibleByUser(None).getMergeProposals()
+        )
+        self.assertIn(proposal, proposals)
+
+    def test_scoped_does_not_apply_collection_filters_to_prerequisite(self):
+        # The prerequisite only has to be visible.  A proposal between two
+        # private repositories is still returned by a collection restricted
+        # to private repositories, even though its prerequisite is public.
+        owner, proposal = self.makeProposal(
+            source_private=True, target_private=True
+        )
+        proposals = list(
+            self.all_repositories.visibleByUser(owner)
+            .isPrivate()
+            .getMergeProposals()
+        )
+        self.assertIn(proposal, proposals)
+
+    # The naive query, used when getMergeProposals() is given arguments that
+    # constrain the repositories.
+
+    def test_naive_anonymous_excludes_private_prerequisite(self):
+        _, proposal = self.makeProposal(prerequisite_private=True)
+        proposals = list(
+            self.all_repositories.visibleByUser(None).getMergeProposals(
+                target_repository=proposal.target_git_repository
+            )
+        )
+        self.assertNotIn(proposal, proposals)
+
+    def test_naive_random_user_excludes_private_prerequisite(self):
+        _, proposal = self.makeProposal(prerequisite_private=True)
+        person = self.factory.makePerson()
+        proposals = list(
+            self.all_repositories.visibleByUser(person).getMergeProposals(
+                target_repository=proposal.target_git_repository
+            )
+        )
+        self.assertNotIn(proposal, proposals)
+
+    def test_naive_includes_visible_prerequisite(self):
+        owner, proposal = self.makeProposal(prerequisite_private=True)
+        proposals = list(
+            self.all_repositories.visibleByUser(owner).getMergeProposals(
+                target_repository=proposal.target_git_repository
+            )
+        )
+        self.assertIn(proposal, proposals)
+
+    def test_naive_includes_absent_prerequisite(self):
+        _, proposal = self.makeProposal(prerequisite=False)
+        proposals = list(
+            self.all_repositories.visibleByUser(None).getMergeProposals(
+                target_repository=proposal.target_git_repository
+            )
+        )
+        self.assertIn(proposal, proposals)
+
+    def test_naive_does_not_apply_collection_filters_to_prerequisite(self):
+        owner, proposal = self.makeProposal(
+            source_private=True, target_private=True
+        )
+        proposals = list(
+            self.all_repositories.visibleByUser(owner)
+            .isPrivate()
+            .getMergeProposals(
+                target_repository=proposal.target_git_repository
+            )
+        )
+        self.assertIn(proposal, proposals)
+
+    # getMergeProposalsForReviewer.
+
+    def nominateReviewer(self, proposal, reviewer):
+        with person_logged_in(proposal.registrant):
+            proposal.nominateReviewer(reviewer, reviewer)
+
+    def test_reviewer_excludes_private_prerequisite(self):
+        reviewer = self.factory.makePerson()
+        _, proposal = self.makeProposal(prerequisite_private=True)
+        self.nominateReviewer(proposal, reviewer)
+        # A proposal the reviewer can see, so that the assertion below
+        # cannot pass merely because the query returned nothing.
+        _, visible_proposal = self.makeProposal()
+        self.nominateReviewer(visible_proposal, reviewer)
+        proposals = list(
+            self.all_repositories.visibleByUser(
+                None
+            ).getMergeProposalsForReviewer(reviewer)
+        )
+        self.assertIn(visible_proposal, proposals)
+        self.assertNotIn(proposal, proposals)
+
+    def test_reviewer_includes_visible_prerequisite(self):
+        reviewer = self.factory.makePerson()
+        owner, proposal = self.makeProposal(prerequisite_private=True)
+        self.nominateReviewer(proposal, reviewer)
+        proposals = list(
+            self.all_repositories.visibleByUser(
+                owner
+            ).getMergeProposalsForReviewer(reviewer)
+        )
+        self.assertIn(proposal, proposals)
+
+
 class TestBranchMergeProposalsForReviewer(TestCaseWithFactory):
     """Tests for IGitCollection.getProposalsForReviewer()."""
 

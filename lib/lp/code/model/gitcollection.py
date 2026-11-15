@@ -22,6 +22,7 @@ from storm.expr import (
     In,
     Join,
     LeftJoin,
+    Or,
     Select,
     With,
 )
@@ -197,6 +198,26 @@ class GenericGitCollection:
         """Return the where clauses for visibility."""
         return []
 
+    def _getPrerequisiteVisibilityExpression(self):
+        """Return the where clauses for prerequisite repository visibility.
+
+        The prerequisite repository is not one of the repositories being
+        proposed for merging, so this collection's other filters must not
+        apply to it: it only needs to be visible.  Proposals without a
+        prerequisite are unaffected.
+        """
+        visibility = self._getRepositoryVisibilityExpression()
+        if not visibility:
+            return []
+        return [
+            Or(
+                BranchMergeProposal.prerequisite_git_repository_id == None,
+                BranchMergeProposal.prerequisite_git_repository_id.is_in(
+                    Select(GitRepository.id, visibility)
+                ),
+            )
+        ]
+
     @staticmethod
     def preloadVisibleRepositories(repositories, user=None):
         """Preload visibility for the given list of repositories."""
@@ -370,6 +391,7 @@ class GenericGitCollection:
         created_since=None,
     ):
         Target = ClassAlias(GitRepository, "target")
+        Prerequisite = ClassAlias(GitRepository, "prerequisite")
         extra_tables = list(
             set(self._tables.values()) | set(self._asymmetric_tables.values())
         )
@@ -392,10 +414,29 @@ class GenericGitCollection:
                     Target,
                     Target.id == BranchMergeProposal.target_git_repository_id,
                 ),
+                LeftJoin(
+                    Prerequisite,
+                    Prerequisite.id
+                    == BranchMergeProposal.prerequisite_git_repository_id,
+                ),
             ]
         )
         expressions = self._getRepositoryVisibilityExpression()
         expressions.extend(self._getRepositoryVisibilityExpression(Target))
+        # A prerequisite repository, if there is one, must be visible
+        # too, since the security adapter checks all three
+        # repositories.  It only has to be visible: this collection's
+        # other filters describe the repositories being merged.
+        prerequisite_visibility = self._getRepositoryVisibilityExpression(
+            Prerequisite
+        )
+        if prerequisite_visibility:
+            expressions.append(
+                Or(
+                    BranchMergeProposal.prerequisite_git_repository_id == None,
+                    And(*prerequisite_visibility),
+                )
+            )
         if target_repository is not None:
             expressions.append(
                 BranchMergeProposal.target_git_repository == target_repository
@@ -468,6 +509,7 @@ class GenericGitCollection:
                 (SELECT id FROM candidate_repositories)"""
             )
         ]
+        expressions.extend(self._getPrerequisiteVisibilityExpression())
         tables = [BranchMergeProposal]
         if self._asymmetric_filter_expressions:
             # Need to filter on GitRepository beyond the with constraints.
@@ -579,6 +621,7 @@ class GenericGitCollection:
                     )
                 )
             )
+        expressions.extend(self._getPrerequisiteVisibilityExpression())
         return expressions
 
     def getMergeProposalsForReviewer(self, reviewer, status=None):
