@@ -23,6 +23,7 @@ from storm.expr import (
     In,
     Join,
     LeftJoin,
+    Or,
     Select,
     With,
 )
@@ -204,6 +205,26 @@ class GenericBranchCollection:
     ):
         """Return the where clauses for visibility."""
         return []
+
+    def _getPrerequisiteVisibilityExpression(self):
+        """Return the where clauses for prerequisite branch visibility.
+
+        The prerequisite branch is not one of the branches being proposed
+        for merging, so this collection's other filters must not apply to
+        it: it only needs to be visible.  Proposals without a prerequisite
+        are unaffected.
+        """
+        visibility = self._getBranchVisibilityExpression()
+        if not visibility:
+            return []
+        return [
+            Or(
+                BranchMergeProposal.prerequisite_branch_id == None,
+                BranchMergeProposal.prerequisite_branch_id.is_in(
+                    Select(Branch.id, visibility)
+                ),
+            )
+        ]
 
     @staticmethod
     def preloadVisibleStackedOnBranches(branches, user=None):
@@ -435,6 +456,7 @@ class GenericBranchCollection:
         created_since=None,
     ):
         Target = ClassAlias(Branch, "target")
+        Prerequisite = ClassAlias(Branch, "prerequisite")
         extra_tables = list(
             set(self._tables.values()) | set(self._asymmetric_tables.values())
         )
@@ -455,10 +477,29 @@ class GenericBranchCollection:
                 Join(
                     Target, Target.id == BranchMergeProposal.target_branch_id
                 ),
+                LeftJoin(
+                    Prerequisite,
+                    Prerequisite.id
+                    == BranchMergeProposal.prerequisite_branch_id,
+                ),
             ]
         )
         expressions = self._getBranchVisibilityExpression()
         expressions.extend(self._getBranchVisibilityExpression(Target))
+        # A prerequisite branch, if there is one, must be visible too,
+        # since the security adapter checks all three branches.  It
+        # only has to be visible: this collection's other filters
+        # describe the branches being merged.
+        prerequisite_visibility = self._getBranchVisibilityExpression(
+            Prerequisite
+        )
+        if prerequisite_visibility:
+            expressions.append(
+                Or(
+                    BranchMergeProposal.prerequisite_branch_id == None,
+                    And(*prerequisite_visibility),
+                )
+            )
         if for_branches is not None:
             branch_ids = [branch.id for branch in for_branches]
             expressions.append(
@@ -531,6 +572,7 @@ class GenericBranchCollection:
             target_branch IN (SELECT id FROM candidate_branches)"""
             )
         ]
+        expressions.extend(self._getPrerequisiteVisibilityExpression())
         tables = [BranchMergeProposal]
         if self._asymmetric_filter_expressions:
             # Need to filter on Branch beyond the with constraints.
@@ -637,6 +679,7 @@ class GenericBranchCollection:
                     )
                 )
             )
+        expressions.extend(self._getPrerequisiteVisibilityExpression())
         return expressions
 
     def getMergeProposalsForReviewer(self, reviewer, status=None):
