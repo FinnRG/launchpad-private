@@ -1,0 +1,162 @@
+name: Tests
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      ubuntu-release:
+        description: Ubuntu release for the test container
+        type: choice
+        default: "24.04"
+        options:
+          - "20.04"
+          - "24.04"
+      dependency-repository:
+        description: Git clone URL for source dependencies
+        type: string
+        default: https://git.launchpad.net/~finnrg/lp-source-dependencies/+git/lp-source-dependencies
+      dependency-ref:
+        description: Dependency branch, tag, or commit
+        type: string
+        default: noble-dev
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Full suite (Ubuntu ${{ inputs.ubuntu-release || '24.04' }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      UBUNTU_RELEASE: ${{ inputs.ubuntu-release || '24.04' }}
+      DEPENDENCY_REPO: >-
+        ${{ inputs.dependency-repository ||
+        vars.LAUNCHPAD_DEPENDENCY_REPOSITORY ||
+        'https://git.launchpad.net/~finnrg/lp-source-dependencies/+git/lp-source-dependencies' }}
+      DEPENDENCY_REF: >-
+        ${{ inputs.dependency-ref || vars.LAUNCHPAD_DEPENDENCY_REF || 'noble-dev' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve dependencies and setup cache key
+        id: setup-key
+        env:
+          SETUP_HASH: >-
+            ${{ hashFiles('.github/scripts/setup-tests.sh',
+            'utilities/rocketfuel-setup', 'utilities/launchpad-database-setup',
+            'utilities/run-as', 'utilities/link-system-packages.py',
+            'utilities/relocate-virtualenv', 'utilities/make-requirements.py',
+            'system-packages.txt', 'setup.py', 'setup.cfg', 'pyproject.toml',
+            'requirements/**', 'Makefile') }}
+        run: |
+          revision=$(bash .github/scripts/setup-tests.sh resolve)
+          dependency_key=$(printf '%s\n' \
+            "$DEPENDENCY_REPO" "$DEPENDENCY_REF" "$revision" | \
+            sha256sum | cut -d ' ' -f 1)
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "key=launchpad-setup-v1-$UBUNTU_RELEASE-$dependency_key-$SETUP_HASH" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Restore setup image cache
+        id: setup-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/launchpad-setup.tar.gz
+          key: ${{ steps.setup-key.outputs.key }}
+
+      - uses: canonical/setup-lxd@v0.1.3
+        with:
+          channel: 5.21/stable
+
+      - name: Start the test container
+        env:
+          CACHE_HIT: ${{ steps.setup-cache.outputs.cache-hit }}
+        run: |
+          if [[ "$CACHE_HIT" == true ]]; then
+            lxc image import "$RUNNER_TEMP/launchpad-setup.tar.gz" \
+              --alias launchpad-setup
+            lxc launch launchpad-setup launchpad-tests
+          else
+            lxc launch "ubuntu:$UBUNTU_RELEASE" launchpad-tests
+          fi
+          lxc exec launchpad-tests -- cloud-init status --wait
+          lxc exec launchpad-tests -- mkdir -p /home/ubuntu/launchpad
+          git archive HEAD | lxc exec launchpad-tests -- \
+            tar -x -C /home/ubuntu/launchpad
+          tar -c .git | lxc exec launchpad-tests -- \
+            tar -x -C /home/ubuntu/launchpad
+          if [[ "$CACHE_HIT" == true ]]; then
+            lxc exec launchpad-tests -- bash \
+              /home/ubuntu/launchpad/.github/scripts/setup-tests.sh restore
+          fi
+
+      - name: Install system and Python dependencies
+        if: steps.setup-cache.outputs.cache-hit != 'true'
+        env:
+          DEPENDENCY_REVISION: ${{ steps.setup-key.outputs.revision }}
+        run: |
+          set -o pipefail
+          {
+            lxc exec launchpad-tests -- bash \
+              /home/ubuntu/launchpad/.github/scripts/setup-tests.sh system
+            lxc exec launchpad-tests \
+              --env "DEPENDENCY_REPO=$DEPENDENCY_REPO" \
+              --env "DEPENDENCY_REF=$DEPENDENCY_REVISION" -- bash \
+              /home/ubuntu/launchpad/.github/scripts/setup-tests.sh dependencies
+          } 2>&1 | tee "$RUNNER_TEMP/setup.log"
+
+      - name: Export a reusable setup image
+        if: steps.setup-cache.outputs.cache-hit != 'true'
+        run: |
+          lxc exec launchpad-tests -- bash \
+            /home/ubuntu/launchpad/.github/scripts/setup-tests.sh stage-cache
+          lxc stop launchpad-tests
+          lxc publish launchpad-tests --alias launchpad-setup --compression gzip
+          lxc image export launchpad-setup "$RUNNER_TEMP/launchpad-setup"
+          lxc start launchpad-tests
+          lxc exec launchpad-tests -- mkdir -p /home/ubuntu/launchpad
+          git archive HEAD | lxc exec launchpad-tests -- \
+            tar -x -C /home/ubuntu/launchpad
+          tar -c .git | lxc exec launchpad-tests -- \
+            tar -x -C /home/ubuntu/launchpad
+          lxc exec launchpad-tests -- bash \
+            /home/ubuntu/launchpad/.github/scripts/setup-tests.sh restore
+
+      - name: Save setup image cache
+        if: steps.setup-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/launchpad-setup.tar.gz
+          key: ${{ steps.setup-key.outputs.key }}
+
+      - name: Build the checkout and test databases
+        run: |
+          set -o pipefail
+          lxc exec launchpad-tests -- bash \
+            /home/ubuntu/launchpad/.github/scripts/setup-tests.sh build \
+            2>&1 | tee -a "$RUNNER_TEMP/setup.log"
+
+      - name: Run the entire test suite
+        run: |
+          set -o pipefail
+          lxc exec launchpad-tests -- \
+            /home/ubuntu/launchpad/utilities/run-as ubuntu \
+            xvfb-run -a bin/test -vvc \
+            2>&1 | tee "$RUNNER_TEMP/tests.log"
+
+      - name: Save test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output
+          path: |
+            ${{ runner.temp }}/setup.log
+            ${{ runner.temp }}/tests.log
+          if-no-files-found: ignore
+
+      - name: Remove the test container
+        if: always()
+        run: lxc delete --force launchpad-tests
