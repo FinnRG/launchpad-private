@@ -2779,7 +2779,9 @@ class PublishingSet:
 
     def findCorrespondingDDEBPublications(self, pubs):
         """See `IPublishingSet`."""
+        pubs = list(pubs)
         ids = [pub.id for pub in pubs]
+        archive_ids = {removeSecurityProxy(pub).archive_id for pub in pubs}
         deb_bpph = ClassAlias(BinaryPackagePublishingHistory)
         debug_bpph = BinaryPackagePublishingHistory
         origin = [
@@ -2800,6 +2802,7 @@ class PublishingSet:
             .find(
                 debug_bpph,
                 deb_bpph.id.is_in(ids),
+                debug_bpph.archive_id.is_in(archive_ids),
                 debug_bpph.status.is_in(active_publishing_status),
                 deb_bpph.archive_id == debug_bpph.archive_id,
                 deb_bpph.distroarchseries_id == debug_bpph.distroarchseries_id,
