@@ -1863,6 +1863,7 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
         order_by=None,
         distroseries=None,
         live_at=None,
+        is_phasing=None,
     ):
         """See `IArchive`."""
         # Circular imports.
@@ -1889,6 +1890,14 @@ class Archive(BugTargetBase, StormBase, WebhookTargetMixin):
             distroseries=distroseries,
             live_at=live_at,
         )
+        if is_phasing is True:
+            clauses.append(
+                BinaryPackagePublishingHistory.phased_update_percentage != None
+            )
+        elif is_phasing is False:
+            clauses.append(
+                BinaryPackagePublishingHistory.phased_update_percentage == None
+            )
 
         result = (
             Store.of(self)

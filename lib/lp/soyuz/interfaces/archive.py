@@ -1201,6 +1201,17 @@ class IArchiveSubscriberView(Interface):
             ),
             required=False,
         ),
+        is_phasing=Bool(
+            title=_("Phased publication"),
+            description=_(
+                "If True, return only publications with a phased "
+                "update percentage, including updates halted at 0%. If "
+                "False, return only publications without a phased update "
+                "percentage. If omitted, do not filter on phasing. This "
+                "uses the current percentage, even when live_at is set."
+            ),
+            required=False,
+        ),
     )
     # Really IBinaryPackagePublishingHistory, patched in
     # lp.soyuz.interfaces.webservice.
@@ -1228,6 +1239,7 @@ class IArchiveSubscriberView(Interface):
         order_by=None,
         distroseries=None,
         live_at=None,
+        is_phasing=None,
     ):
         """All `IBinaryPackagePublishingHistory` target to this archive.
 
@@ -1258,6 +1270,10 @@ class IArchiveSubscriberView(Interface):
         :param component_name: component filter. Only return binaries that are
             in this component.
         :param distroseries: `IDistroSeries` filter.
+        :param is_phasing: If True, require a non-null phased update
+            percentage, including 0 for halted updates. If False, require
+            a null percentage. If None, do not filter on phasing. This
+            uses the current percentage, even when `live_at` is set.
 
         :return: A collection containing `BinaryPackagePublishingHistory`.
         """
