@@ -6442,6 +6442,31 @@ class TestUploadCIBuild(TestCaseWithFactory):
 class TestgetAllPublishedBinaries(TestCaseWithFactory):
     layer = DatabaseFunctionalLayer
 
+    def test_is_phasing(self):
+        archive = self.factory.makeArchive()
+        publications = []
+        for percentage in (None, 0, 50):
+            publication = self.factory.makeBinaryPackagePublishingHistory(
+                archive=archive
+            )
+            removeSecurityProxy(publication).phased_update_percentage = (
+                percentage
+            )
+            publications.append(publication)
+        other = self.factory.makeBinaryPackagePublishingHistory()
+        removeSecurityProxy(other).phased_update_percentage = 50
+
+        for is_phasing, expected in (
+            (None, publications),
+            (True, publications[1:]),
+            (False, publications[:1]),
+        ):
+            with self.subTest(is_phasing=is_phasing):
+                self.assertContentEqual(
+                    expected,
+                    archive.getAllPublishedBinaries(is_phasing=is_phasing),
+                )
+
     def test_returns_publication(self):
         archive = self.factory.makeArchive()
         publication = self.factory.makeBinaryPackagePublishingHistory(

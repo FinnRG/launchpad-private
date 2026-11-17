@@ -998,6 +998,46 @@ class TestGetPublishedBinaries(TestCaseWithFactory):
         self.assertEqual(200, response.status)
         self.assertEqual(1, response.jsonBody()["total_size"])
 
+    def test_getPublishedBinaries_is_phasing(self):
+        for percentage in (None, 0, 50):
+            publication = self.factory.makeBinaryPackagePublishingHistory(
+                archive=self.archive,
+                pocket=PackagePublishingPocket.UPDATES,
+                status=PackagePublishingStatus.PUBLISHED,
+            )
+            removeSecurityProxy(publication).phased_update_percentage = (
+                percentage
+            )
+        superseded = self.factory.makeBinaryPackagePublishingHistory(
+            archive=self.archive,
+            pocket=PackagePublishingPocket.UPDATES,
+            status=PackagePublishingStatus.SUPERSEDED,
+        )
+        removeSecurityProxy(superseded).phased_update_percentage = 25
+        ws = webservice_for_person(self.person, default_api_version="beta")
+
+        for filters, expected in (
+            ({}, [None, 0, 50]),
+            ({"is_phasing": True}, [0, 50]),
+            ({"is_phasing": False}, [None]),
+        ):
+            with self.subTest(filters=filters):
+                response = ws.named_get(
+                    self.archive_url,
+                    "getPublishedBinaries",
+                    pocket="Updates",
+                    status="Published",
+                    **filters,
+                )
+                self.assertEqual(200, response.status)
+                self.assertContentEqual(
+                    expected,
+                    [
+                        entry["phased_update_percentage"]
+                        for entry in response.jsonBody()["entries"]
+                    ],
+                )
+
     def test_getPublishedBinaries_private_subscriber(self):
         # Subscribers can see published binaries for private archives.
         private_archive = self.factory.makeArchive(private=True)
