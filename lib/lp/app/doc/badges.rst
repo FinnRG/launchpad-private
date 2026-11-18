@@ -146,8 +146,8 @@ badger class needs to implement the method `getBadge`.
     bug / Bug-Title
     fish / Fish-Title
 
-If the class does not implement the appropriate method you get a
-NotImplementedError.
+If the class does not implement the appropriate method, it raises an
+AttributeError.
 
     >>> SimpleBadger.badges.append("blueprint")
     >>> for badge in SimpleBadger(private_object).getVisibleBadges():
@@ -156,7 +156,7 @@ NotImplementedError.
     Traceback (most recent call last):
     ...
     AttributeError:
-    'SimpleBadger' object has no attribute 'isBlueprintBadgeVisible'
+    'SimpleBadger' object has no attribute 'isBlueprintBadgeVisible'...
 
 
 
