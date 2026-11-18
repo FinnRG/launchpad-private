@@ -12,6 +12,7 @@ from textwrap import dedent
 
 import transaction
 from testtools.matchers import Equals, Is
+from zope.component import getUtility
 from zope.interface import implementer
 from zope.security.management import setSecurityPolicy
 
@@ -20,6 +21,7 @@ from lp.services.config import config
 from lp.services.gpg.interfaces import (
     GPGKeyExpired,
     GPGKeyNotFoundError,
+    GPGVerificationError,
     IGPGHandler,
 )
 from lp.services.log.logger import BufferLogger
@@ -28,11 +30,13 @@ from lp.services.mail.handlers import mail_handlers
 from lp.services.mail.incoming import (
     ORIGINAL_TO_HEADER,
     authenticateEmail,
+    canonicalise_line_endings,
     extract_addresses,
     handleMail,
 )
 from lp.services.mail.interfaces import IMailHandler
 from lp.services.mail.sendmail import MailController
+from lp.services.mail.signedmessage import signed_message_from_bytes
 from lp.services.mail.stub import TestMailer
 from lp.services.mail.tests.helpers import testmails_path
 from lp.services.webapp.authorization import LaunchpadSecurityPolicy
@@ -97,6 +101,17 @@ class IncomingTestCase(TestCaseWithFactory):
             "Not a signature.\n"
             "-----END PGP SIGNATURE-----\n"
         )
+        signed_message = signed_message_from_bytes(
+            b"\n" + invalid_body.encode()
+        )
+        error = self.assertRaises(
+            GPGVerificationError,
+            getUtility(IGPGHandler).getVerifiedSignature,
+            canonicalise_line_endings(signed_message.signedContent),
+            signed_message.signature,
+        )
+        self.assertEqual(7, error.source)
+        self.assertEqual(58, error.code)
         ctrl = MailController(
             email_address,
             "to@example.com",
@@ -112,10 +127,10 @@ class IncomingTestCase(TestCaseWithFactory):
         self.assertIn(
             "An error occurred while processing a mail you sent to "
             "Launchpad's email\ninterface.\n\n\n"
-            "Error message:\n\nSignature couldn't be verified: "
-            "(7, 58, %r)" % "No data",
+            "Error message:\n\nSignature couldn't be verified:",
             body,
         )
+        self.assertIn("No data", body)
 
     def test_expired_key(self):
         """An expired key should not be handled as an OOPS.
