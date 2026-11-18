@@ -338,6 +338,28 @@ The auxiliary function below will facilitate the viewing of diff results.
     ...     return "".join(ordered_diff_contents)
     ...
 
+To check the contents diff, apply it to the original file. The amount of
+context in the generated patch depends on the version of interdiff.
+
+    >>> def show_patched_contents(patch_text):
+    ...     print("\n".join(patch_text.splitlines()[:2]))
+    ...     with tempfile.TemporaryDirectory() as jail:
+    ...         path = os.path.join(jail, "contents")
+    ...         with open(path, "w", encoding="utf-8") as contents:
+    ...             contents.write("1.0\n1.0-1\n")
+    ...         subprocess.run(
+    ...             ["patch", "--batch", "--fuzz=0", "-p1"],
+    ...             input=patch_text,
+    ...             encoding="utf-8",
+    ...             cwd=jail,
+    ...             stdout=subprocess.PIPE,
+    ...             stderr=subprocess.PIPE,
+    ...             check=True,
+    ...         )
+    ...         with open(path, encoding="utf-8") as contents:
+    ...             print(repr(contents.read()))
+    ...
+
 Let's obtain the diff that was created when package "biscuit - 1.0-8"
 was uploaded.
 
@@ -384,14 +406,18 @@ transaction before we can access the file.
 
     >>> transaction.commit()
 
-Now we can compare the package diff outcome to the debdiff output
-(obtained manually on the shell) for the packages in question.
+The contents patch produces the expected file, and the changelog diff
+contains the new version.
 
-    >>> print(get_diff_results(diff))
+    >>> contents_diff, changelog_diff = get_diff_results(diff).split(
+    ...     "--- biscuit-1.0/debian/changelog\n"
+    ... )
+    >>> show_patched_contents(contents_diff)
     --- biscuit-1.0/contents
     +++ biscuit-1.0/contents
-    @@ -2,0 +3 @@
-    +1.0-8
+    '1.0\n1.0-1\n1.0-8\n'
+
+    >>> print("--- biscuit-1.0/debian/changelog\n" + changelog_diff)
     --- biscuit-1.0/debian/changelog
     +++ biscuit-1.0/debian/changelog
     @@ -1,3 +1,9 @@
@@ -640,12 +666,10 @@ the diff was properly generated.
     >>> print(diff.diff_content.filename)
     collision_1.0-1_1.0-1.diff.gz
 
-    >>> print(get_diff_results(diff))
+    >>> show_patched_contents(get_diff_results(diff))
     --- collision-1.0/contents
     +++ collision-1.0/contents
-    @@ -2,0 +3 @@
-    +I am evil.
-    <BLANKLINE>
+    '1.0\n1.0-1\nI am evil.\n'
 
 The 'debdiff' application may fail to process the given pair of
 sources, usually due to hardlink within the source package or other
