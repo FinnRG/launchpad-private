@@ -283,6 +283,11 @@ class TestDatabaseErrorViews(TestCase):
                     ),
                     # libpq ~= 16.0
                     Disconnects("server closed the connection unexpectedly"),
+                    DisconnectsWithMessageRegex(
+                        libpq_14_connection_error_prefix_regex
+                        + r': FATAL:\s+database "launchpad_ftest_.*" '
+                        + r"is disabled$"
+                    ),
                 )
             ),
         )

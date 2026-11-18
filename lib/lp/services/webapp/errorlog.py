@@ -471,6 +471,11 @@ class ErrorReportingUtility:
             ):
                 if ok in message or f"ERROR:  {ok}" in message:
                     return True
+            if re.search(
+                r'(?:^|: )FATAL:\s+database "[^"\n]+" is disabled(?:\n|$)',
+                message,
+            ):
+                return True
         return False
 
     def _attach_messages(self, report, context):

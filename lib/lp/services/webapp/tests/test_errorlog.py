@@ -97,6 +97,33 @@ class TestErrorReportingUtility(TestCaseWithFactory):
         # - a notify publisher
         self.assertEqual(utility._all_publishers[1], notify_publisher)
 
+    def test_filter_deliberate_database_outages(self):
+        utility = ErrorReportingUtility()
+        for message in (
+            "pgbouncer database is disabled",
+            "ERROR:  database does not allow connections: launchpad",
+            'connection failed: FATAL:  database "launchpad" is disabled\n',
+            'FATAL: database "launchpad" is disabled',
+        ):
+            self.assertTrue(
+                utility._filter_deliberate_db_outages(
+                    {"type": "DisconnectionError", "value": message}
+                ),
+                message,
+            )
+        for report in (
+            {
+                "type": "DisconnectionError",
+                "value": 'FATAL: database "launchpad" is disabled for repair',
+            },
+            {"type": "DisconnectionError", "value": "connection refused"},
+            {
+                "type": "OtherError",
+                "value": 'FATAL: database "launchpad" is disabled',
+            },
+        ):
+            self.assertFalse(utility._filter_deliberate_db_outages(report))
+
     def test_oops_amqp_publisher_not_used_without_oops_broker_urls(self):
         # If oops_broker_urls is unset, OOPS reports are not published over
         # AMQP at all: there is deliberately no fallback to the main
