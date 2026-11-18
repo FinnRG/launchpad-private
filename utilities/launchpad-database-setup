@@ -1,18 +1,24 @@
 #!/bin/sh
 #
-# Copyright 2009-2012 Canonical Ltd.  This software is licensed under the
+# Copyright 2009-2026 Canonical Ltd.  This software is licensed under the
 # GNU Affero General Public License version 3 (see the file LICENSE).
 
 set -e  # Exit immediately if a command exits with a non-zero status.
 
-if [ -n "$1" ]; then
+update_config=false
+if [ "$#" -eq 1 ] && [ "$1" = "--update-config" ]; then
+    update_config=true
+elif [ "$#" -eq 1 ] && [ -n "$1" ] && [ "${1#-}" = "$1" ]; then
     USER=$1
     echo "Creating Launchpad database for $USER"
 else
     echo "usage: launchpad-database-setup DEVELOPER_USER"
+    echo "       launchpad-database-setup --update-config"
     echo "THIS SCRIPT WILL DESTROY ALL POSTGRESQL DATA for the given user"
     echo "If you really want that, run it with the username of your "
     echo "local developer account."
+    echo "--update-config only updates SQL string settings and reloads"
+    echo "PostgreSQL. It preserves databases; reconnect existing clients."
     exit 1
 fi
 
@@ -40,6 +46,19 @@ then
 fi
 
 echo "Using postgres $pgversion"
+
+configure_string_literals() {
+    sudo pg_conftool "$pgversion" main set standard_conforming_strings on
+    sudo pg_conftool "$pgversion" main remove escape_string_warning
+}
+
+if "$update_config"; then
+    configure_string_literals
+    sudo pg_ctlcluster "$pgversion" main reload
+    echo "Updated SQL string settings without recreating databases."
+    echo "Reconnect existing clients to use the new settings."
+    exit 0
+fi
 
 # Make sure that we have the correct version running on port 5432
 if ! sudo grep -q "port.*5432" /etc/postgresql/$pgversion/main/postgresql.conf; then
@@ -80,14 +99,14 @@ sudo tee -a /etc/postgresql/$pgversion/main/postgresql.conf <<'EOF'
 ##
 ## Launchpad configuration
 ##
-standard_conforming_strings=on
-
 #enable_seqscan=false
 log_statement='none'
 log_line_prefix='[%t] %q%u@%d '
 fsync = off
 
 EOF
+
+configure_string_literals
 
 if [ -e /etc/init.d/postgresql-$pgversion ]; then
     sudo /etc/init.d/postgresql-$pgversion start
