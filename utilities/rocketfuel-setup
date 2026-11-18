@@ -85,7 +85,8 @@ for hostname in $hostnames; do
 done
 
 sudo add-apt-repository -u $INSTALL_OPTS ppa:launchpad/ppa
-sudo apt install $INSTALL_OPTS launchpad-developer-dependencies apache2 libapache2-mod-wsgi-py3
+sudo apt install $INSTALL_OPTS \
+    launchpad-developer-dependencies apache2 libapache2-mod-wsgi-py3 pkg-config
 
 # Create the document root(s) to avoid Apache warnings
 mkdir -p /var/tmp/bazaar.launchpad.test/static
