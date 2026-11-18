@@ -87,7 +87,7 @@ class DummyAuthenticator:
             origin=origin,
         )
         response = RegistrationResponse(
-            id=credential_id,
+            raw_id=credential_id,
             response=AuthenticatorAttestationResponse(
                 client_data=client_data,
                 attestation_object=attestation_object,
@@ -118,7 +118,7 @@ class DummyAuthenticator:
             auth_data + client_data.hash, ec.ECDSA(hashes.SHA256())
         )
         response = AuthenticationResponse(
-            id=credential_id,
+            raw_id=credential_id,
             response=AuthenticatorAssertionResponse(
                 client_data=client_data,
                 authenticator_data=auth_data,

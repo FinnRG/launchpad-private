@@ -128,8 +128,8 @@ def begin_registration(person, request=None):
     session_data = _get_session(request)
     existing_credentials = [
         PublicKeyCredentialDescriptor(
-            PublicKeyCredentialType.PUBLIC_KEY,
-            authenticator.credential_id,
+            type=PublicKeyCredentialType.PUBLIC_KEY,
+            id=bytes(authenticator.credential_id),
             transports=_valid_transports(authenticator.transports),
         )
         for authenticator in getUtility(
