@@ -1,10 +1,72 @@
-# Copyright 2022 Canonical Ltd.  This software is licensed under the
+# Copyright 2022-2026 Canonical Ltd.  This software is licensed under the
 # GNU Affero General Public License version 3 (see the file LICENSE).
 
-from tempfile import NamedTemporaryFile
+from pathlib import Path
+from tempfile import NamedTemporaryFile, TemporaryDirectory
+
+from fixtures import MockPatch
 
 from lp.testing import TestCase
-from lp.testing.layers import WebBrowserLayer
+from lp.testing.html5browser import Browser
+from lp.testing.layers import BaseLayer, WebBrowserLayer
+
+
+class TestBrowserInitialization(TestCase):
+    layer = BaseLayer
+
+    def setUp(self):
+        super().setUp()
+        self.firefox = self.useFixture(
+            MockPatch("lp.testing.html5browser.webdriver.Firefox")
+        ).mock
+        self.profile = self.useFixture(
+            MockPatch("lp.testing.html5browser.webdriver.FirefoxProfile")
+        ).mock
+
+    def test_native_firefox(self):
+        with TemporaryDirectory() as directory:
+            self.useFixture(
+                MockPatch(
+                    "lp.testing.html5browser.Path",
+                    return_value=Path(directory) / "missing",
+                )
+            )
+            browser = Browser()
+
+        self.firefox.assert_called_once()
+        kwargs = self.firefox.call_args.kwargs
+        self.assertEqual("geckodriver", kwargs["executable_path"])
+        self.assertIsNone(kwargs["options"].binary)
+        self.assertTrue(kwargs["options"].headless)
+        self.assertEqual(
+            "none", kwargs["options"].capabilities["pageLoadStrategy"]
+        )
+        self.assertIs(self.profile.return_value, kwargs["firefox_profile"])
+        self.profile.return_value.set_preference.assert_called_once_with(
+            "dom.disable_open_during_load", False
+        )
+        self.assertIs(self.firefox.return_value, browser.driver)
+
+    def test_snap_firefox_uses_same_revision_for_both_binaries(self):
+        with TemporaryDirectory() as directory:
+            revision = Path(directory) / "1234"
+            revision.mkdir()
+            current = Path(directory) / "current"
+            current.symlink_to(revision, target_is_directory=True)
+            self.useFixture(
+                MockPatch("lp.testing.html5browser.Path", return_value=current)
+            )
+            browser = Browser()
+
+        self.firefox.assert_called_once()
+        kwargs = self.firefox.call_args.kwargs
+        self.assertEqual(
+            str(revision / "geckodriver"), kwargs["executable_path"]
+        )
+        self.assertEqual(
+            str(revision / "firefox"), kwargs["options"].binary_location
+        )
+        self.assertIs(self.firefox.return_value, browser.driver)
 
 
 class TestBrowser(TestCase):

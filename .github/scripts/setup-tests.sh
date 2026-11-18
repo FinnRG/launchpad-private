@@ -9,6 +9,8 @@ export GIT_TERMINAL_PROMPT=0
 DEPENDENCY_REPO=${DEPENDENCY_REPO:-https://git.launchpad.net/~finnrg/lp-source-dependencies/+git/lp-source-dependencies}
 DEPENDENCY_REF=${DEPENDENCY_REF:-noble-dev}
 phase=${1:-all}
+# Later Firefox revisions moved to core26 and cannot run directly on Noble.
+noble_firefox_revision=8568
 
 if [[ "$phase" != resolve && "$PWD" != /home/ubuntu/launchpad ]]; then
     echo 'Setup requires /home/ubuntu/launchpad in a disposable container' >&2
@@ -39,10 +41,42 @@ resolve_dependency() {
     printf '%s\n' "$revision"
 }
 
+is_noble() (
+    # shellcheck source=/dev/null
+    . /etc/os-release
+    [[ "$ID" == ubuntu && "$VERSION_ID" == 24.04 ]]
+)
+
+setup_noble_firefox() {
+    apt-get install -y snapd
+    snap wait system seed.loaded
+    snap install firefox --revision="$noble_firefox_revision"
+    snap refresh --hold firefox
+}
+
+smoke_test_browser() {
+    if is_noble; then
+        local revision
+        revision=$(snap list firefox | awk 'NR == 2 { print $3 }')
+        if [[ "$revision" != "$noble_firefox_revision" ]]; then
+            printf 'Expected Firefox Snap revision %s, got %s\n' \
+                "$noble_firefox_revision" "$revision" >&2
+            return 1
+        fi
+    fi
+    "$run_as" ubuntu xvfb-run -a bin/test \
+        -m '^lp\.testing\.tests\.test_html5browser$' \
+        -t 'test_load_test_results' -vv
+}
+
 setup_system() {
     apt-get update
     apt-get install -y \
         ca-certificates git make software-properties-common sudo
+    # Install the pin before the transitional APT package can choose a revision.
+    if is_noble; then
+        setup_noble_firefox
+    fi
     chown -R ubuntu:ubuntu .
     bash -eu utilities/rocketfuel-setup \
         --no-workspace --assume-yes --lpusername launchpad-ci
@@ -89,6 +123,9 @@ case "$phase" in
         ;;
     build)
         build_tests
+        ;;
+    browser-smoke)
+        smoke_test_browser
         ;;
     all)
         setup_system

@@ -1,4 +1,4 @@
-# Copyright 2022 Canonical Ltd.  This software is licensed under the
+# Copyright 2022-2026 Canonical Ltd.  This software is licensed under the
 # GNU Affero General Public License version 3 (see the file LICENSE).
 
 """
@@ -12,6 +12,7 @@ __all__ = [
 import json
 import time
 from enum import Enum
+from pathlib import Path
 from typing import Any, Optional
 
 from selenium import webdriver
@@ -52,8 +53,20 @@ class Browser:
         # Results are polled via window.test_results, not page
         # load events, so there is no need to wait for page load.
         firefox_options.set_capability("pageLoadStrategy", "none")
+        executable_path = "geckodriver"
+        firefox_directory = Path("/snap/firefox/current/usr/lib/firefox")
+        if firefox_directory.is_dir():
+            # Avoid Snap's launcher and private /tmp. Resolve the revision
+            # so both binaries come from the same installed version.
+            firefox_directory = firefox_directory.resolve()
+            firefox_options.binary_location = str(
+                firefox_directory / "firefox"
+            )
+            executable_path = str(firefox_directory / "geckodriver")
         self.driver = webdriver.Firefox(
-            options=firefox_options, firefox_profile=firefox_profile
+            options=firefox_options,
+            firefox_profile=firefox_profile,
+            executable_path=executable_path,
         )
 
     def run_tests(

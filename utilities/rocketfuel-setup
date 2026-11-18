@@ -85,9 +85,14 @@ for hostname in $hostnames; do
 done
 
 sudo add-apt-repository -u $INSTALL_OPTS ppa:launchpad/ppa
+# Direct Firefox binaries use host libraries rather than the Snap runtime.
+firefox_libraries=(libasound2 libgtk-3-0)
+if dpkg --compare-versions "$(lsb_release -rs)" ge 24.04; then
+    firefox_libraries=(libasound2t64 libgtk-3-0t64)
+fi
 sudo apt install $INSTALL_OPTS \
     launchpad-developer-dependencies apache2 libapache2-mod-wsgi-py3 \
-    nasm pkg-config
+    nasm pkg-config libx11-xcb1 "${firefox_libraries[@]}"
 
 # Create the document root(s) to avoid Apache warnings
 mkdir -p /var/tmp/bazaar.launchpad.test/static

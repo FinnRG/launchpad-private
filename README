@@ -38,3 +38,16 @@ the source code any time by doing:
 
 See <https://documentation.ubuntu.com/launchpad/en/latest/explanation/navigating/>
 for advice on navigating the code.
+
+Firefox in Noble CI
+===================
+
+Noble CI pins the official Firefox Snap to a ``core24`` revision in
+``.github/scripts/setup-tests.sh``. The tests run Firefox and geckodriver
+directly so Firefox can read test pages under ``/tmp``. Newer ``core26``
+revisions need a newer glibc when run this way. The pin and refresh hold
+apply only to the CI container, not to developer machines.
+
+When changing the pin, validate both a fresh setup and a restored setup
+image. The workflow loads a local HTML page in Firefox before running the
+full suite and saves the geckodriver log with the other test logs.

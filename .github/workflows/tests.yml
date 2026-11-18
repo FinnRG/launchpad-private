@@ -139,6 +139,14 @@ jobs:
             /home/ubuntu/launchpad/.github/scripts/setup-tests.sh build \
             2>&1 | tee -a "$RUNNER_TEMP/setup.log"
 
+      - name: Smoke-test the Noble browser
+        if: env.UBUNTU_RELEASE == '24.04'
+        run: |
+          set -o pipefail
+          lxc exec launchpad-tests -- bash \
+            /home/ubuntu/launchpad/.github/scripts/setup-tests.sh browser-smoke \
+            2>&1 | tee "$RUNNER_TEMP/browser-smoke.log"
+
       - name: Run the entire test suite
         run: |
           set -o pipefail
@@ -147,6 +155,14 @@ jobs:
             xvfb-run -a bin/test -vvc \
             2>&1 | tee "$RUNNER_TEMP/tests.log"
 
+      - name: Collect Firefox driver log
+        if: always()
+        run: |
+          if lxc exec launchpad-tests -- test -f /home/ubuntu/launchpad/geckodriver.log; then
+            lxc file pull launchpad-tests/home/ubuntu/launchpad/geckodriver.log \
+              "$RUNNER_TEMP/geckodriver.log"
+          fi
+
       - name: Save test output
         if: always()
         uses: actions/upload-artifact@v4
@@ -154,7 +170,9 @@ jobs:
           name: test-output
           path: |
             ${{ runner.temp }}/setup.log
+            ${{ runner.temp }}/browser-smoke.log
             ${{ runner.temp }}/tests.log
+            ${{ runner.temp }}/geckodriver.log
           if-no-files-found: ignore
 
       - name: Remove the test container
