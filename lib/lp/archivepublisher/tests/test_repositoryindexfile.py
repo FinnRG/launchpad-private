@@ -11,6 +11,8 @@ import shutil
 import stat
 import tempfile
 import unittest
+import warnings
+from unittest import mock
 
 from lp.archivepublisher.utils import RepositoryIndexFile
 from lp.soyuz.enums import IndexCompressionType
@@ -111,6 +113,51 @@ class TestRepositoryArchiveIndex(unittest.TestCase):
         # point in time. The filename is also blank, but Python's gzip
         # module discards it so it's hard to test.
         self.assertEqual(0, gzip_file.mtime)
+
+    def testGzipClosesUnderlyingFile(self):
+        repo_file = self.getRepoFile(
+            "boing", compressors=[IndexCompressionType.GZIP]
+        )
+        raw_file = repo_file.index_files[0]._fd.fileobj
+        self.addCleanup(raw_file.close)
+        repo_file.write(b"hello")
+
+        repo_file.close()
+
+        self.assertTrue(raw_file.closed)
+        path = os.path.join(self.root, "boing.gz")
+        with gzip.open(path) as gzip_file:
+            self.assertEqual(b"hello", gzip_file.read())
+        with open(path, "rb") as compressed_file:
+            header = compressed_file.read(10)
+        self.assertEqual(0, header[3])
+        self.assertEqual(b"\0\0\0\0", header[4:8])
+
+    def testGzipClosesUnderlyingFileOnError(self):
+        repo_file = self.getRepoFile(
+            "boing", compressors=[IndexCompressionType.GZIP]
+        )
+        raw_file = repo_file.index_files[0]._fd.fileobj
+        self.addCleanup(raw_file.close)
+        repo_file.write(b"hello")
+
+        with mock.patch.object(
+            raw_file, "write", side_effect=OSError("Cannot write gzip file")
+        ):
+            self.assertRaisesRegex(
+                OSError, "Cannot write gzip file", repo_file.close
+            )
+
+        self.assertTrue(raw_file.closed)
+        self.assertFalse(os.path.exists(os.path.join(self.root, "boing.gz")))
+
+    def testGzipUsesExplicitWriteMode(self):
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            repo_file = self.getRepoFile(
+                "boing", compressors=[IndexCompressionType.GZIP]
+            )
+        repo_file.close()
 
     def testCompressors(self):
         """`RepositoryIndexFile` honours the supplied list of compressors."""

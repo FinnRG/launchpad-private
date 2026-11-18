@@ -79,7 +79,16 @@ class GzipTempFile(PlainTempFile):
     def _buildFile(self, fd):
         # Blank the filename and mtime as if using "gzip -n" to avoid
         # needless hash changes.
-        return gzip.GzipFile(fileobj=os.fdopen(fd, "wb"), filename="", mtime=0)
+        self._raw_file = os.fdopen(fd, "wb")
+        return gzip.GzipFile(
+            fileobj=self._raw_file, mode="wb", filename="", mtime=0
+        )
+
+    def close(self):
+        try:
+            super().close()
+        finally:
+            self._raw_file.close()
 
 
 class Bzip2TempFile(PlainTempFile):
