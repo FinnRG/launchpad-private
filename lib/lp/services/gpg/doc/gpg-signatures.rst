@@ -24,7 +24,7 @@ OpenPGP Signature Verification
     name12
 
     >>> from zope.component import getUtility
-    >>> from lp.services.gpg.interfaces import IGPGHandler
+    >>> from lp.services.gpg.interfaces import GPGVerificationError, IGPGHandler
     >>> gpghandler = getUtility(IGPGHandler)
 
 The text below was "clear signed" by 0xDFD20543 master key:
@@ -85,11 +85,14 @@ The text below was "clear signed" by 0xDFD20543 master key but tampered with:
     ... -----END PGP SIGNATURE-----
     ... """
 
-    >>> master_sig = gpghandler.getVerifiedSignature(content)
-    Traceback (most recent call last):
-    ...
-    lp.services.gpg.interfaces.GPGVerificationError:
-    (7, 8, ...'Bad signature')
+    >>> try:
+    ...     gpghandler.getVerifiedSignature(content)
+    ... except GPGVerificationError as e:
+    ...     source, code, message = e.args[0]
+    ...     print(int(source), int(code), message)
+    ... else:
+    ...     raise AssertionError("Tampered signature was accepted")
+    7 8 Bad signature
 
 If no signed content is found, an exception is raised:
 
@@ -195,7 +198,6 @@ The GPGVerificationError exception object has some additional attributes
 with information about the error.  These come directly from the gpgme module
 itself.
 
-    >>> from lp.services.gpg.interfaces import GPGVerificationError
     >>> content = b"""
     ... -----BEGIN PGP SIGNED MESSAGE-----
     ... Hash: SHA1
@@ -223,12 +225,15 @@ itself.
     >>> try:
     ...     gpghandler.getVerifiedSignature(content)
     ... except GPGVerificationError as e:
-    ...     print(e.args)
+    ...     source, code, message = e.args
+    ...     print(int(source), int(code), message)
     ...     print(e.code)
     ...     print(e.signatures)
     ...     print(e.source)
+    ... else:
+    ...     raise AssertionError("Multiple signed sections were accepted")
     ...
-    (7, 89, ...'Bad data')
+    7 89 Bad data
     89
     [<gpgme.Signature object at ...>]
     7

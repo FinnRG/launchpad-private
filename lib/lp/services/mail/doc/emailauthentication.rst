@@ -119,14 +119,17 @@ message.
     ... )
     >>> msg.parsed_bytes = message_as_bytes(msg)
 
-    >>> from lp.services.gpg.interfaces import IGPGHandler
-    >>> getUtility(IGPGHandler).getVerifiedSignature(
-    ...     msg.signedContent, msg.signature
-    ... )
-    Traceback (most recent call last):
-    ...
-    lp.services.gpg.interfaces.GPGVerificationError: (7, 8, ...'Bad
-    signature')
+    >>> from lp.services.gpg.interfaces import GPGVerificationError, IGPGHandler
+    >>> try:
+    ...     getUtility(IGPGHandler).getVerifiedSignature(
+    ...         msg.signedContent, msg.signature
+    ...     )
+    ... except GPGVerificationError as e:
+    ...     source, code, message = e.args[0]
+    ...     print(int(source), int(code), message)
+    ... else:
+    ...     raise AssertionError("Non-canonical signature was accepted")
+    7 8 Bad signature
 
     >>> getUtility(IGPGHandler).getVerifiedSignature(
     ...     msg.signedContent.replace(b"\n", b"\r\n"), msg.signature
