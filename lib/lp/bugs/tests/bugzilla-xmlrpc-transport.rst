@@ -87,15 +87,26 @@ will also return the user ID of the user on the Bugzilla instance.
 In the test instance, the cookie is randomly generated. The returned
 user id is always the same.
 
+    >>> previous_auth_cookie = bugzilla_transport.auth_cookie
     >>> response_dict = server.Launchpad.login({"token": token_text})
     >>> print(response_dict["user_id"])
     42
 
 The login cookies are in the transport's cookie jar.
 
-    >>> print(bugzilla_transport.cookie_jar)
-    <RequestsCookieJar[<Cookie Bugzilla_login=...>,
-                       <Cookie Bugzilla_logincookie=...>]>
+    >>> for cookie in sorted(
+    ...     bugzilla_transport.cookie_jar, key=lambda cookie: cookie.name
+    ... ):
+    ...     print(cookie.name, cookie.domain, repr(cookie.path), bool(cookie.value))
+    Bugzilla_login example.com '' True
+    Bugzilla_logincookie example.com '' True
+
+The authentication cookie replaces the previous one.
+
+    >>> bugzilla_transport.auth_cookie is previous_auth_cookie
+    False
+    >>> print(server.Test.login_required())
+    Wonderful, you've logged in! Aren't you a clever biped?
 
 
 Launchpad.time()

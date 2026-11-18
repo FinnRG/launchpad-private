@@ -45,11 +45,14 @@ method will return the user's user ID in a dict.
     ... )
     {'id': 0}
 
-The Bugzilla_logincookie will now have been set for the transport, too.
+The login cookies will now have been set for the transport, too.
 
-    >>> print(bugzilla_transport.cookie_jar)
-    <RequestsCookieJar[<Cookie Bugzilla_login=...>,
-                       <Cookie Bugzilla_logincookie=...>]>
+    >>> for cookie in sorted(
+    ...     bugzilla_transport.cookie_jar, key=lambda cookie: cookie.name
+    ... ):
+    ...     print(cookie.name, cookie.domain, repr(cookie.path), bool(cookie.value))
+    Bugzilla_login example.com '' True
+    Bugzilla_logincookie example.com '' True
 
 Trying to log in with an incorrect username or password will result in
 an error being raised.
