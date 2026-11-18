@@ -8,17 +8,20 @@ from zope.component import getUtility
 from zope.security.proxy import removeSecurityProxy
 
 from lp.app.errors import UnexpectedFormData
+from lp.services.beautifulsoup import BeautifulSoup
 from lp.services.webapp.publisher import canonical_url
 from lp.services.webapp.servers import LaunchpadTestRequest
 from lp.testing import (
     StormStatementRecorder,
     TestCaseWithFactory,
     anonymous_logged_in,
+    login_person,
     person_logged_in,
 )
 from lp.testing.layers import DatabaseFunctionalLayer, ZopelessDatabaseLayer
 from lp.testing.matchers import HasQueryCount
 from lp.testing.views import create_view
+from lp.translations.browser.browser_helpers import convert_newlines_to_web_form
 from lp.translations.browser.translationmessage import (
     CurrentTranslationMessagePageView,
     CurrentTranslationMessageView,
@@ -31,6 +34,61 @@ from lp.translations.interfaces.potemplate import IPOTemplateSet
 from lp.translations.interfaces.side import ITranslationSideTraitsSet
 from lp.translations.interfaces.translations import TranslationConstants
 from lp.translations.interfaces.translationsperson import ITranslationsPerson
+
+
+class TestCurrentTranslationMessageRendering(TestCaseWithFactory):
+    layer = DatabaseFunctionalLayer
+
+    def assertTextareaContent(self, translation):
+        pofile = self.factory.makePOFile("es")
+        login_person(pofile.potemplate.owner)
+        potmsgset = self.factory.makePOTMsgSet(
+            pofile.potemplate, singular="First line\nSecond line"
+        )
+        message = self.factory.makeCurrentTranslationMessage(
+            pofile=pofile, potmsgset=potmsgset
+        )
+        removeSecurityProxy(message).browser_pofile = pofile
+        view = CurrentTranslationMessageView(
+            current_translation_message=message,
+            request=LaunchpadTestRequest(),
+            plural_indices_to_store={},
+            translations={0: translation},
+            force_suggestion=False,
+            force_diverge=False,
+            error=None,
+            second_lang_code=None,
+            form_is_writeable=True,
+            pofile=pofile,
+            can_edit=True,
+        )
+        view.initialize()
+        textarea = BeautifulSoup(view()).find("textarea")
+        self.assertIsNotNone(textarea)
+        expected = (
+            "\n" + convert_newlines_to_web_form(translation)
+            if translation
+            else ""
+        )
+        self.assertEqual(expected, textarea.get_text())
+
+    def test_empty(self):
+        self.assertTextareaContent("")
+
+    def test_plain_text(self):
+        self.assertTextareaContent("foo")
+
+    def test_leading_newline(self):
+        self.assertTextareaContent("\nfoo")
+
+    def test_trailing_newline(self):
+        self.assertTextareaContent("foo\n")
+
+    def test_multiple_newlines(self):
+        self.assertTextareaContent("\nfoo\n\n")
+
+    def test_html_special_characters(self):
+        self.assertTextareaContent("</textarea><script>&\"'</script>")
 
 
 class TestCurrentTranslationMessage_can_dismiss(TestCaseWithFactory):
