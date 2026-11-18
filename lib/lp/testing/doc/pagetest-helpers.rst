@@ -159,7 +159,7 @@ class:
     >>> find_tags_by_class = test.globs["find_tags_by_class"]
     >>> content = '''
     ... <html>
-    ...   <head><title>Foo</title</head>
+    ...   <head><title>Foo</title></head>
     ...   <body>
     ...     <p class="message">Message</p>
     ...     <p class="error message">Error message</p>
@@ -213,7 +213,7 @@ matching Tag object, if one exists:
     >>> first_tag_by_class = test.globs["first_tag_by_class"]
     >>> content = '''
     ... <html>
-    ...   <head><title>Foo</title</head>
+    ...   <head><title>Foo</title></head>
     ...   <body>
     ...     <p class="heavy">Message</p>
     ...     <p class="light">Error message</p>
@@ -230,7 +230,7 @@ If no tags have the given class, then "None" is returned.
 
     >>> content = '''
     ... <html>
-    ...   <head><title>Foo</title</head>
+    ...   <head><title>Foo</title></head>
     ...   <body>
     ...     <p class="medium">Message</p>
     ...     <p class="medium">Error message</p>
@@ -254,7 +254,7 @@ find a portlet by its title and return it:
     >>> find_portlet = test.globs["find_portlet"]
     >>> content = '''
     ... <html>
-    ...   <head><title>Foo</title</head>
+    ...   <head><title>Foo</title></head>
     ...   <body>
     ...     <div class="portlet">
     ...       <h2>Portlet 1</h2>
@@ -552,4 +552,3 @@ Sometimes the label isn't directly above the radio button.
     ( ) Hosted
     (*) Mirrored
     ( ) Remote
-
