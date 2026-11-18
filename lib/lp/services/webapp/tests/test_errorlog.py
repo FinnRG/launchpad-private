@@ -369,13 +369,15 @@ class TestErrorReportingUtility(TestCaseWithFactory):
         try:
             raise UnprintableException()
         except UnprintableException:
-            report = utility.raising(sys.exc_info())
+            info = sys.exc_info()
+            expected_traceback_end = "".join(
+                traceback.format_exception_only(info[0], info[1])
+            )
+            report = utility.raising(info)
 
         unprintable = "<unprintable UnprintableException object>"
         self.assertEqual(unprintable, report["value"])
-        self.assertIn(
-            "UnprintableException: " + unprintable, report["tb_text"]
-        )
+        self.assertIn(expected_traceback_end, report["tb_text"])
 
     def test_raising_unauthorized_without_request(self):
         """Unauthorized exceptions are logged when there's no request."""
