@@ -94,7 +94,7 @@ lazr.lifecycle==1.2.1
 lazr.restful==2.0.2
 lazr.restfulclient==0.14.6
 # Local fork: ../lazr.sshserver, branch noble-twisted-26.10.
-lazr.sshserver==0.1.16+lp1
+lazr.sshserver==0.1.16+lp2
 lazr.uri==1.0.6
 lxml==6.1.0
 loggerhead==2.0.1
@@ -203,7 +203,7 @@ traitlets==5.14.3
 transaction==3.0.1
 treq==24.9.1
 # Local fork: ../twisted, branch lp-backport-26.10.0.
-Twisted==26.10.0+lp1
+Twisted==26.10.0+lp2
 # Python 3.8 and twisted 20.3.0+lp9
 txfixtures==0.4.3; python_version < "3.10"
 # Python 3.10+ and twisted 24.11
