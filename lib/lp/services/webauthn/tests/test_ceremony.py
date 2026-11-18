@@ -6,7 +6,11 @@
 from datetime import datetime, timedelta
 
 from fido2.utils import sha256, websafe_encode
-from fido2.webauthn import AttestationObject, AuthenticatorData
+from fido2.webauthn import (
+    AttestationObject,
+    AuthenticatorData,
+    PublicKeyCredentialUserEntity,
+)
 from zope.component import getUtility
 
 from lp.services.webapp.interfaces import ISession
@@ -20,8 +24,16 @@ from lp.services.webauthn.ceremony import (
 )
 from lp.services.webauthn.interfaces import IRegisteredAuthenticatorSet
 from lp.services.webauthn.tests.dummyauthenticator import DummyAuthenticator
-from lp.testing import TestCaseWithFactory, login_person
-from lp.testing.layers import DatabaseFunctionalLayer
+from lp.testing import TestCase, TestCaseWithFactory, login_person
+from lp.testing.layers import BaseLayer, DatabaseFunctionalLayer
+
+
+class TestFido2Defaults(TestCase):
+    layer = BaseLayer
+
+    def test_user_id_is_json_safe_by_default(self):
+        user = PublicKeyCredentialUserEntity(id=b"user", name="user")
+        self.assertEqual("dXNlcg", dict(user)["id"])
 
 
 class TestWebAuthnRegistration(TestCaseWithFactory):

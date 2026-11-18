@@ -30,7 +30,7 @@ from binascii import Error as BinasciiError
 from datetime import datetime, timedelta
 from enum import Enum
 
-from fido2 import cbor, features
+from fido2 import cbor
 from fido2.server import Fido2Server
 from fido2.webauthn import (
     AttestationConveyancePreference,
@@ -50,11 +50,6 @@ from zope.security.proxy import isinstance as zope_isinstance
 from lp.services.webapp.interfaces import ISession
 from lp.services.webapp.vhosts import allvhosts
 from lp.services.webauthn.interfaces import IRegisteredAuthenticatorSet
-
-# We always want JSON-safe (base64url)
-# values, both for our own webservice API and because `RegistrationResponse`
-# refuses to be used at all otherwise.
-features.webauthn_json_mapping.enabled = True
 
 SESSION_PKG_KEY = "launchpad.webauthn"
 CHALLENGE_LIFETIME = timedelta(minutes=5)
