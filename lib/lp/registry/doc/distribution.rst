@@ -446,7 +446,9 @@ no way for a distribution to use codehosting.
     NOT_APPLICABLE
     >>> ubuntu.codehosting_usage = ServiceUsage.LAUNCHPAD
     Traceback (most recent call last):
-    AttributeError: can't set attribute...
+    AttributeError: ...
+    >>> print(ubuntu.codehosting_usage.name)
+    NOT_APPLICABLE
 
 While Debian uses none:
 

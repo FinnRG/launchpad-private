@@ -56,7 +56,7 @@ Attempting to access an unknown name from the cache is an error.
     >>> cache.baz
     Traceback (most recent call last):
     ...
-    AttributeError: 'DefaultPropertyCache' object has no attribute 'baz'
+    AttributeError: 'DefaultPropertyCache' object has no attribute 'baz'...
 
 Values in the cache can be deleted.
 
