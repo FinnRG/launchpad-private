@@ -10,8 +10,10 @@ import sys
 import tempfile
 import types
 from shutil import rmtree
+from unittest.mock import Mock, call
 
 import transaction
+from fixtures import MockPatch
 from storm.exceptions import DisconnectionError
 from testtools.testcase import ExpectedException
 from zope.component import getUtility
@@ -26,14 +28,45 @@ from lp.services.config import config
 from lp.services.osutils import override_environ
 from lp.services.webapp.interfaces import ILaunchpadRoot
 from lp.testing import ANONYMOUS, TestCase, login
-from lp.testing.layers import LaunchpadFunctionalLayer
+from lp.testing.layers import BaseLayer, LaunchpadFunctionalLayer
 from lp.testing.matchers import Contains
 from lp.testing.publication import test_traverse
 from lp.testing.tests import test_yuixhr_fixture
 from lp.testing.views import create_view
-from lp.testing.yuixhr import setup
+from lp.testing.yuixhr import CloseDbResult, setup
 
 TEST_MODULE_NAME = "_lp_.tests"
+
+
+class TestCloseDbResult(TestCase):
+    layer = BaseLayer
+
+    def test_teardown_yields_bytes_and_resets_fixtures(self):
+        reset = Mock()
+        for owner, method in (
+            ("LaunchpadLayer", "resetSessionDb"),
+            ("DatabaseLayer", "testSetUp"),
+            ("LibrarianLayer", "testTearDown"),
+            ("DatabaseLayer", "testTearDown"),
+            ("LibrarianLayer", "testSetUp"),
+        ):
+            self.useFixture(
+                MockPatch(
+                    "lp.testing.yuixhr." + owner + "." + method,
+                    new=getattr(reset, owner + "_" + method),
+                )
+            )
+        self.assertEqual([b"", b"", b"", b"", b"\n"], list(CloseDbResult()))
+        self.assertEqual(
+            [
+                call.LaunchpadLayer_resetSessionDb(),
+                call.DatabaseLayer_testSetUp(),
+                call.LibrarianLayer_testTearDown(),
+                call.DatabaseLayer_testTearDown(),
+                call.LibrarianLayer_testSetUp(),
+            ],
+            reset.mock_calls,
+        )
 
 
 def create_traversed_view(*args, **kwargs):
@@ -125,7 +158,27 @@ class TestYUITestFixtureController(TestCase):
         config.root = top_dir
         view = create_traversed_view(path_info="/+yuitest/foo.js")
         content = view()
-        self.assertEqual("// javascript", content.read())
+        self.assertEqual(b"// javascript", content)
+        view.request.response.setResult(content)
+        self.assertEqual(
+            "text/javascript", view.request.response.getHeader("Content-Type")
+        )
+        self.assertEqual(
+            "no-cache", view.request.response.getHeader("Cache-Control")
+        )
+
+    def test_render_combofile(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.patch(config, "root", root)
+            js_dir = os.path.join(root, "build", "js")
+            os.makedirs(js_dir)
+            with open(os.path.join(js_dir, "foo.js"), "wb") as f:
+                f.write(b"// javascript")
+            view = create_traversed_view(path_info="/+yuitest/build/js/foo.js")
+            content = view()
+
+        self.assertEqual(b"// javascript", content)
+        view.request.response.setResult(content)
         self.assertEqual(
             "text/javascript", view.request.response.getHeader("Content-Type")
         )
@@ -301,7 +354,7 @@ class TestYUITestFixtureController(TestCase):
         )
         result = view.request.response.consumeBodyIter()
         self.assertProvides(result, IResult)
-        self.assertEqual("\n", "".join(result))
+        self.assertEqual(b"\n", b"".join(result))
         self.assertEqual(
             "1", view.request.response.getHeader("Content-Length")
         )
@@ -334,7 +387,7 @@ class TestYUITestFixtureController(TestCase):
         # The product still exists after the teardown has been called.
         self.assertFalse(products.getByName(name) is None)
         # Iterating over the result causes the database to be reset.
-        "".join(view.request.response.consumeBodyIter())
+        b"".join(view.request.response.consumeBodyIter())
         # The database is disconnected now.
         self.assertRaises(DisconnectionError, products.getByName, name)
         # If we abort the transaction...

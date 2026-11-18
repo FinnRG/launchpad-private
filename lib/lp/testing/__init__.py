@@ -66,7 +66,7 @@ from datetime import datetime, timedelta, timezone
 from fnmatch import fnmatchcase
 from functools import partial
 from select import select
-from typing import TYPE_CHECKING, Optional, Type
+from typing import TYPE_CHECKING, Optional, Type, Union
 
 import fixtures
 import lp_sitecustomize
@@ -154,7 +154,7 @@ from lp.testing.karma import KarmaRecorder
 from lp.testing.mail_helpers import pop_notifications
 
 if TYPE_CHECKING:
-    from lp.testing.layers import BaseLayer
+    from lp.testing.layers import WebBrowserLayer, YUIAppServerLayer
 
 # The following names have been imported for the purpose of being
 # exported. They are referred to here to silence lint warnings.
@@ -1071,7 +1071,7 @@ class WebServiceTestCase(TestCaseWithFactory):
 
 
 class AbstractYUITestCase(TestCase):
-    layer: Optional[Type["BaseLayer"]] = None
+    layer: Optional[Type[Union["WebBrowserLayer", "YUIAppServerLayer"]]] = None
     suite_name = ""
     # 30 seconds for the suite.
     suite_timeout = 30000
@@ -1108,11 +1108,9 @@ class AbstractYUITestCase(TestCase):
         The tests are run during `setUp()`, but failures need to be reported
         from here.
         """
-        # Circular import.
-        from lp.testing.layers import WebBrowserLayer
-
-        assert WebBrowserLayer.browser
-        results = WebBrowserLayer.browser.run_tests(
+        assert self.layer is not None
+        assert self.layer.browser
+        results = self.layer.browser.run_tests(
             self.html_uri,
             timeout=self.suite_timeout,
             incremental_timeout=self.incremental_timeout,

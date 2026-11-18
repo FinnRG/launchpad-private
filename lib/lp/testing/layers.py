@@ -49,7 +49,6 @@ import base64
 import datetime
 import gc
 import os
-import select
 import signal
 import socket
 import subprocess
@@ -1662,6 +1661,8 @@ class LayerProcessController:
     # Holds the Popen instance of the spawned app server.
     appserver = None
 
+    appserver_output = None
+
     # The config used by the spawned app server.
     appserver_config = None
 
@@ -1703,6 +1704,8 @@ class LayerProcessController:
             # time we got here.
             cls.appserver.communicate()
             cls.appserver = None
+            cls.appserver_output.close()
+            cls.appserver_output = None
             return False
         else:
             return True
@@ -1737,6 +1740,8 @@ class LayerProcessController:
                     until = datetime.datetime.now() + WAIT_INTERVAL
             cls.appserver.communicate()
             cls.appserver = None
+            cls.appserver_output.close()
+            cls.appserver_output = None
 
     @classmethod
     @profiled
@@ -1748,17 +1753,14 @@ class LayerProcessController:
         if cls.appserver.poll() is not None:
             raise LayerIsolationError(
                 "App server died in this test (status=%s):\n%s"
-                % (cls.appserver.returncode, cls.appserver.stdout.read())
+                % (cls.appserver.returncode, cls._readAppServerOutput())
             )
-        # Cleanup the app server's output buffer between tests.
-        while True:
-            # Read while we have something available at the stdout.
-            r, w, e = select.select([cls.appserver.stdout], [], [], 0)
-            if cls.appserver.stdout in r:
-                cls.appserver.stdout.readline()
-            else:
-                break
         DatabaseLayer.force_dirty_database()
+
+    @classmethod
+    def _readAppServerOutput(cls):
+        cls.appserver_output.seek(0)
+        return cls.appserver_output.read()
 
     @classmethod
     def _cleanUpStaleAppServer(cls):
@@ -1779,13 +1781,20 @@ class LayerProcessController:
         cmd = [os.path.join(_config.root, "bin", run_name)]
         environ = dict(os.environ)
         environ["LPCONFIG"] = _config.instance_name
-        cls.appserver = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            env=environ,
-            cwd=_config.root,
-        )
+        # Request logs can fill a pipe while the browser is running.
+        cls.appserver_output = tempfile.TemporaryFile()
+        try:
+            cls.appserver = subprocess.Popen(
+                cmd,
+                stdout=cls.appserver_output,
+                stderr=subprocess.STDOUT,
+                env=environ,
+                cwd=_config.root,
+            )
+        except Exception:
+            cls.appserver_output.close()
+            cls.appserver_output = None
+            raise
 
     @classmethod
     def appserver_root_url(cls):
@@ -1816,7 +1825,7 @@ class LayerProcessController:
                 if returncode is not None:
                     raise RuntimeError(
                         "App server failed to start (status=%d):\n%s"
-                        % (returncode, cls.appserver.stdout.read())
+                        % (returncode, cls._readAppServerOutput())
                     )
                 time.sleep(0.5)
             else:
@@ -1826,6 +1835,8 @@ class LayerProcessController:
             os.kill(cls.appserver.pid, signal.SIGTERM)
             cls.appserver.communicate()
             cls.appserver = None
+            cls.appserver_output.close()
+            cls.appserver_output = None
             # Go no further.
             raise AssertionError("App server startup timed out.")
 
@@ -1980,8 +1991,6 @@ class WebBrowserLayer(BaseLayer):
 
 class YUITestLayer(FunctionalLayer, WebBrowserLayer):
     """The layer for all YUI test cases."""
-
-    browser = None
 
     @classmethod
     @profiled

@@ -130,21 +130,21 @@ class CloseDbResult:
             # it to be done, but there's not a (known) compelling need
             # for that right now, and doing it this way is slightly
             # simpler.
-            yield ""
+            yield b""
             DatabaseLayer.testSetUp()
-            yield ""
+            yield b""
             # Reset the librarian.
             LibrarianLayer.testTearDown()
-            yield ""
+            yield b""
             # Reset the database.
             DatabaseLayer.testTearDown()
-            yield ""
+            yield b""
             LibrarianLayer.testSetUp()
         except Exception:
             print("Hm, serious error when trying to clean up the test.")
             traceback.print_exc()
         # We're done, so we can yield the body.
-        yield "\n"
+        yield b"\n"
 
 
 class YUITestFixtureControllerView(LaunchpadView):
@@ -369,12 +369,16 @@ class YUITestFixtureControllerView(LaunchpadView):
             self.request.response.setHeader("Content-Type", "text/javascript")
         elif self.traversed_path.endswith("css"):
             self.request.response.setHeader("Content-Type", "text/css")
-        return open(os.path.join(config.root, self.traversed_path))
+        with open(os.path.join(config.root, self.traversed_path), "rb") as f:
+            return f.read()
 
     def renderJAVASCRIPT(self):
         self.request.response.setHeader("Content-Type", "text/javascript")
         self.request.response.setHeader("Cache-Control", "no-cache")
-        return open(os.path.join(config.root, "lib", self.traversed_path))
+        with open(
+            os.path.join(config.root, "lib", self.traversed_path), "rb"
+        ) as f:
+            return f.read()
 
     def renderHTML(self):
         self.request.response.setHeader("Content-Type", "text/html")
