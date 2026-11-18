@@ -251,13 +251,17 @@ def run_process_with_timeout(args, timeout=5, clock=None):
     :param clock: Passed to `ProcessMonitorProtocolWithTimeout.__init__`.
 
     :return: a `Deferred` of the spawned process using
-        `ProcessMonitorProtocolWithTimeout`
+        `ProcessMonitorProtocolWithTimeout`. If the process cannot be started,
+        the Deferred fails with the underlying `OSError`.
     """
     assert isinstance(args, tuple), "'args' must be a tuple."
     d = defer.Deferred()
     p = ProcessMonitorProtocolWithTimeout(d, timeout, clock)
     executable = args[0]
-    reactor.spawnProcess(p, executable, args)
+    try:
+        reactor.spawnProcess(p, executable, args)
+    except OSError:
+        d.errback()
     return d
 
 

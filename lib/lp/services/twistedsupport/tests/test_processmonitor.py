@@ -8,7 +8,7 @@ from testtools.twistedsupport import (
     assert_fails_with,
     flush_logged_errors,
 )
-from twisted.internet import defer, error, task
+from twisted.internet import defer, error, reactor, task
 from twisted.python import failure
 
 from lp.services.twistedsupport import suppress_stderr
@@ -375,10 +375,21 @@ class TestRunProcessWithTimeout(TestCase):
         return assert_fails_with(d, error.ProcessTerminated)
 
     def test_run_process_with_timeout_broken(self):
-        # On broken process, the errback is fired with a `ProcessTerminated`
-        # failure.
+        # A missing executable can fail at spawn or after the child starts.
         d = run_process_with_timeout(("does-not-exist",))
-        return assert_fails_with(d, error.ProcessTerminated)
+        return assert_fails_with(d, FileNotFoundError, error.ProcessTerminated)
+
+    def test_run_process_with_timeout_spawn_error(self):
+        spawn_error = PermissionError("cannot start process")
+
+        def fail_spawn(*args, **kwargs):
+            raise spawn_error
+
+        self.patch(reactor, "spawnProcess", fail_spawn)
+        d = run_process_with_timeout(("command",))
+        d = assert_fails_with(d, PermissionError)
+        d.addCallback(lambda error: self.assertIs(spawn_error, error))
+        return d
 
     def test_run_process_with_timeout_timeout(self):
         # On process timeout, the errback is fired with `TimeoutError`
