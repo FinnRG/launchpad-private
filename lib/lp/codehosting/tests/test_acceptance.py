@@ -125,14 +125,14 @@ class SSHTestCase(TestCaseWithTransport, LoomTestMixin, TestCaseWithFactory):
         self.assertEqual(local_revision, remote_revision)
 
     def _run_bzr(self, args, retcode=0):
-        """Call run_bzr_subprocess with some common options.
+        """Call run_brz_subprocess with some common options.
 
         We always want to force the subprocess to do its ssh communication
         with paramiko (because OpenSSH doesn't respect the $HOME environment
         variable) and we want to load the plugins that are in rocketfuel
         (mainly so we can test the loom support).
         """
-        output, error = self.run_bzr_subprocess(
+        output, error = self.run_brz_subprocess(
             args,
             env_changes={
                 "BRZ_SSH": "paramiko",

@@ -17,7 +17,6 @@ from twisted.internet import process
 from twisted.python import log
 from zope.event import notify
 
-from lp.codehosting import get_brz_path
 from lp.services.config import config
 
 
@@ -156,10 +155,7 @@ def lookup_command_template(command):
     :return: Command template
     :raise ForbiddenCommand: Raised when command isn't allowed
     """
-    python_command = "%(root)s/bin/py %(brz)s" % {
-        "root": config.root,
-        "brz": get_brz_path(),
-    }
+    python_command = "%s/bin/py -m breezy" % config.root
     args = " lp-serve --inet %(user_id)s"
     command_template = python_command + args
 

@@ -8,7 +8,7 @@ from twisted.conch.ssh import connection
 from twisted.internet.process import ProcessExitedAlready
 from twisted.internet.protocol import ProcessProtocol
 
-from lp.codehosting import get_brz_path, get_BRZ_PLUGIN_PATH_for_subprocess
+from lp.codehosting import get_BRZ_PLUGIN_PATH_for_subprocess
 from lp.codehosting.sshserver.daemon import CodehostingAvatar
 from lp.codehosting.sshserver.session import (
     ExecOnlySession,
@@ -418,7 +418,8 @@ class TestSessionIntegration(AvatarTestCase):
         self.assertEqual(
             [
                 interpreter,
-                get_brz_path().encode("UTF-8"),
+                b"-m",
+                b"breezy",
                 b"lp-serve",
                 b"--inet",
                 str(self.avatar.user_id).encode("UTF-8"),
@@ -436,10 +437,7 @@ class TestLookupCommand(TestCase):
 
     def test_bzr(self):
         self.assertEqual(
-            config.root
-            + "/bin/py "
-            + get_brz_path()
-            + " lp-serve --inet %(user_id)s",
+            config.root + "/bin/py -m breezy lp-serve --inet %(user_id)s",
             lookup_command_template(
                 b"bzr serve --inet --directory=/ --allow-writes"
             ),
@@ -447,10 +445,7 @@ class TestLookupCommand(TestCase):
 
     def test_brz(self):
         self.assertEqual(
-            config.root
-            + "/bin/py "
-            + get_brz_path()
-            + " lp-serve --inet %(user_id)s",
+            config.root + "/bin/py -m breezy lp-serve --inet %(user_id)s",
             lookup_command_template(
                 b"brz serve --inet --directory=/ --allow-writes"
             ),
