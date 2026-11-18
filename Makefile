@@ -338,6 +338,9 @@ $(VENV_INSTANCE_NAME): download-cache requirements/combined.txt setup.py
 		install \
 		-c requirements/setup.txt -c requirements/combined.txt -e . \
 		|| { code=$$?; rm -f $@; exit $$code; }
+	# Editable wheels do not run our custom develop command.
+	LPCONFIG=$(LPCONFIG) env/bin/python setup.py develop --no-deps \
+		|| { code=$$?; rm -f $@; exit $$code; }
 	touch $@
 
 $(subst $(VENV_INSTANCE_NAME),,$(PIP_BIN)): $(VENV_INSTANCE_NAME)
