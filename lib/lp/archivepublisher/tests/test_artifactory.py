@@ -1583,18 +1583,24 @@ class TestArtifactoryPoolFromLibrarian(TestCaseWithFactory):
         self.assertTrue(path.exists())
         self.assertFalse(path.is_symlink())
         # Simulate Artifactory scanning the package.
+        summaries = [
+            "text with special characters: ;=|,\\",
+            "another value: \\;=|,\\\\",
+        ]
         self.artifactory._fs["/foo/1.0/foo-1.0-py3-none-any.whl"][
             "properties"
-        ]["pypi.summary"] = ["text with special characters: ;=|,\\"]
+        ]["pypi.summary"] = summaries
 
         pool.updateProperties(
             bpr.sourcepackagename, bpr.sourcepackageversion, bpf, bpphs
         )
 
-        self.assertEqual(
-            ["text with special characters: ;=|,"],
-            path.properties["pypi.summary"],
+        self.assertEqual(summaries, path.properties["pypi.summary"])
+
+        pool.updateProperties(
+            bpr.sourcepackagename, bpr.sourcepackageversion, bpf, bpphs
         )
+        self.assertEqual(summaries, path.properties["pypi.summary"])
 
     def test_updateProperties_sets_soss_license_source_spdx(self):
         # Set the `soss.license` field appropriately for a source package if

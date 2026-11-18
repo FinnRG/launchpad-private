@@ -429,22 +429,6 @@ class ArtifactoryPoolEntry:
             and key not in self.owned_properties
         }
         new_properties.update(properties)
-        # https://www.jfrog.com/confluence/display/JFROG/Artifactory+REST+API
-        # claims that ",", backslash, "|", and "=" require quoting with a
-        # leading URL-encoded backslash.  The artifactory module quotes ",",
-        # "|", and "=" (and handles URL-encoding at a lower layer).  In
-        # practice, backslash must apparently not be quoted, and ";" must be
-        # quoted as otherwise ";" within items will be confused with a
-        # property separator; we must also remove any trailing backslashes as
-        # they'll cause any following property to be interpreted as part of
-        # this property value.  This is not very satisfactory as we're
-        # essentially playing core wars with the artifactory module, and
-        # removing trailing backslashes unavoidably loses some information,
-        # but this solves the problem for now.
-        new_properties = {
-            key: [v.rstrip("\\").replace(";", r"\;") for v in value]
-            for key, value in new_properties.items()
-        }
         if old_properties != new_properties:
             # We could use the ArtifactoryPath.properties setter, but that
             # will fetch the old properties again when we already have them
