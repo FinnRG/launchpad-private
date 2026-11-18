@@ -3,7 +3,7 @@
 
 """Tests for the lp-serve plugin."""
 
-from breezy import errors
+from breezy.bzr.remote import UnknownErrorFromSmartServer
 from breezy.bzr.smart import medium
 from breezy.plugins.lpserve.test_lpserve import TestCaseWithSubprocess
 from breezy.transport import remote
@@ -39,7 +39,7 @@ class TestLaunchpadServe(TestCaseWithSubprocess):
         process.stdin = None
         # Finish the process without asserting anything about the return code.
         # We'll leave that to assertFinishedCleanly.
-        stdout_and_stderr = self.finish_bzr_subprocess(process, retcode=None)
+        stdout_and_stderr = self.finish_brz_subprocess(process, retcode=None)
         return (
             process.returncode,
             stdout_and_stderr[0],
@@ -86,9 +86,18 @@ class TestLaunchpadServe(TestCaseWithSubprocess):
         # Starting and stopping the lp-serve process leaves no OOPS.
         capture = self.useFixture(CaptureOops())
         process, transport = self.start_server_inet()
-        self.finish_lpserve_subprocess(process)
+        result = self.finish_lpserve_subprocess(process)
+        self.assertFinishedCleanly(result)
         capture.sync()
         self.assertEqual([], capture.oopses)
+
+    def test_start_without_virtualenv_on_path(self):
+        process = self.start_bzr_subprocess(
+            ["lp-serve", "--inet", "1"],
+            env_changes={"PATH": "/usr/bin:/bin", "PYTHONPATH": None},
+        )
+        result = self.finish_lpserve_subprocess(process)
+        self.assertFinishedCleanly(result)
 
     def test_unexpected_error_logs_oops(self):
         # If an unexpected error is raised in the plugin, then an OOPS is
@@ -100,7 +109,7 @@ class TestLaunchpadServe(TestCaseWithSubprocess):
         # server. If this *doesn't* raise, then the test is no longer valid
         # and we need a new way of triggering errors in the smart server.
         self.assertRaises(
-            errors.UnknownErrorFromSmartServer,
+            UnknownErrorFromSmartServer,
             transport.list_dir,
             "foo/bar/baz",
         )

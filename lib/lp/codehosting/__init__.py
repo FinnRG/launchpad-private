@@ -8,6 +8,7 @@ all plugins in the brzplugins/ directory underneath the rocketfuel checkout.
 """
 
 __all__ = [
+    "get_brz_command",
     "get_brz_path",
 ]
 
@@ -30,6 +31,11 @@ from lp.services.config import config
 def get_brz_path():
     """Find the path to the copy of Breezy for this rocketfuel instance"""
     return os.path.join(config.root, "bin", "brz")
+
+
+def get_brz_command():
+    """Return a command that runs Breezy in the Launchpad virtualenv."""
+    return [os.path.join(config.root, "bin", "py"), "-m", "breezy"]
 
 
 def _get_brz_plugins_path():

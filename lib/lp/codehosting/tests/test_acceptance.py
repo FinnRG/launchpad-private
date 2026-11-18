@@ -23,7 +23,7 @@ from lp.code.interfaces.branchnamespace import get_branch_namespace
 from lp.code.tests.helpers import (
     get_non_existant_source_package_branch_unique_name,
 )
-from lp.codehosting import get_brz_path, get_BRZ_PLUGIN_PATH_for_subprocess
+from lp.codehosting import get_brz_command, get_BRZ_PLUGIN_PATH_for_subprocess
 from lp.codehosting.bzrutils import DenyingServer
 from lp.codehosting.tests.helpers import LoomTestMixin
 from lp.codehosting.tests.servers import (
@@ -157,12 +157,9 @@ class SSHTestCase(TestCaseWithTransport, LoomTestMixin, TestCaseWithFactory):
         """Branch from the given URL to a local directory."""
         self._run_bzr(["branch", remote_url, local_directory])
 
-    def get_brz_path(self):
-        """See `breezy.tests.TestCase.get_brz_path`.
-
-        We override this to return our own 'brz' executable.
-        """
-        return get_brz_path()
+    def get_brz_command(self):
+        """See `breezy.tests.TestCase.get_brz_command`."""
+        return get_brz_command()
 
     def push(self, local_directory, remote_url, extra_args=None):
         """Push the local branch to the given URL."""

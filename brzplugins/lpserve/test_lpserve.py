@@ -6,7 +6,7 @@ import subprocess
 
 from breezy import osutils, tests
 
-from lp.codehosting import get_brz_path, get_BRZ_PLUGIN_PATH_for_subprocess
+from lp.codehosting import get_brz_command, get_BRZ_PLUGIN_PATH_for_subprocess
 
 
 class TestCaseWithSubprocess(tests.TestCaseWithTransport):
@@ -25,8 +25,8 @@ class TestCaseWithSubprocess(tests.TestCaseWithTransport):
 
         Copied and modified from `breezy.tests.TestCase.start_bzr_subprocess`.
         This version removes some of the skipping stuff, some of the
-        irrelevant comments (e.g. about win32) and uses Launchpad's own
-        mechanisms for getting the path to 'brz'.
+        irrelevant comments (e.g. about win32) and uses Launchpad's
+        virtualenv to run Breezy.
 
         Comments starting with 'LAUNCHPAD' are comments about our
         modifications.
@@ -49,12 +49,9 @@ class TestCaseWithSubprocess(tests.TestCaseWithTransport):
             cwd = osutils.getcwd()
             os.chdir(working_dir)
 
-        # LAUNCHPAD: We can't use self.get_brz_path(), since it'll find
-        # lib/breezy, rather than the path to bin/brz.
-        brz_path = get_brz_path()
         try:
             cleanup_environment()
-            command = [brz_path]
+            command = get_brz_command()
             command.extend(process_args)
             process = self._popen(
                 command,
