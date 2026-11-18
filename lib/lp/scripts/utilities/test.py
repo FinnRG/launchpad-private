@@ -74,7 +74,7 @@ def configure_environment():
     # Make tests run in a timezone no launchpad developers live in.
     # Our tests need to run in any timezone.
     # (This is no longer actually required, as PQM does this.)
-    os.environ["TZ"] = "Asia/Calcutta"
+    os.environ["TZ"] = "Asia/Kolkata"
     time.tzset()
 
     # Forces tests to run with a sensible locale encoding
