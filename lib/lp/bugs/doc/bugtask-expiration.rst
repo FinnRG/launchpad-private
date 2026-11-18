@@ -43,7 +43,7 @@ status. It also requires specifying the user that is doing the search.
     >>> expirable_bugtasks = bugtaskset.findExpirableBugTasks()
     Traceback (most recent call last):
     ...
-    TypeError: findExpirableBugTasks() ...
+    TypeError: ...findExpirableBugTasks() ...
 
 Looking back 9,999 days, findExpirableBugTasks() reports that there are
 no expirable bugtasks in the sampledata.
@@ -656,4 +656,3 @@ expired.
     >>> summarize_bugtasks(expirable_bugtasks)
     ROLE         EXPIRE  AGE  STATUS      ASSIGNED  DUP    MILE   REPLIES
     no_expire    True    61   Incomplete  False     False  False  False
-
