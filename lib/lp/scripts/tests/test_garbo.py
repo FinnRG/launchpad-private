@@ -616,14 +616,21 @@ class TestGarbo(FakeAdapterMixin, TestCaseWithFactory):
         switch_dbuser("testadmin")
         store = IPrimaryStore(CommercialSubscription)
         now = time.time()
-        # Create some associations in the past with lifetimes
+        # Keep expired and unexpired associations well clear of the cutoff.
         for delta in range(0, 20):
+            lifetime = 0 if delta < 10 else 2 * 24 * 60 * 60
             store.execute(
                 """
                 INSERT INTO %s (server_url, handle, issued, lifetime)
                 VALUES (%s, %s, %d, %d)
                 """
-                % (table_name, str(delta), str(delta), now - 10, delta)
+                % (
+                    table_name,
+                    str(delta),
+                    str(delta),
+                    now - 24 * 60 * 60,
+                    lifetime,
+                )
             )
         transaction.commit()
 
@@ -656,8 +663,7 @@ class TestGarbo(FakeAdapterMixin, TestCaseWithFactory):
         ).get_one()[0]
         self.assertEqual(num_expired, 0)
 
-        # Confirm that we haven't expired everything. This test will fail
-        # if it has taken 10 seconds to get this far.
+        # Confirm that we haven't expired everything.
         num_unexpired = store.execute(
             "SELECT COUNT(*) FROM %s" % table_name
         ).get_one()[0]
