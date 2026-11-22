@@ -3,7 +3,6 @@
 
 """Tests for the WSGI archive authorisation provider."""
 
-import crypt
 import io
 import os.path
 import subprocess
@@ -147,7 +146,8 @@ class TestWSGIArchiveAuth(TestCaseWithFactory):
             "archive-auth:%s:%s" % (archive.reference, username)
         )
         self.assertEqual(
-            crypted_password, crypt.crypt(password, crypted_password)
+            crypted_password,
+            archiveauth.crypt.crypt(password, crypted_password),
         )
         self.assertLogs(
             "%s@~%s/ubuntu/%s: Authorized."

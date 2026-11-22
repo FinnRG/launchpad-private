@@ -21,21 +21,28 @@ beautifulsoup4==4.12.3
 billiard==4.2.2
 bleach==6.1.0
 bleach-allowlist==1.0.3
-breezy==3.3.9
+breezy==3.3.9; python_version < "3.14"
+breezy==3.3.17; python_version >= "3.14"
 brz-builder==0.7.4
 brz-loom==3.0.0
-bson==0.5.9
+bson==0.5.9; python_version < "3.14"
+# lp1 Replace removed pkgutil.find_loader in the install command.
+bson==0.5.10+lp1; python_version >= "3.14"
 boto3==1.35.71
 botocore==1.35.71
+BTrees==4.8.0; python_version < "3.14"
+BTrees==6.5; python_version >= "3.14"
 celery==5.5.3
 cffi==2.0.0
-Chameleon==3.6.2
+Chameleon==3.6.2; python_version < "3.14"
+Chameleon==4.6.1; python_version >= "3.14"
 charset-normalizer==3.4.0
 configobj==5.0.6
 contextvars==2.4
 constantly==23.10.4
 coverage==7.6.1
 craft-platforms==0.8.0
+crypt-r==3.13.1; python_version >= "3.13"
 cryptography==46.0.7
 cssselect==0.9.1
 cssutils==2.11.1
@@ -50,12 +57,16 @@ dkimpy==1.1.8
 dnspython==2.6.1
 # https://code.launchpad.net/~launchpad/dohq-artifactory/+git/dohq-artifactory/+ref/0.7.630
 # lp1 Fix the version determination code in setup.py.
-dohq-artifactory==1.0.1
-dulwich==0.22.4
+dohq-artifactory==1.0.1; python_version < "3.14"
+dohq-artifactory==1.0.2; python_version >= "3.14"
+dulwich==0.22.4; python_version < "3.14"
+dulwich==0.24.3; python_version >= "3.14"
 eggtestinfo==0.3
 executing==2.1.0
 enum34==1.1.6
-fastbencode==0.3.1
+fastbencode==0.3.1; python_version < "3.14"
+# lp1 Replace removed PyInt APIs and retain the Python recursion limit.
+fastbencode==0.3.1+lp1; python_version >= "3.14"
 fastimport==0.9.8
 feedparser==6.0.11
 fido2==2.2.1
@@ -96,6 +107,7 @@ lazr.restfulclient==0.14.6
 # Local fork: ../lazr.sshserver, branch noble-twisted-26.10.
 lazr.sshserver==0.1.16+lp2
 lazr.uri==1.0.6
+legacy-cgi==2.6.4; python_version >= "3.13"
 lxml==6.1.0
 loggerhead==2.0.1
 lpjsmin==0.7
@@ -133,15 +145,19 @@ parso==0.7.1
 Paste==3.10.1
 PasteDeploy==3.1.0
 pathlib2==2.3.2
-patiencediff==0.2.2
+patiencediff==0.2.2; python_version < "3.14"
+patiencediff==1.0.2; python_version >= "3.14"
 pexpect==4.8.0
+persistent==4.7.0; python_version < "3.14"
+persistent==6.9; python_version >= "3.14"
 pgbouncer==0.0.9
 pickleshare==0.7.5
 pkginfo==1.11.2
 prettytable==0.7.2
 prompt-toolkit==3.0.48
 psutil==7.0.0
-psycopg2==2.9.9
+psycopg2==2.9.9; python_version < "3.14"
+psycopg2==2.9.13; python_version >= "3.14"
 ptyprocess==0.7.0
 pure-eval==0.2.3
 pyasn1==0.6.1
@@ -212,10 +228,12 @@ txfixtures==0.5.2; python_version >= "3.10"
 txpkgupload==0.5
 typing_extensions==4.16.0; python_version >= "3.9"
 tzlocal==5.2
-urllib3==1.26.20
+urllib3==1.26.20; python_version < "3.14"
+urllib3==2.2.2; python_version >= "3.14"
 van.testing==3.0.0
 vine==5.1.0
-virtualenv-tools3==3.1.1
+virtualenv-tools3==3.1.1; python_version < "3.14"
+virtualenv-tools3==3.1.2; python_version >= "3.14"
 wadllib==1.3.6
 waitress==2.1.2
 wcwidth==0.2.6
@@ -233,6 +251,8 @@ zipp==3.20.2
 zope.app.http==6.0
 zope.app.publication==6.0
 zope.app.publisher==6.0
+zope.container==5.2; python_version < "3.14"
+zope.container==7.4; python_version >= "3.14"
 zope.interface==8.7
 zope.publisher==6.1.0
 zope.testbrowser==5.6.0

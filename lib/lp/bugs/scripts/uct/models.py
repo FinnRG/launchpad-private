@@ -18,10 +18,10 @@ from typing import (
     NamedTuple,
     Optional,
     Set,
+    TextIO,
     Tuple,
     Union,
 )
-from typing.io import TextIO
 
 import dateutil.parser
 from contrib.cve_lib import load_cve
