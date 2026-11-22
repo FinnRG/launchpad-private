@@ -31,7 +31,7 @@ pgversion=
 # This loop contains multiple versions when we are in the process of
 # migrating between PostgreSQL versions.
 # shellcheck disable=SC2043
-for try_pgversion in 16
+for try_pgversion in 18 16
 do
   if sudo grep -qs "^auto" /etc/postgresql/$try_pgversion/main/start.conf; then
     pgversion="$try_pgversion"

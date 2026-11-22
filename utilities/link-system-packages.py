@@ -11,10 +11,7 @@ import re
 from argparse import ArgumentParser
 from distutils.sysconfig import get_python_lib
 
-# Importing this from the vendored version in pkg_resources is a bit dodgy
-# (using packaging.markers directly would be better), but we want to
-# minimise our dependencies on packages outside the virtualenv.
-from pkg_resources.extern.packaging.markers import Marker
+from packaging.markers import Marker
 
 
 def link_module(name, virtualenv_libdir):

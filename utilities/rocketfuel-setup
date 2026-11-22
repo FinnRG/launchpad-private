@@ -84,15 +84,48 @@ for hostname in $hostnames; do
   dev_host;
 done
 
-sudo add-apt-repository -u $INSTALL_OPTS ppa:launchpad/ppa
+release=$(lsb_release -rs)
+if [ "$release" = 26.04 ]; then
+    # The PPA has no Resolute suite. Only these data and Python packages
+    # are taken from Noble; compiled packages come from Resolute.
+    sudo tee /etc/apt/preferences.d/launchpad-noble >/dev/null <<'EOF'
+Package: *
+Pin: release n=noble
+Pin-Priority: -1
+
+Package: convoy-common python3-convoy geoip-data-city-lite
+Pin: release n=noble
+Pin-Priority: 500
+EOF
+    sudo add-apt-repository --no-update $INSTALL_OPTS ppa:launchpad/ppa
+    sudo sed -i 's/^Suites:.*$/Suites: noble/' \
+        /etc/apt/sources.list.d/launchpad-ubuntu-ppa-resolute.sources
+    sudo apt-get update
+    dependencies=(
+        git python3-dev gettext libgettextpo-dev build-essential python3-apt
+        libmaxminddb-dev gnupg1 gnupg2 libgpgme-dev cvs subversion
+        ubuntu-keyring python3-pil bison graphviz libxml2-utils patchutils
+        openssh-client xsltproc geoip-data-city-lite zlib1g-dev ca-certificates
+        libapr1-dev libsvn-dev libpq-dev unzip lzma python3-convoy virtualenv
+        libsodium-dev libffi-dev libssl-dev libxml2-dev libxslt1-dev python3-tdb
+        python3-packaging postgresql-18 postgresql-plpython3-18
+        postgresql-client-18 postgresql-18-debversion rabbitmq-server stunnel4
+        nodejs dpkg devscripts apt-utils sbsigntool u-boot-tools zstd
+        exuberant-ctags pgbouncer postgresql-autodoc tidy mhonarc fakeroot
+        rsync memcached xvfb firefox intltool
+    )
+else
+    sudo add-apt-repository -u $INSTALL_OPTS ppa:launchpad/ppa
+    dependencies=(launchpad-developer-dependencies)
+fi
 # Direct Firefox binaries use host libraries rather than the Snap runtime.
 firefox_libraries=(libasound2 libgtk-3-0)
-if dpkg --compare-versions "$(lsb_release -rs)" ge 24.04; then
+if dpkg --compare-versions "$release" ge 24.04; then
     firefox_libraries=(libasound2t64 libgtk-3-0t64)
 fi
 sudo apt install $INSTALL_OPTS \
-    launchpad-developer-dependencies apache2 libapache2-mod-wsgi-py3 \
-    nasm pkg-config libx11-xcb1 "${firefox_libraries[@]}"
+    "${dependencies[@]}" apache2 libapache2-mod-wsgi-py3 \
+    nasm pkg-config python3-packaging libx11-xcb1 "${firefox_libraries[@]}"
 
 # Create the document root(s) to avoid Apache warnings
 mkdir -p /var/tmp/bazaar.launchpad.test/static

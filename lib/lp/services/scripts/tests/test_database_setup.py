@@ -27,7 +27,8 @@ set -eu
 printf '%s\\n' "$*" >> "$TEST_COMMANDS"
 case "$1" in
     grep)
-        test "$*" = "grep -qs ^auto /etc/postgresql/16/main/start.conf"
+        test "$*" = \
+            "grep -qs ^auto /etc/postgresql/$TEST_PGVERSION/main/start.conf"
         ;;
     pg_conftool)
         if [ "${TEST_CONFIG_FAILURE:-0}" = 1 ]; then
@@ -38,7 +39,7 @@ case "$1" in
         exec /usr/bin/pg_conftool "$TEST_CONFIG" "$@"
         ;;
     pg_ctlcluster)
-        test "$*" = "pg_ctlcluster 16 main reload"
+        test "$*" = "pg_ctlcluster $TEST_PGVERSION main reload"
         ;;
     *)
         echo "Unexpected command: $*" >&2
@@ -53,6 +54,7 @@ esac
             PATH=str(directory) + os.pathsep + os.environ["PATH"],
             TEST_CONFIG=str(self.postgresql_conf),
             TEST_COMMANDS=str(self.commands),
+            TEST_PGVERSION="16",
         )
 
     def runSetup(self, *args):
@@ -83,12 +85,17 @@ esac
         self.assertIn(
             "shared_buffers = '256MB'\n", self.postgresql_conf.read_text()
         )
+        version = self.environment["TEST_PGVERSION"]
+        probes = ["grep -qs ^auto /etc/postgresql/18/main/start.conf"]
+        if version == "16":
+            probes.append("grep -qs ^auto /etc/postgresql/16/main/start.conf")
         self.assertEqual(
-            [
-                "grep -qs ^auto /etc/postgresql/16/main/start.conf",
-                "pg_conftool 16 main set standard_conforming_strings on",
-                "pg_conftool 16 main remove escape_string_warning",
-                "pg_ctlcluster 16 main reload",
+            probes
+            + [
+                f"pg_conftool {version} main set "
+                "standard_conforming_strings on",
+                f"pg_conftool {version} main remove escape_string_warning",
+                f"pg_ctlcluster {version} main reload",
             ],
             self.commands.read_text().splitlines(),
         )
@@ -115,6 +122,14 @@ esac
         self.postgresql_conf.write_text("shared_buffers = '256MB'\n")
         result = self.runSetup("--update-config")
         self.assertEqual(0, result.returncode, result.stderr)
+        self.assertStringSettings()
+
+    def test_update_postgresql_18(self):
+        self.environment["TEST_PGVERSION"] = "18"
+        self.postgresql_conf.write_text("shared_buffers = '256MB'\n")
+        result = self.runSetup("--update-config")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("Using postgres 18", result.stdout)
         self.assertStringSettings()
 
     def test_update_failure_does_not_reload(self):
