@@ -113,7 +113,12 @@ create:
 	@ echo "* Creating database \"$(EMPTY_DBNAME)\"."
 	@ ${CREATEDB} template0 ${EMPTY_DBNAME}
 	@ echo "* Loading base database schema"
-	@ psql $(DBOPTS) -d ${EMPTY_DBNAME} -f ${BASELINE} | grep : | cat
+	# Fix the historical debversion > negator without changing the baseline.
+	@ mkdir -p ../../build/schema
+	@ sed '/^CREATE OPERATOR public\.> (/,+6 s/NEGATOR = OPERATOR(public\.>=)/NEGATOR = OPERATOR(public.<=)/' \
+	    ${BASELINE} > ../../build/schema/${BASELINE}
+	@ psql $(DBOPTS) -v ON_ERROR_STOP=1 -q -d ${EMPTY_DBNAME} \
+	    -f ../../build/schema/${BASELINE}
 	@ echo "* Patching the database schema"
 	@ ./upgrade.py --separate-sessions -d ${EMPTY_DBNAME}
 	@ echo "* Security setup"
