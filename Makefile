@@ -124,7 +124,7 @@ newsampledata:
 hosted_branches: $(PY)
 	$(PY) ./utilities/make-dummy-hosted-branches
 
-$(API_INDEX): $(VERSION_INFO) $(PY)
+$(API_INDEX): $(VERSION_INFO) $(PY) utilities/create-lp-wadl-and-apidoc.py
 	$(RM) -r $(APIDOC_DIR) $(APIDOC_DIR).tmp
 	mkdir -p $(APIDOC_DIR).tmp
 	LPCONFIG=$(LPCONFIG) ./utilities/create-lp-wadl-and-apidoc.py \

@@ -17,7 +17,7 @@ import optparse
 import os
 import sys
 from datetime import datetime
-from multiprocessing import Process
+from multiprocessing import get_context
 
 import six
 from lazr.restful.interfaces import IWebServiceConfiguration
@@ -145,19 +145,28 @@ def main(directory, force=False):
     )
 
     # Start a process to build each set of WADL and HTML files.
+    # Workers need the Zope registrations loaded in the parent.
+    context = get_context("fork")
     processes = []
     for version in config.active_versions:
-        p = Process(
+        p = context.Process(
             target=make_files, args=(directory, version, timestamp, force)
         )
         p.start()
         processes.append(p)
 
     # Wait for all the subprocesses to finish.
+    failed = False
     for p in processes:
         p.join()
+        if p.exitcode != 0:
+            print(
+                f"API documentation worker exited with status {p.exitcode}",
+                file=sys.stderr,
+            )
+            failed = True
 
-    return 0
+    return 1 if failed else 0
 
 
 def parse_args(args):
