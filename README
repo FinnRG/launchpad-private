@@ -39,6 +39,39 @@ the source code any time by doing:
 See <https://documentation.ubuntu.com/launchpad/en/latest/explanation/navigating/>
 for advice on navigating the code.
 
+Resolute development
+===================
+
+The ``resolute-dev`` branch defaults CI to Ubuntu 26.04 and the matching
+``resolute-dev`` source-dependency branch. The GitHub runner remains on 24.04;
+the build and tests run inside an Ubuntu 26.04 LXC container.
+
+The Launchpad PPA does not yet publish a Resolute suite. On 26.04,
+``utilities/rocketfuel-setup`` installs native archive dependencies and
+PostgreSQL 18 directly. It uses the Noble PPA only for ``convoy-common``,
+``python3-convoy`` and ``geoip-data-city-lite``, with all other Noble
+packages blocked by APT preferences.
+
+Python 3.14 uses conditional dependency pins; older Python pins and tool
+syntax targets are unchanged. The offline cache includes small source fixes
+for BSON packaging and fastbencode's native integer and recursion handling.
+Breezy uses an upstream CPython 3.14 wheel to avoid fetching Rust crates
+during installation.
+
+Local validation uses ``lp-resolute`` as ``finnrg``. The initial setup,
+``make build`` and ``make schema`` pass with Python 3.14 and PostgreSQL 18.
+API documentation workers explicitly use ``fork`` to inherit Zope
+registrations, and a failed worker now fails the build. Schema setup fixes
+the historical ``debversion >`` negator in a generated copy, leaving the
+production baseline unchanged.
+
+On 2026-11-22, 162 focused Launchpad tests passed with no failures, errors
+or skips: the setup helpers, UCT scripts, WADL generation, archive
+authentication and Loggerhead integration. All 74 upstream fastbencode
+tests also passed against the compiled extension. Black, isort, flake8
+and ShellCheck passed for the changed files. These checks do not certify
+the full suite; CI provides the remaining migration results.
+
 Firefox in Noble CI
 ===================
 

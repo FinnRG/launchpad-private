@@ -1,5 +1,113 @@
 # AGENTS.md
 
+## Resolute migration project
+
+This checkout's `resolute-dev` branch migrates the Noble baseline to Ubuntu
+Resolute (26.04, Python 3.14, PostgreSQL 18). Apply this section alongside the
+general Launchpad guidance below. The `noble-dev` branch remains the Noble
+baseline.
+
+### Environment
+
+- Run builds, tests, package builds and Python tools inside the `lp-resolute`
+  LXC container as `finnrg`, not root. Only the checkout and dependency
+  directory are mounted at their host paths; the container has its own
+  home directory. Host Python is not the target runtime.
+- The checkout is `/home/finnrg/launchpad-noble/launchpad`. For example:
+
+  ```sh
+  lxc exec lp-resolute -- runuser -u finnrg -- sh -c \
+    'cd /home/finnrg/launchpad-noble/launchpad && bin/test -m lp.services.webauthn -vv'
+  ```
+
+- Use the checkout's `env/` and `bin/`, not system Python packages. Launchpad
+  startup hooks must initialize the environment, including
+  `STORM_CEXTENSIONS=1`. If they are missing, repair the build/startup hooks;
+  do not mask the problem by exporting that variable alone.
+- The previous Noble environment and wheels are retained in `env-noble/`
+  and `wheels-noble/`. Do not reuse their native extensions on Python 3.14
+  or rebuild the shared checkout from `lp-noble` during Resolute work.
+- The development container has accumulated build dependencies and fixture
+  state. A successful local build does not prove a fresh CI setup works.
+  Declare required system packages in `utilities/rocketfuel-setup`.
+- The Launchpad PPA has no Resolute suite. The setup script uses native
+  Resolute packages and PostgreSQL 18, allowing only `convoy-common`,
+  `python3-convoy` and `geoip-data-city-lite` from the Noble PPA.
+- Avoid broad cleanup in this shared environment. `make clean` removes
+  shared `/var/tmp` fixture paths; use targeted cleanup and do not disrupt
+  another test run or rebuild databases without checking first.
+
+### Migration plan and compatibility
+
+1. Keep a reproducible offline dependency install and clean Resolute build.
+2. Resolve remaining migration failures in small, logical groups. Reproduce
+   the original error, fix its shared cause where possible, and run all
+   relevant focused tests. Do not weaken assertions or disable security
+   checks just to obtain a pass.
+3. Use full-suite CI to identify remaining failures after focused validation.
+   Separate application defects, changed expectations, missing dependencies,
+   fixture failures and tests that never ran.
+4. Move toward current upstream Twisted without a permanent Launchpad fork.
+   Preserve existing SSH authentication and key exchange throughout.
+
+- Post-quantum `mlkem768x25519-sha256` support is mandatory, alongside
+  Ed25519, RSA, ECDSA and OpenSSH security-key authentication.
+- The inherited SSH stack uses Twisted `26.10.0+lp2` and lazr.sshserver
+  `0.1.16+lp2`. Their source branches are `../twisted`
+  (`lp-backport-26.10.0`) and `../lazr.sshserver`
+  (`noble-twisted-26.10`).
+- Noble's system OpenSSL 3.0 cannot provide the upstream cryptography ML-KEM
+  backend. The temporary Twisted fork uses the separate `ml-kem-rs` package.
+  Keep that delta small; do not remove it until the replacement backend is
+  verified. See the [SSH compatibility report](NOBLE_SSH_COMPATIBILITY_REPORT.md).
+
+### Dependencies, testing and evidence
+
+- `download-cache` points to the separate Git repository at
+  `../lp-sourcedeps/download-cache`. Its branch is also `resolute-dev`.
+  Put archives in `download-cache/dist/`; prefer sdists over wheels unless
+  source builds cause substantial difficulty. Keep installs offline.
+- Update dependency pins in `requirements/launchpad.txt`; declare new direct
+  requirements in `setup.cfg`. Do not hand-edit generated
+  `requirements/combined.txt`.
+- Python 3.14 dependency changes use environment markers to preserve older
+  runtime pins. The cache contains source fixes for BSON packaging and
+  fastbencode's native integer and recursion handling. Keep its native
+  extension working: missing-extension warnings prevent daemon test setup.
+- API documentation workers explicitly use `fork` to inherit Zope
+  registrations. Check worker exit statuses and generated WADL, JSON and HTML
+  for every active API version.
+- PostgreSQL 18 rejects the historical `debversion >` negator. Schema setup
+  corrects a generated copy in `build/schema/`; do not edit the production
+  baseline or weaken restore error checking.
+- When proving source builds work, bypass pip's wheel cache explicitly.
+  `PIP_NO_CACHE_DIR=1` alone was overridden by the Makefile's `--cache-dir`.
+- Keep Resolute results separate from the Noble
+  [test checklist](NOBLE_TRANSITION_TEST_TODO.md). The
+  [original test report](NOBLE_TRANSITION_TEST_REPORT.md) is historical
+  evidence, not the current failure inventory.
+- Check off only tests observed passing, retaining exact runtime IDs and
+  scenario suffixes. Missing results, skipped tests and layer-setup failures
+  are not passes. Record the tested commit, command/scope and evidence.
+- The original audit included all test levels; CI's `bin/test -vvc` uses
+  level 1. Do not compare their totals as if the selected scope were equal.
+- A newer dependency can fix many downstream tests at once. Distinguish an
+  observed pass from a proven explanation for why it now passes.
+
+### Commits and remote changes
+
+- Preserve unrelated local changes, including edits in files you touch.
+  When asked to commit, separate logical changes and stage only those changes. Always explain the "Why?" in the commit message.
+  Do not add AI co-author trailers.
+- CI is in `FinnRG/launchpad-private`; its push target is
+  `gh-private/resolute-dev`, not the branch's older tracking remote.
+  CI defaults to an Ubuntu 26.04 container and the `resolute-dev` dependency
+  branch; the GitHub host runner remains Ubuntu 24.04.
+  The dependency cache is published separately to its `finnrg` remote.
+- Do not authenticate to Launchpad, push, force-push, publish packages or
+  change remote state without explicit approval for that action. Preparing
+  and testing a change does not authorize publishing it.
+
 Guidance for AI agents working in the Launchpad codebase.
 
 ## Project

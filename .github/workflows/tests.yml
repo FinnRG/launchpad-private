@@ -7,10 +7,11 @@ on:
       ubuntu-release:
         description: Ubuntu release for the test container
         type: choice
-        default: "24.04"
+        default: "26.04"
         options:
           - "20.04"
           - "24.04"
+          - "26.04"
       dependency-repository:
         description: Git clone URL for source dependencies
         type: string
@@ -18,24 +19,24 @@ on:
       dependency-ref:
         description: Dependency branch, tag, or commit
         type: string
-        default: noble-dev
+        default: resolute-dev
 
 permissions:
   contents: read
 
 jobs:
   tests:
-    name: Full suite (Ubuntu ${{ inputs.ubuntu-release || '24.04' }})
+    name: Full suite (Ubuntu ${{ inputs.ubuntu-release || '26.04' }})
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     env:
-      UBUNTU_RELEASE: ${{ inputs.ubuntu-release || '24.04' }}
+      UBUNTU_RELEASE: ${{ inputs.ubuntu-release || '26.04' }}
       DEPENDENCY_REPO: >-
         ${{ inputs.dependency-repository ||
         vars.LAUNCHPAD_DEPENDENCY_REPOSITORY ||
         'https://git.launchpad.net/~finnrg/lp-source-dependencies/+git/lp-source-dependencies' }}
       DEPENDENCY_REF: >-
-        ${{ inputs.dependency-ref || vars.LAUNCHPAD_DEPENDENCY_REF || 'noble-dev' }}
+        ${{ inputs.dependency-ref || vars.LAUNCHPAD_DEPENDENCY_REF || 'resolute-dev' }}
     steps:
       - uses: actions/checkout@v4
         with:

@@ -7,7 +7,7 @@ run_as="$PWD/utilities/run-as"
 export DEBIAN_FRONTEND=noninteractive
 export GIT_TERMINAL_PROMPT=0
 DEPENDENCY_REPO=${DEPENDENCY_REPO:-https://git.launchpad.net/~finnrg/lp-source-dependencies/+git/lp-source-dependencies}
-DEPENDENCY_REF=${DEPENDENCY_REF:-noble-dev}
+DEPENDENCY_REF=${DEPENDENCY_REF:-resolute-dev}
 phase=${1:-all}
 # Later Firefox revisions moved to core26 and cannot run directly on Noble.
 noble_firefox_revision=8568
